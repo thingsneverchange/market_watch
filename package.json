@@ -21,6 +21,7 @@
 		"vite": "^7.2.6"
 	},
 	"dependencies": {
-		"lightweight-charts": "^5.1.0"
+		"lightweight-charts": "^5.1.0",
+		"yahoo-finance2": "^3.11.2"
 	}
 }

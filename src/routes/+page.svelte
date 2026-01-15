@@ -17,20 +17,20 @@
   let boards = {
     top: [] as any[],
     tape: [] as any[],
-    gainers: [] as any[],
-    losers: [] as any[]
+    movers: [] as any[]
   };
 
   let digest = {
-    driver: { text: "Analyzing market data...", sentiment: "neutral" },
+    driver: { text: "Analyzing Market Data...", sentiment: "neutral" },
     news: [] as any[]
   };
 
-  let macro = { title: "FOMC Meeting", time: new Date(Date.now() + 3600*1000*24), imp: 5 }; // 기본값
+  let macro = { title: "LOADING...", time: new Date(Date.now() + 3600*1000*24), imp: 5 };
   let macroText = "--:--";
 
-  let breakingData = null;
-  let moverMode: "gainers" | "losers" = "gainers";
+  let breakingData: { headline: string, level: number } | null = null;
+  let lastBreakingMsg = ""; // [중복 방지용] 마지막에 띄운 뉴스 기억
+
   let scale = 1;
 
   // --- 로직 ---
@@ -42,47 +42,62 @@
     const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
     const min = et.getHours()*60 + et.getMinutes();
     const day = et.getDay();
-    // 09:30 ~ 16:00
+
     if (day===0 || day===6) { isMarketOpen=false; marketMsg="WEEKEND"; }
     else if (min>=570 && min<960) { isMarketOpen=true; marketMsg="MARKET OPEN"; }
     else { isMarketOpen=false; marketMsg = min<570 ? "PRE-MARKET" : "MARKET CLOSED"; }
 
-    // 매크로 카운트다운
+    // Key Event 카운트다운
     if(macro.time) {
         const diff = macro.time.getTime() - now.getTime();
-        if(diff <= 0) macroText = "RELEASED";
+        // [수정] 0 이하면 RELEASED 대신 LIVE NOW 처리하거나, 다음 이벤트로 넘김
+        if(diff <= -60000) macroText = "RELEASED"; // 1분 지남
+        else if(diff <= 0) macroText = "LIVE NOW"; // 진행중
         else {
-            const h = Math.floor(diff/3600000);
-            const m = Math.floor((diff%3600000)/60000);
-            macroText = `IN ${h}h ${m}m`;
+            const totalH = Math.floor(diff / 3600000);
+            const totalM = Math.floor((diff % 3600000) / 60000);
+            macroText = `IN ${totalH}h ${totalM}m`;
         }
     }
   }
 
   async function refresh() {
-    // Boards
+    // 1. Boards
     try {
         const r = await fetch("/api/boards");
         if(r.ok) {
             const j = await r.json();
-            if(j.top) boards = j;
+            // 데이터가 있을 때만 갱신
+            if(j.top && j.top.length > 0) boards = j;
         }
     } catch {}
 
-    // Digest
+    // 2. Digest (News)
     try {
         const r = await fetch("/api/digest");
         if(r.ok) {
             const j = await r.json();
             if(j.driver) digest = j;
-            // 토스트 트리거 (랜덤)
-            if(j.news && j.news.length>0 && Math.random()>0.85) {
-                breakingData = { headline: j.news[0].title, level: j.news[0].level };
+
+            // [수정] 뉴스 토스트 중복 방지 로직
+            if(j.news && j.news.length > 0) {
+                const topNews = j.news[0];
+                // Level 5이상 + 이전에 띄운 뉴스가 아닐 때만
+                if(topNews.level >= 5 && topNews.title !== lastBreakingMsg) {
+                    // 확률 체크 (너무 자주 뜨지 않게)
+                    if(Math.random() > 0.5) {
+                        breakingData = { headline: topNews.title, level: topNews.level };
+                        lastBreakingMsg = topNews.title;
+
+                        // 10초 뒤에 데이터 null로 초기화 (컴포넌트가 사라져도 데이터는 지워야 함)
+                        setTimeout(() => { breakingData = null; }, 10000);
+                    }
+                }
             }
         }
     } catch {}
 
-    // Calendar
+    // 3. Calendar
     try {
         const r = await fetch("/api/calendar");
         if(r.ok) {
@@ -106,10 +121,15 @@
     resize();
     window.addEventListener("resize", resize);
     refresh();
-    setInterval(updateTimers, 1000);
-    setInterval(refresh, 15000);
-    setInterval(() => { moverMode = moverMode==="gainers"?"losers":"gainers"; }, 5000);
-    return () => window.removeEventListener("resize", resize);
+
+    const t1 = setInterval(updateTimers, 1000);
+    const t2 = setInterval(refresh, 10000); // 10초 주기
+
+    return () => {
+        window.removeEventListener("resize", resize);
+        clearInterval(t1);
+        clearInterval(t2);
+    };
   });
 
   function getSent(s:string) {
@@ -134,7 +154,7 @@
                 <div class="idx">
                     <span class="k">{t.k}</span>
                     <span class="v" class:u={t.pct>=0} class:d={t.pct<0}>
-                        {t.pct>0?"+":""}{Number(t.pct).toFixed(2)}%
+                        {t.pct>0?"+":""}{t.v}%
                     </span>
                 </div>
             {/each}
@@ -146,7 +166,6 @@
     </header>
 
     <main class="grid">
-
         <div class="col left">
             <div class="card driver {getSent(digest.driver.sentiment)}">
                 <div class="lbl">MARKET DRIVER</div>
@@ -155,7 +174,7 @@
 
             <div class="card macro">
                 <div class="m-row">
-                    <span class="lbl-y">UPCOMING</span>
+                    <span class="lbl-y">KEY EVENT</span>
                     <span class="timer">{macroText}</span>
                 </div>
                 <div class="m-tit">{macro.title}</div>
@@ -181,15 +200,15 @@
             <div class="charts-wrap">
                 <div class="c-row h-top">
                     <div class="c-box">
-                        <MinimalChart symbol="CME_MINI:NQ1!" interval="5" height={560}/>
+                        <MinimalChart symbol="NASDAQ:NDX" interval="5" height={560}/>
                         <div class="c-ovl">NASDAQ</div>
                     </div>
                     <div class="c-box">
-                        <MinimalChart symbol="CME_MINI:ES1!" interval="5" height={560}/>
+                        <MinimalChart symbol="AMEX:SPY" interval="5" height={560}/>
                         <div class="c-ovl">S&P 500</div>
                     </div>
                     <div class="c-box">
-                        <MinimalChart symbol="CBOT_MINI:YM1!" interval="5" height={560}/>
+                        <MinimalChart symbol="DJ:DJI" interval="5" height={560}/>
                         <div class="c-ovl">DOW JONES</div>
                     </div>
                 </div>
@@ -209,30 +228,41 @@
         <div class="col right">
             <div class="card movers">
                 <div class="m-head">
-                    {moverMode==='gainers' ? "🚀 TOP GAINERS" : "🩸 TOP LOSERS"}
+                    ⚡ IMPACT EARNINGS
                 </div>
                 <div class="m-list">
-                    {#each (moverMode==='gainers'?boards.gainers:boards.losers) as m}
+                    {#each boards.movers as m}
                         <div class="m-row">
-                            <span class="mt">{m.t}</span>
+                            <div class="m-info">
+                                <span class="mt">{m.t}</span>
+                                <span class="m-tag"
+                                      class:g={m.status==='good'}
+                                      class:b={m.status==='bad'}
+                                      class:f={m.status==='future'}>
+                                    {m.label}
+                                </span>
+                            </div>
                             <span class="mp" class:u={m.pct>=0} class:d={m.pct<0}>
                                 {m.pct>0?"+":""}{Number(m.pct).toFixed(2)}%
                             </span>
                         </div>
                     {/each}
+                    {#if boards.movers.length === 0}
+                        <div class="m-empty">No Data</div>
+                    {/if}
                 </div>
             </div>
+
             <div class="card chat">
-                <div class="lbl">CHAT</div>
+                <div class="lbl">LIVE CHAT</div>
                 <div class="chat-area">Chat Embed Area</div>
             </div>
         </div>
-
     </main>
 
     <footer class="ft">
         <div class="track">
-            {#each [...boards.tape, ...boards.tape] as t}
+            {#each [...boards.tape, ...boards.tape, ...boards.tape] as t}
                 <div class="mq-item">
                     <span class="mq-k">{t.k}</span>
                     <span class="mq-v">{t.v}</span>
@@ -247,17 +277,14 @@
 </div>
 
 <style>
-    /* BASE */
     :global(body) { margin:0; background:#000; overflow:hidden; font-family:'Inter', sans-serif; }
     .wrap { width:1920px; height:1080px; background:#050505; color:#fff; display:flex; flex-direction:column; transform-origin:top left; overflow:hidden; }
 
-    /* UTILS */
     .u{color:#4ade80} .d{color:#f87171}
     .pos{background:#064e3b; border-left:5px solid #34d399}
     .neg{background:#7f1d1d; border-left:5px solid #ef4444}
     .neu{background:#1f2937; border-left:5px solid #9ca3af}
 
-    /* HEAD */
     .hd { height:60px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:#0a0a0a; border-bottom:1px solid #333; }
     .hd-l, .hd-r { display:flex; align-items:center; gap:20px; }
     .logo { font-size:24px; font-weight:900; letter-spacing:-1px; }
@@ -269,22 +296,20 @@
     .idx { display:flex; gap:8px; font-size:18px; font-weight:700; }
     .idx .k { color:#9ca3af; }
 
-    /* GRID */
     .grid { flex:1; display:grid; grid-template-columns:400px 1fr 360px; gap:10px; padding:10px; overflow:hidden; }
     .col { display:flex; flex-direction:column; gap:10px; height:100%; overflow:hidden; }
 
-    /* LEFT */
     .card { background:#111; border:1px solid #333; border-radius:6px; overflow:hidden; }
     .lbl { padding:10px; font-size:14px; font-weight:900; color:#888; background:rgba(255,255,255,0.05); }
 
-    .driver { min-height:140px; justify-content:center; }
+    .driver { min-height:140px; justify-content:center; display:flex; flex-direction:column; }
     .driver-txt { padding:16px; font-size:26px; font-weight:800; line-height:1.2; }
 
     .macro { padding:14px; }
     .m-row { display:flex; justify-content:space-between; margin-bottom:4px; }
     .lbl-y { color:#facc15; font-weight:800; }
     .timer { font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }
-    .m-tit { font-size:20px; font-weight:700; }
+    .m-tit { font-size:20px; font-weight:700; text-transform:uppercase; }
 
     .news { flex:1; display:flex; flex-direction:column; }
     .news-list { flex:1; overflow:hidden; padding:10px; display:flex; flex-direction:column; gap:8px; }
@@ -293,28 +318,44 @@
     .n-time { font-size:13px; font-weight:700; color:#aaa; }
     .n-tit { font-size:18px; font-weight:700; line-height:1.2; }
 
-    /* CENTER */
     .charts-wrap { display:flex; flex-direction:column; gap:10px; height:100%; }
     .c-row { display:grid; gap:10px; }
-    .h-top { height:560px; grid-template-columns:1fr 1fr 1fr; } /* Pixel Perfect Height */
-    .h-bot { height:380px; grid-template-columns:1fr 1fr; }   /* Pixel Perfect Height */
+    .h-top { height:560px; grid-template-columns:1fr 1fr 1fr; }
+    .h-bot { height:380px; grid-template-columns:1fr 1fr; }
     .c-box { background:#000; border:1px solid #333; position:relative; }
     .c-ovl { position:absolute; top:10px; left:10px; font-size:16px; font-weight:900; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:4px; pointer-events:none; }
 
-    /* RIGHT */
     .movers { min-height:400px; display:flex; flex-direction:column; }
-    .m-head { padding:14px; text-align:center; font-size:20px; font-weight:900; background:rgba(255,255,255,0.05); }
-    .m-list { padding:10px; }
-    .m-row { display:flex; justify-content:space-between; padding:10px; font-size:20px; font-weight:800; border-bottom:1px solid #222; }
-    .mp { text-align:right; }
+    .m-head { padding:14px; text-align:center; font-size:18px; font-weight:900; background:rgba(255,255,255,0.05); letter-spacing: 0.05em; color:#ddd; }
+
+    .m-list { padding:10px; flex:1; overflow:hidden; display:flex; flex-direction:column; gap:6px; }
+    .m-row {
+        display:flex; justify-content:space-between; align-items:center;
+        padding: 12px 14px;
+        background: rgba(255,255,255,0.03);
+        border-radius: 8px;
+        border: 1px solid rgba(255,255,255,0.05);
+    }
+    .m-info { display:flex; align-items:center; gap:10px; }
+    .mt { font-size:20px; font-weight:800; color:#fff; width: 60px; }
+
+    .m-tag {
+        font-size:12px; font-weight:800; padding:4px 8px; border-radius:4px;
+        color:#000; letter-spacing:0.05em; text-transform: uppercase;
+    }
+    .m-tag.f { background: #444; color:#aaa; border:1px solid #555; }
+    .m-tag.g { background: #4ade80; color:#000; box-shadow: 0 0 10px rgba(74,222,128,0.3); }
+    .m-tag.b { background: #f87171; color:#fff; box-shadow: 0 0 10px rgba(248,113,113,0.3); }
+
+    .mp { font-size:18px; font-weight:700; font-variant-numeric: tabular-nums; }
+    .m-empty { text-align:center; padding:20px; color:#555; font-weight:700; }
 
     .chat { flex:1; display:flex; flex-direction:column; }
     .chat-area { flex:1; background:#000; display:flex; align-items:center; justify-content:center; color:#333; font-weight:900; font-size:24px; }
 
-    /* FOOTER */
     .ft { height:40px; background:#000; border-top:1px solid #333; display:flex; align-items:center; overflow:hidden; }
     .track { display:flex; padding-left:20px; animation:scroll 40s linear infinite; }
-    .mq-item { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:700; color:#fff; }
+    .mq-item { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:700; color:#fff; white-space:nowrap; }
     .mq-k { color:#aaa; }
     .mq-sep { margin:0 30px; color:#555; }
 

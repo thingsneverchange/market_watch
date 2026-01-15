@@ -3,6 +3,23 @@ import { OPENAI_SECRET } from "$env/static/private";
 
 const NYT_RSS = "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml";
 
+// [핵심] 더 똑똑해진 키워드 분석기
+function heuristicAnalysis(title: string) {
+    const t = title.toLowerCase();
+    let level = 3; // 기본 MID
+    let sentiment = "neu";
+
+    // Level 5 (MAJOR) 키워드
+    if (t.match(/fed|fomc|rate|cpi|inflation|war|crisis|panic|tariff|sanction|ban|trump|biden|earnings/)) level = 5;
+    else if (t.match(/soar|plunge|surge|record|hike|cut|break/)) level = 4;
+
+    // 감성 분석 (색상 결정)
+    if (t.match(/up|rise|gain|bull|profit|settle|jump|record|beat|rally/)) sentiment = "pos";
+    else if (t.match(/down|fall|drop|loss|bear|worry|crash|sue|fine|tariff|ban|sanction|warn|miss/)) sentiment = "neg";
+
+    return { level, sentiment };
+}
+
 async function fetchRSS() {
   try {
     const r = await fetch(NYT_RSS);
@@ -10,21 +27,28 @@ async function fetchRSS() {
     const xml = await r.text();
     const items = [];
     const blocks = xml.split("<item>").slice(1);
-    for (const b of blocks) {
-      const title = (b.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] ?? b.match(/<title>(.*?)<\/title>/)?.[1])?.trim();
-      const pub = b.match(/<pubDate>(.*?)<\/pubDate>/)?.[1];
 
+    for (const b of blocks) {
+      // CDATA 파싱 강화
+      const titleRaw = (b.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] ?? b.match(/<title>(.*?)<\/title>/)?.[1])?.trim();
+
+      // HTML 태그 제거 및 디코딩 등 간단 정제
+      const title = titleRaw?.replace(/&quot;/g, '"')?.replace(/&amp;/g, '&');
+
+      const pub = b.match(/<pubDate>(.*?)<\/pubDate>/)?.[1];
       let timeET = "NOW";
+
       if (pub) {
-        const d = new Date(pub);
-        if (!Number.isNaN(d.getTime())) {
-          timeET = new Intl.DateTimeFormat("en-US", {
-            timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true
-          }).format(d);
-        }
+         const d = new Date(pub);
+         if(!Number.isNaN(d.getTime())){
+             timeET = new Intl.DateTimeFormat("en-US", {
+                timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true
+              }).format(d);
+         }
       }
+
       if (title) items.push({ title, timeET });
-      if (items.length >= 15) break; // 필터링을 위해 넉넉히 가져옴
+      if (items.length >= 15) break;
     }
     return items;
   } catch { return []; }
@@ -33,91 +57,35 @@ async function fetchRSS() {
 export const GET: RequestHandler = async () => {
   const items = await fetchRSS();
 
-  if (!OPENAI_SECRET || items.length === 0) {
-    // API 키 없을 때의 폴백 (어쩔 수 없음)
-    return new Response(JSON.stringify({
-      driver: { text: "API Key Required for AI Analysis", sentiment: "neutral" },
-      news: items.slice(0,5).map(x=>({...x, sentiment:"neu", level:3}))
-    }));
+  // 1. Driver Text: 최신 뉴스 그대로 사용 (글자수 제한 해제)
+  // 너무 길면 UI에서 CSS로 ... 처리하는 게 낫습니다.
+  let driverText = "Market awaits key catalysts.";
+  let driverSent = "neutral";
+
+  if (items.length > 0) {
+      const top = items[0];
+      const ana = heuristicAnalysis(top.title);
+      // "Focus on: " 같은 접두어 제거하여 깔끔하게
+      driverText = top.title;
+      driverSent = ana.sentiment;
   }
 
-  // 프롬프트 대폭 수정: 필터링 및 구체성 강화
-  const system = `
-    You are a professional financial news editor.
+  // 2. News List 분석
+  const analyzedNews = items.slice(0, 5).map((x, i) => {
+      const h = heuristicAnalysis(x.title);
+      return {
+          ...x,
+          idx: i,
+          sentiment: h.sentiment,
+          level: h.level
+      };
+  });
 
-    Task 1: Market Driver
-    - Write ONE specific sentence (max 10 words) explaining EXACTLY why the market is moving.
-    - BAD: "Mixed market mood with concerns."
-    - GOOD: "Tech stocks rally driven by strong NVIDIA earnings." or "CPI inflation data sparks sell-off in bonds."
-    - Sentiment: "bull", "bear", "neutral".
+  // 중요도 순 정렬
+  analyzedNews.sort((a,b) => b.level - a.level);
 
-    Task 2: News List
-    - Select exactly 5 MOST IMPORTANT items from the list.
-    - **CRITICAL**: IGNORE items with low impact. Only pick Medium to High impact news.
-    - **ORDER**: Put the highest impact news (Level 5) at the top.
-    - Rewrite titles to be short (max 6 words).
-    - Sentiment: "pos", "neg", "neu".
-    - Level: 3 (Medium), 4 (High), 5 (Major). DO NOT return Level 1 or 2.
-
-    Output JSON format only.
-  `;
-
-  const schema = {
-    type: "object",
-    properties: {
-      driver: {
-        type: "object",
-        properties: { text: { type: "string" }, sentiment: { type: "string" } },
-        required: ["text", "sentiment"]
-      },
-      news: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            idx: { type: "integer" },
-            title: { type: "string" },
-            sentiment: { type: "string" },
-            level: { type: "integer" }
-          },
-          required: ["idx", "title", "sentiment", "level"]
-        }
-      }
-    },
-    required: ["driver", "news"]
-  };
-
-  try {
-    const r = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${OPENAI_SECRET}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "gpt-4o", // 성능 좋은 모델 사용 권장
-        messages: [{ role: "system", content: system }, { role: "user", content: JSON.stringify(items.map((x,i)=>({i, t:x.title}))) }],
-        response_format: { type: "json_schema", json_schema: { name: "digest", strict: true, schema } }
-      })
-    });
-
-    if(!r.ok) throw new Error("OpenAI API Fail");
-
-    const j = await r.json();
-    const parsed = JSON.parse(j.choices[0].message.content);
-
-    // 인덱스 매핑
-    const finalNews = parsed.news.map((n:any) => ({
-      ...items[n.idx],
-      title: n.title,
-      sentiment: n.sentiment,
-      level: n.level
-    }));
-
-    return new Response(JSON.stringify({ driver: parsed.driver, news: finalNews }));
-
-  } catch (e) {
-    // 에러 발생 시 원본 반환하되 "AI Error" 표시
-    return new Response(JSON.stringify({
-      driver: { text: "AI Service Unavailable", sentiment: "neutral" },
-      news: items.slice(0,5).map(x=>({...x, sentiment:"neu", level:3}))
-    }));
-  }
+  return new Response(JSON.stringify({
+      driver: { text: driverText, sentiment: driverSent },
+      news: analyzedNews
+  }));
 };
