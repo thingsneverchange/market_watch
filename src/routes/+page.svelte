@@ -1,506 +1,303 @@
 <script lang="ts">
   import "$lib/css/global.css";
   import MinimalChart from "$lib/components/chart.svelte";
-  import ImpactBar from "$lib/components/ImpactBar.svelte";
-  import BreakingToast from "$lib/components/BreakingToast.svelte";
-  import MiniViz from "$lib/components/MiniViz.svelte";
+  import BreakingToast from "$lib/components/BreakingToast.svelte"; // 토스트 컴포넌트
   import { onMount } from "svelte";
 
-  // audio sources from $lib/audio
-  const audioMods = import.meta.glob("$lib/audio/*.{mp3,wav,ogg}", {
-    eager: true,
-    query: "?url",
-    import: "default"
-  }) as Record<string, string>;
-  const audioSources = Object.values(audioMods);
-
-  // ET clock
+  // --- STATE ---
   let etNow = "";
-  const etFmt = new Intl.DateTimeFormat("en-US", {
-    timeZone: "America/New_York",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: true
-  });
+  let marketMsg = ""; // "Opens in..."
+  let isMarketOpen = false;
 
-  // CHARTS (iframe-safe)
-  const charts = [
-    { label: "SPY", symbol: "AMEX:SPY" },
-    { label: "QQQ (NQ proxy)", symbol: "NASDAQ:QQQ" },
-    { label: "BTCUSD", symbol: "BITSTAMP:BTCUSD" }
-  ];
+  let boards = { top: [], tape: [], gainers: [], losers: [] };
+  let digest = { driver: { text: "Loading...", sentiment: "neutral" }, news: [] };
+  let macro = { title: "Loading...", time: null as Date|null, imp: 3 };
 
-  // boards
-  type TopItem = { k: string; v: string; pct: number };
-  type TapeItem = { k: string; v: string; pct?: number | null };
-  type Row = { ticker: string; price: number; changePct: number };
+  // Breaking News Trigger
+  let breakingData = null;
 
-  let top: TopItem[] = [];
-  let tape1: TapeItem[] = [];
-  let tape2: TapeItem[] = [];
-  let gainers: Row[] = [];
-  let losers: Row[] = [];
+  // --- LOGIC ---
+  function updateClock() {
+    const now = new Date();
+    // ET Time Calculation
+    const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
+    etNow = new Intl.DateTimeFormat("en-US", { hour:"2-digit", minute:"2-digit", second:"2-digit", hour12:true }).format(et);
 
-  let boardsAsOf = "";
-  let boardsNext = 20;
-  let digestNext = 600;
+    // Market Open Countdown (Simple NYSE Rule: Mon-Fri 09:30-16:00 ET)
+    const day = et.getDay(); // 0=Sun
+    const h = et.getHours();
+    const m = et.getMinutes();
+    const totalM = h * 60 + m;
+    const OPEN = 570; // 09:30
+    const CLOSE = 960; // 16:00
 
-  async function refreshBoards() {
-    const r = await fetch("/api/boards", { cache: "no-store" });
-    const j = await r.json();
-    top = j.top ?? [];
-    tape1 = j.tape1 ?? [];
-    tape2 = j.tape2 ?? [];
-    gainers = j.gainers ?? [];
-    losers = j.losers ?? [];
-    boardsAsOf = j.meta?.asOf ?? "";
+    if (day === 0 || day === 6) { // Weekend
+        isMarketOpen = false;
+        // Calculate milliseconds to Monday 9:30
+        let daysToMon = (1 + 7 - day) % 7 || 7; // if Sat(6) -> 2 days, Sun(0) -> 1 day
+        // This is rough approximation logic for display
+        marketMsg = "WEEKEND • CLOSED";
+    } else if (totalM >= OPEN && totalM < CLOSE) {
+        isMarketOpen = true;
+        marketMsg = "MARKET OPEN";
+    } else {
+        isMarketOpen = false;
+        // Simple "Opens in" logic
+        if (totalM < OPEN) {
+            const diff = OPEN - totalM;
+            const hh = Math.floor(diff/60);
+            const mm = diff%60;
+            marketMsg = `OPENS IN ${hh}h ${mm}m`;
+        } else {
+            marketMsg = "MARKET CLOSED";
+        }
+    }
   }
 
-  // digest
-  type Digest = {
-    now: string;
-    breaking: null | { timeET: string; headline: string; level: number };
-    news: { timeET: string; title: string; impact: string; level: number; link: string | null }[];
-  };
-
-  let pack: Digest | null = null;
-
-  let toast: { headline: string; level: number; key: number } | null = null;
-  let toastKey = 0;
-  function showBreaking(headline: string, level: number) {
-    toastKey += 1;
-    toast = { headline, level, key: toastKey };
+  // Countdown for Macro
+  let macroCountdown = "";
+  function updateMacroTimer() {
+    if (!macro.time) { macroCountdown = "--:--"; return; }
+    const diff = macro.time.getTime() - Date.now();
+    if (diff <= 0) {
+        macroCountdown = "RELEASED";
+        return;
+    }
+    const mm = Math.floor(diff / 60000);
+    const ss = Math.floor((diff % 60000) / 1000);
+    macroCountdown = `T-MINUS ${mm}:${String(ss).padStart(2,'0')}`;
   }
 
-  async function refreshDigest() {
-    const r = await fetch("/api/digest", { cache: "no-store" });
-    const d = (await r.json()) as Digest;
-    pack = d;
-    if (d.breaking?.headline) showBreaking(d.breaking.headline, d.breaking.level);
-  }
+  // Data Fetching
+  async function refreshAll() {
+    // 1. Boards
+    const b = await (await fetch("/api/boards")).json();
+    boards = b;
 
-  // movers toggle
-  let mode: "gainers" | "losers" = "gainers";
+    // 2. Digest
+    const d = await (await fetch("/api/digest")).json();
+    digest = d;
+
+    // Breaking Toast Test (임의로 첫번째 뉴스를 breaking으로 띄워봄 - 실제론 조건 필요)
+    if (d.news.length > 0 && Math.random() > 0.7) {
+        breakingData = { headline: d.news[0].title, level: d.news[0].level };
+    }
+
+    // 3. Calendar (Mocking logic for now as user api had 404)
+    // 실제로는 /api/calendar 결과를 파싱해서 macro.time에 Date 객체 넣어야 함
+    // 여기서는 예시로 10분 뒤 이벤트를 생성
+    const now = new Date();
+    macro = {
+        title: "FOMC Minutes",
+        time: new Date(now.getTime() + 10 * 60000), // 10분 뒤
+        imp: 5
+    };
+  }
 
   onMount(() => {
-    const tClock = setInterval(() => (etNow = etFmt.format(new Date())), 1000);
-
-    // countdown ticker
-    const tCount = setInterval(() => {
-      boardsNext = Math.max(0, boardsNext - 1);
-      digestNext = Math.max(0, digestNext - 1);
-    }, 1000);
-
-    refreshBoards();
-    boardsNext = 20;
-    const tBoards = setInterval(async () => {
-      boardsNext = 20;
-      await refreshBoards();
-    }, 20_000);
-
-    refreshDigest();
-    digestNext = 600;
-    const tDigest = setInterval(async () => {
-      digestNext = 600;
-      await refreshDigest();
-    }, 10 * 60_000);
-
-    const tToggle = setInterval(() => {
-      mode = mode === "gainers" ? "losers" : "gainers";
-    }, 20_000);
-
-    return () => {
-      clearInterval(tClock);
-      clearInterval(tCount);
-      clearInterval(tBoards);
-      clearInterval(tDigest);
-      clearInterval(tToggle);
-    };
+    refreshAll();
+    setInterval(updateClock, 1000);
+    setInterval(updateMacroTimer, 1000);
+    setInterval(refreshAll, 15000);
   });
+
+  // Scale wrapper to fit window
+  let scale = 1;
+  function handleResize() {
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    // Fit 1920x1080 into window
+    scale = Math.min(w / 1920, h / 1080);
+  }
 </script>
 
-<div id="frame">
-  {#if toast}
-    <BreakingToast
-      key={toast.key}
-      headline={toast.headline}
-      level={toast.level}
-      durationMs={22000}
-      soundSrc="/sfx/breaking.mp3"
-      soundVolume={0.14}
-    />
-  {/if}
+<svelte:window on:resize={handleResize} />
+<div class="viewport" style="transform: scale({scale || 1})">
 
-  <!-- compact header -->
-  <header class="top">
-    <div class="left">
-      <span class="dot"></span>
-      <span class="name">Firmnote</span>
-      <span class="time">{etNow} ET</span>
-    </div>
+    {#if breakingData}
+        <BreakingToast headline={breakingData.headline} level={breakingData.level} />
+    {/if}
 
-    <div class="right">
-      <MiniViz sources={audioSources} volume={0.40}/>
-    </div>
-  </header>
-
-  <!-- top strip (big) -->
-  <section class="strip">
-    {#each top as it (it.k)}
-      <div class="sItem">
-        <div class="sK">{it.k}</div>
-        <div class="sV">{it.v}</div>
-        <div class:pos={it.pct >= 0} class:neg={it.pct < 0} class="sP">
-          {it.pct >= 0 ? "▲" : "▼"} {it.pct >= 0 ? "+" : ""}{it.pct.toFixed(2)}%
+    <header class="head">
+        <div class="brand">
+            <div class="logo">FIRMNOTE</div>
+            <div class="status-badge" class:open={isMarketOpen}>{marketMsg}</div>
         </div>
-      </div>
-    {/each}
-  </section>
+        <div class="clock">{etNow} ET</div>
+    </header>
 
-  <main class="main">
-    <!-- charts -->
-    <section class="charts">
-      {#each charts as c (c.symbol)}
-        <div class="card chart">
-          <div class="cHead">
-            <div class="cName">{c.label}</div>
-            <div class="cHint">1m</div>
-          </div>
-          <div class="cBody">
-            <MinimalChart symbol={c.symbol} interval="1" height={260} theme="dark" />
-          </div>
-        </div>
-      {/each}
+    <section class="top-bar">
+        {#each boards.top as t}
+            <div class="idx-box">
+                <span class="idx-k">{t.k}</span>
+                <span class="idx-v" class:up={t.pct>=0} class:down={t.pct<0}>
+                    {t.pct>0?"+":""}{t.pct?.toFixed(2)}%
+                </span>
+            </div>
+        {/each}
     </section>
 
-    <!-- right panel -->
-    <aside class="side">
-      <div class="card panel">
-        <div class="pHead">
-          <div class="pTitle">{mode === "gainers" ? "Top Gainers" : "Top Losers"}</div>
-          <div class="pHint">next {boardsNext}s</div>
-        </div>
-
-        <div class="pSub">
-          <div class="meta">Market data • {boardsAsOf ? boardsAsOf.slice(11,19) + "Z" : "—"}</div>
-          <div class="tag">{mode.toUpperCase()}</div>
-        </div>
-
-        <div class="pList">
-          {#each (mode === "gainers" ? gainers : losers).slice(0,6) as r (r.ticker)}
-            <div class="mRow">
-              <div class="mT">{r.ticker}</div>
-              <div class="mP">{r.price.toFixed(2)}</div>
-              <div class:pos={r.changePct >= 0} class:neg={r.changePct < 0} class="mC">
-                {r.changePct >= 0 ? "+" : ""}{r.changePct.toFixed(2)}%
-              </div>
+    <main class="grid">
+        <div class="col left">
+            <div class="card driver" class:bull={digest.driver.sentiment==='bull'} class:bear={digest.driver.sentiment==='bear'}>
+                <div class="label">MARKET DRIVER</div>
+                <div class="driver-text">{digest.driver.text}</div>
             </div>
-          {/each}
 
-          {#if (mode === "gainers" ? gainers : losers).length === 0}
-            <div class="empty">Loading movers… ({boardsNext}s)</div>
-          {/if}
+            <div class="card macro">
+                <div class="macro-row">
+                    <span class="label">UPCOMING EVENT</span>
+                    <span class="timer">{macroCountdown}</span>
+                </div>
+                <div class="macro-title">{macro.title} <span class="imp">IMPACT {macro.imp}/5</span></div>
+            </div>
+
+            <div class="news-stack">
+                <div class="label-sm">IMPACT NEWS</div>
+                {#each digest.news as n}
+                    <div class="news-item" class:pos={n.sentiment==='pos'} class:neg={n.sentiment==='neg'}>
+                        <div class="news-head">
+                            <span class="news-lvl">LVL {n.level}</span>
+                            <span class="news-res">STACKED</span>
+                        </div>
+                        <div class="news-title">{n.title}</div>
+                    </div>
+                {/each}
+            </div>
         </div>
-      </div>
 
-      <div class="card panel">
-        <div class="pHead">
-          <div class="pTitle">Now</div>
-          <div class="pHint">next {digestNext}s</div>
+        <div class="col center">
+            <div class="chart-grid">
+                <div class="c-cell big"><MinimalChart symbol="CME_MINI:NQ1!" interval="5" height={360} /><div class="c-ovl">NASDAQ</div></div>
+                <div class="c-cell big"><MinimalChart symbol="CME_MINI:ES1!" interval="5" height={360} /><div class="c-ovl">S&P 500</div></div>
+                <div class="c-cell big"><MinimalChart symbol="CBOT_MINI:YM1!" interval="5" height={360} /><div class="c-ovl">DOW</div></div>
+                <div class="c-cell wide"><MinimalChart symbol="OANDA:XAUUSD" interval="15" height={300} /><div class="c-ovl">GOLD</div></div>
+                <div class="c-cell wide"><MinimalChart symbol="BITSTAMP:BTCUSD" interval="15" height={300} /><div class="c-ovl">BITCOIN</div></div>
+            </div>
         </div>
 
-        <div class="nowBox">
-          <div class="nowLine">{pack?.now ?? "…"}</div>
+        <div class="col right">
+            <div class="card movers">
+                <div class="label">HOT MOVERS</div>
+                <div class="movers-list">
+                    {#each boards.gainers as g}
+                        <div class="mover-row">
+                            <span class="tkr">{g.t}</span>
+                            <span class="pct up">+{g.pct?.toFixed(2)}%</span>
+                        </div>
+                    {/each}
+                    <div class="sep"></div>
+                    {#each boards.losers as l}
+                        <div class="mover-row">
+                            <span class="tkr">{l.t}</span>
+                            <span class="pct down">{l.pct?.toFixed(2)}%</span>
+                        </div>
+                    {/each}
+                </div>
+            </div>
+
+            <div class="card chat-box">
+                <div class="label">LIVE CHAT</div>
+                <div class="embed-area">Chat Ready</div>
+            </div>
         </div>
+    </main>
 
-        <div class="pHead2">
-          <div class="pTitle2">News</div>
+    <footer class="footer">
+        <div class="marquee">
+            {#each [...boards.tape, ...boards.tape] as t} <div class="mq-item">
+                    <span class="mq-k">{t.k}</span>
+                    <span class="mq-v">{t.v}</span>
+                    <span class="mq-p" class:up={t.pct>=0} class:down={t.pct<0}>
+                        {t.pct? (t.pct>0?"+":"")+t.pct.toFixed(2)+"%" : ""}
+                    </span>
+                    <span class="dash">//</span>
+                </div>
+            {/each}
         </div>
-
-        <div class="nList">
-          {#each (pack?.news ?? []).slice(0,5) as n (n.title)}
-            <a class="nRow" href={n.link ?? "#"} target="_blank" rel="noreferrer">
-              <div class="nTop">
-                <div class="nTime">{n.timeET || "—"}</div>
-                <ImpactBar level={n.level}/>
-              </div>
-              <div class="nTitle">{n.title}</div>
-              <div class="nImpact">{n.impact}</div>
-            </a>
-          {/each}
-        </div>
-      </div>
-    </aside>
-  </main>
-
-  <!-- TWO-LINE TAPES -->
-  <footer class="tapes">
-    <div class="tape">
-      <div class="track">
-        {#each tape1 as it (it.k)}
-          <div class="ti">
-            <span class="k">{it.k}</span>
-            <span class="v">{it.v}</span>
-            {#if typeof it.pct === "number"}
-              <span class:pos={it.pct >= 0} class:neg={it.pct < 0} class="p">
-                {it.pct >= 0 ? "▲" : "▼"} {it.pct >= 0 ? "+" : ""}{it.pct.toFixed(2)}%
-              </span>
-            {/if}
-          </div>
-          <span class="sep">•</span>
-        {/each}
-        {#each tape1 as it (it.k + "_2")}
-          <div class="ti">
-            <span class="k">{it.k}</span>
-            <span class="v">{it.v}</span>
-            {#if typeof it.pct === "number"}
-              <span class:pos={it.pct >= 0} class:neg={it.pct < 0} class="p">
-                {it.pct >= 0 ? "▲" : "▼"} {it.pct >= 0 ? "+" : ""}{it.pct.toFixed(2)}%
-              </span>
-            {/if}
-          </div>
-          <span class="sep">•</span>
-        {/each}
-      </div>
-    </div>
-
-    <div class="tape">
-      <div class="track slower">
-        {#each tape2 as it (it.k)}
-          <div class="ti">
-            <span class="k">{it.k}</span>
-            <span class="v">{it.v}</span>
-            {#if typeof it.pct === "number"}
-              <span class:pos={it.pct >= 0} class:neg={it.pct < 0} class="p">
-                {it.pct >= 0 ? "▲" : "▼"} {it.pct >= 0 ? "+" : ""}{it.pct.toFixed(2)}%
-              </span>
-            {/if}
-          </div>
-          <span class="sep">•</span>
-        {/each}
-        {#each tape2 as it (it.k + "_2")}
-          <div class="ti">
-            <span class="k">{it.k}</span>
-            <span class="v">{it.v}</span>
-            {#if typeof it.pct === "number"}
-              <span class:pos={it.pct >= 0} class:neg={it.pct < 0} class="p">
-                {it.pct >= 0 ? "▲" : "▼"} {it.pct >= 0 ? "+" : ""}{it.pct.toFixed(2)}%
-              </span>
-            {/if}
-          </div>
-          <span class="sep">•</span>
-        {/each}
-      </div>
-    </div>
-  </footer>
-
-  <!-- CHAT: fixed bottom-right -->
-  <div class="chatDock">
-    <div class="chatHead">CHAT</div>
-    <div class="chatBody">YouTube live chat embed slot</div>
-  </div>
+    </footer>
 </div>
 
 <style>
-#frame{
-  width:1920px;height:1080px;
-  background:#0b0c10;color:#e5e7eb;
-  overflow:hidden;position:relative;
-  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-}
+    /* RESET & BASE */
+    :global(body) { margin:0; background:#000; overflow:hidden; font-family: sans-serif; }
 
-.top{
-  height:44px; padding:10px 18px;
-  display:flex;align-items:center;justify-content:space-between;
-}
-.left{display:flex;align-items:center;gap:10px}
-.dot{
-  width:10px;height:10px;border-radius:999px;background:#ff3b30;
-  opacity:.85; animation:pulse 1.2s ease-in-out infinite;
-}
-@keyframes pulse{0%{transform:scale(.95);opacity:.55}50%{transform:scale(1.12);opacity:1}100%{transform:scale(.95);opacity:.55}}
-.name{font-size:18px;font-weight:950;letter-spacing:-.02em}
-.time{font-size:16px;font-weight:900;opacity:.75;margin-left:6px}
-.right{display:flex;align-items:center;gap:10px}
+    .viewport {
+        width: 1920px; height: 1080px;
+        background: #050505; color: white;
+        transform-origin: top left; /* Scale from top-left */
+        display: flex; flex-direction: column;
+    }
 
-.strip{
-  height:86px;padding: 8px 18px 10px 18px;
-  display:grid;grid-template-columns: repeat(5, 1fr);
-  gap:10px;
-}
-.sItem{
-  border-radius:18px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.10);
-  padding:12px 14px;
-  display:flex;flex-direction:column;gap:6px;
-}
-.sK{font-size:14px;font-weight:950;opacity:.8;letter-spacing:.08em}
-.sV{font-size:24px;font-weight:950;letter-spacing:-.03em;font-variant-numeric:tabular-nums}
-.sP{font-size:16px;font-weight:950;font-variant-numeric:tabular-nums}
-.pos{color:#34d399}
-.neg{color:#fb7185}
+    /* HEADER */
+    .head { height: 60px; display: flex; align-items: center; justify-content: space-between; padding: 0 24px; background: #0a0a0a; border-bottom: 2px solid #222; }
+    .logo { font-size: 32px; font-weight: 900; letter-spacing: -1px; margin-right: 16px; }
+    .status-badge { font-size: 18px; font-weight: 700; padding: 4px 12px; border-radius: 6px; background: #333; color: #aaa; }
+    .status-badge.open { background: #22c55e; color: #000; }
+    .clock { font-size: 32px; font-weight: 800; font-variant-numeric: tabular-nums; }
 
-.main{
-  height: calc(1080px - 44px - 86px - 44px - 16px);
-  padding: 10px 18px;
-  display:grid;
-  grid-template-columns: 1fr 520px;
-  gap:12px;
-}
+    /* TOP BAR */
+    .top-bar { height: 60px; display: flex; gap: 32px; align-items: center; padding: 0 24px; background: #111; border-bottom: 1px solid #333; }
+    .idx-box { display: flex; gap: 12px; font-size: 24px; font-weight: 800; }
+    .idx-k { color: #888; }
+    .up { color: #4ade80; } .down { color: #f87171; }
 
-.charts{
-  display:grid;
-  grid-template-rows: repeat(3, 1fr);
-  gap:12px;
-  min-height:0;
-}
+    /* GRID LAYOUT */
+    .grid { flex: 1; display: grid; grid-template-columns: 400px 1fr 380px; gap: 8px; padding: 8px; overflow: hidden; }
+    .col { display: flex; flex-direction: column; gap: 8px; height: 100%; overflow: hidden; }
 
-.side{
-  display:grid;
-  grid-template-rows: 1fr 1.2fr;
-  gap:12px;
-  min-height:0;
-}
+    /* CARDS & TEXT - BIGGER FONTS */
+    .card { background: #161616; border-radius: 8px; border: 1px solid #333; overflow: hidden; }
+    .label { font-size: 16px; font-weight: 900; color: #666; padding: 12px; background: rgba(0,0,0,0.3); letter-spacing: 1px; }
+    .label-sm { font-size: 14px; font-weight: 900; color: #555; margin-bottom: 8px; padding-left: 4px; }
 
-.card{
-  border-radius:22px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow:0 16px 60px rgba(0,0,0,.40);
-  overflow:hidden;
-  display:flex;flex-direction:column;
-  min-height:0;
-}
+    /* LEFT COL */
+    .driver { padding: 0; min-height: 140px; }
+    .driver.bull { background: #064e3b; border-color: #059669; } /* Dark Green BG */
+    .driver.bear { background: #7f1d1d; border-color: #dc2626; } /* Dark Red BG */
+    .driver-text { font-size: 28px; font-weight: 800; padding: 16px; line-height: 1.2; }
 
-.cHead{
-  padding:10px 14px;
-  border-bottom:1px solid rgba(255,255,255,.08);
-  display:flex;align-items:center;justify-content:space-between;
-}
-.cName{font-size:16px;font-weight:950;opacity:.95}
-.cHint{font-size:14px;font-weight:900;opacity:.75}
-.cBody{padding:10px;height:260px;flex:0 0 auto;}
+    .macro { padding: 16px; background: #222; }
+    .macro-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+    .timer { font-size: 28px; font-weight: 900; color: #facc15; font-variant-numeric: tabular-nums; }
+    .macro-title { font-size: 20px; font-weight: 700; }
+    .imp { font-size: 14px; background: #fff; color: #000; padding: 2px 6px; border-radius: 4px; margin-left: 8px; }
 
-.panel .pHead{
-  padding:12px 14px 10px 14px;
-  border-bottom:1px solid rgba(255,255,255,.08);
-  display:flex;justify-content:space-between;align-items:baseline;
-}
-.pHead2{
-  padding:10px 14px;
-  border-top:1px solid rgba(255,255,255,.08);
-  border-bottom:1px solid rgba(255,255,255,.08);
-}
-.pTitle{font-size:18px;font-weight:950}
-.pTitle2{font-size:16px;font-weight:950;opacity:.9;letter-spacing:.08em}
-.pHint{font-size:14px;font-weight:900;opacity:.7}
+    .news-stack { flex: 1; overflow-y: hidden; display: flex; flex-direction: column; gap: 6px; }
+    .news-item { background: #1a1a1a; padding: 14px; border-left: 8px solid #444; border-radius: 4px; }
+    .news-item.pos { border-left-color: #22c55e; background: rgba(34,197,94,0.1); }
+    .news-item.neg { border-left-color: #ef4444; background: rgba(239,68,68,0.1); }
+    .news-head { display: flex; justify-content: space-between; font-size: 14px; font-weight: 800; color: #888; margin-bottom: 4px; }
+    .news-title { font-size: 20px; font-weight: 700; line-height: 1.2; }
 
-.pSub{
-  padding:10px 14px;
-  display:flex;justify-content:space-between;align-items:center;
-}
-.meta{font-size:13px;font-weight:900;opacity:.65}
-.tag{
-  font-size:12px;font-weight:950;letter-spacing:.12em;
-  padding:8px 10px;border-radius:999px;
-  border:1px solid rgba(255,255,255,.12);
-  background:rgba(255,255,255,.06);
-}
+    /* CENTER COL - CHARTS */
+    .chart-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1.2fr 1fr; gap: 6px; height: 100%; }
+    .c-cell { background: #000; border: 1px solid #333; position: relative; }
+    .c-cell.wide { grid-column: span 3; display: flex; } /* 하단을 2개가 아닌 3개 병합 후 내부 분할 하거나, grid 수정 필요. 위 코드에선 wide를 span 3하고 내부에서 flex로 나누진 않았음. CSS grid 수정: */
+    /* 수정된 grid: 하단 2개 배치를 위해 */
+    .chart-grid { grid-template-columns: 1fr 1fr 1fr 1fr 1fr 1fr; } /* 6 cols */
+    .c-cell.big { grid-column: span 2; } /* 상단 3개 (2+2+2=6) */
+    .c-cell.wide { grid-column: span 3; } /* 하단 2개 (3+3=6) */
 
-.pList{padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
-.mRow{
-  display:grid;
-  grid-template-columns: 110px 1fr 120px;
-  align-items:center;
-  padding:12px 12px;
-  border-radius:16px;
-  background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.08);
-}
-.mT{font-size:18px;font-weight:950}
-.mP{font-size:18px;font-weight:950;text-align:right;opacity:.92;font-variant-numeric:tabular-nums}
-.mC{font-size:18px;font-weight:950;text-align:right;font-variant-numeric:tabular-nums}
-.empty{padding:14px;font-size:16px;font-weight:900;opacity:.7}
+    .c-ovl { position: absolute; top: 8px; left: 8px; font-size: 18px; font-weight: 900; background: rgba(0,0,0,0.6); padding: 4px 8px; z-index: 10; pointer-events: none; }
 
-.nowBox{padding:12px}
-.nowLine{
-  font-size:20px;font-weight:950;line-height:1.25;
-  padding:12px;border-radius:16px;
-  background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.08);
-}
+    /* RIGHT COL */
+    .movers { flex: 0 0 auto; }
+    .movers-list { padding: 8px; }
+    .mover-row { display: grid; grid-template-columns: 1fr 100px; padding: 8px 12px; font-size: 20px; font-weight: 800; background: #1a1a1a; margin-bottom: 4px; border-radius: 4px; }
+    .sep { height: 8px; }
 
-.nList{padding:12px;display:flex;flex-direction:column;gap:10px;min-height:0}
-.nRow{
-  display:block;
-  padding:12px;
-  border-radius:16px;
-  background:rgba(255,255,255,.05);
-  border:1px solid rgba(255,255,255,.08);
-  text-decoration:none;color:#e5e7eb;
-}
-.nTop{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-.nTime{font-size:14px;font-weight:950;opacity:.72;letter-spacing:.06em}
-.nTitle{
-  font-size:18px;font-weight:950;line-height:1.25;letter-spacing:-.02em;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
-.nImpact{
-  margin-top:6px;
-  font-size:16px;font-weight:900;opacity:.78;line-height:1.2;
-  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
-}
+    .chat-box { flex: 1; display: flex; flex-direction: column; }
+    .embed-area { flex: 1; background: #000; display: flex; align-items: center; justify-content: center; font-size: 20px; color: #333; font-weight: 900; }
 
-.tapes{
-  position:absolute;left:18px;right:18px;bottom:12px;
-  display:flex;flex-direction:column;gap:8px;
-}
-.tape{
-  height:44px;border-radius:999px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.10);
-  overflow:hidden;display:flex;align-items:center;
-}
-.track{
-  display:inline-flex;align-items:center;gap:18px;
-  padding-left:18px;white-space:nowrap;
-  animation: scroll 34s linear infinite;
-}
-.track.slower{animation-duration: 44s;}
-.ti{
-  display:inline-flex;align-items:baseline;gap:10px;
-  min-width: 240px; justify-content:space-between;
-  font-variant-numeric: tabular-nums;
-}
-.k{font-size:16px;font-weight:950;opacity:.92;width:84px}
-.v{font-size:16px;font-weight:950;width:90px;text-align:right;opacity:.95}
-.p{font-size:16px;font-weight:950;width:90px;text-align:right}
-.sep{font-size:18px;font-weight:950;opacity:.25}
-@keyframes scroll{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+    /* FOOTER MARQUEE */
+    .footer { height: 50px; background: #172554; display: flex; align-items: center; overflow: hidden; white-space: nowrap; border-top: 2px solid #3b82f6; }
+    .marquee { display: flex; animation: scroll 30s linear infinite; padding-left: 100%; }
+    .mq-item { display: flex; align-items: center; gap: 12px; margin-right: 48px; }
+    .mq-k { font-size: 24px; font-weight: 800; color: #93c5fd; }
+    .mq-v { font-size: 24px; font-weight: 800; color: #fff; }
+    .mq-p { font-size: 20px; font-weight: 700; }
+    .dash { color: #3b82f6; opacity: 0.5; font-size: 24px; font-weight: 300; margin-left: 24px; }
 
-/* chat fixed */
-.chatDock{
-  position:absolute;
-  right:18px;
-  bottom: 110px; /* tapes 위 */
-  width: 520px;
-  height: 260px;
-  border-radius:22px;
-  background:rgba(255,255,255,.06);
-  border:1px solid rgba(255,255,255,.10);
-  box-shadow:0 16px 60px rgba(0,0,0,.40);
-  overflow:hidden;
-}
-.chatHead{
-  padding:10px 14px;
-  border-bottom:1px solid rgba(255,255,255,.08);
-  font-size:16px;font-weight:950;
-}
-.chatBody{
-  height: calc(260px - 44px);
-  display:flex;align-items:center;justify-content:center;
-  font-size:16px;font-weight:900;opacity:.7;
-}
+    @keyframes scroll { 100% { transform: translateX(-100%); } }
 </style>
