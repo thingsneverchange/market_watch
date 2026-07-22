@@ -1,38 +1,210 @@
-# sv
+# market_watch — 라이브 마켓 오버레이
 
-Everything you need to build a Svelte project, powered by [`sv`](https://github.com/sveltejs/cli).
+stock-gate 연동 · Breaking News 중심 · 방송용 미니멀 오버레이 (1920×1080)
 
-## Creating a project
+---
 
-If you're seeing this, you've probably already done this step. Congrats!
+## 1. 실행 방법 (맥에서)
 
-```sh
-# create a new project in the current directory
-npx sv create
+터미널을 열고:
 
-# create a new project in my-app
-npx sv create my-app
-```
-
-## Developing
-
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
-
-```sh
+```bash
+cd ~/Desktop/market_watch-main
+npm install        # 처음 한 번 (2~3분)
 npm run dev
-
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
 ```
 
-## Building
+그러면 이렇게 뜹니다:
 
-To create a production version of your app:
-
-```sh
-npm run build
+```
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: http://192.168.0.XX:5173/    ← 폰 컨트롤러용 주소 (숫자는 각자 다름)
 ```
 
-You can preview the production build with `npm run preview`.
+**→ `Local` 주소를 브라우저에서 열면 방송 화면이 나옵니다. 이게 "켜놓고 보는 곳"입니다.**
 
-> To deploy your app, you may need to install an [adapter](https://svelte.dev/docs/kit/adapters) for your target environment.
+끌 때는 터미널에서 `Ctrl + C`.
+
+---
+
+## 1-B. 폰 컨트롤러 (방송 중 조종)
+
+방송 화면(`/`)은 그대로 두고, **폰이나 태블릿으로 차트·속보를 조종**합니다.
+
+1. 맥과 폰이 **같은 와이파이**에 연결돼 있어야 함
+2. `npm run dev` 실행 시 터미널에 뜬 **Network 주소**를 확인 (예: `http://192.168.0.15:5173`)
+3. 폰 브라우저에서 그 주소 뒤에 **`/control`** 을 붙여 접속:
+   → `http://192.168.0.15:5173/control`
+4. 폰 화면에서:
+   - **차트 심볼** 버튼 (BTC · NASDAQ · NQ선물 · KORU · NYSE · ES선물 · S&P · GOLD) → 누르면 방송 차트가 1.5초 내 바뀜
+   - **봉 간격** (1분/5분/15분/1시간/일봉)
+   - **수동 속보** → 문구 입력 + 강도 선택 + "속보 송출" → 방송 화면에 BREAKING 토스트 즉시 표시
+
+> 폰에서 접속이 안 되면: 맥 방화벽에서 5173 포트 차단됐을 수 있음 →
+> 시스템 설정 → 네트워크 → 방화벽 잠깐 끄거나, 같은 와이파이인지 재확인.
+
+---
+
+## 2. 어디를 봐야 하나? (2가지 방법)
+
+### 방법 A — 그냥 모니터로 보기
+브라우저에서 `http://localhost:5173` 을 열고 **F11(전체화면)**.
+
+### 방법 B — OBS로 라이브스트리밍 (YouTube/Twitch 송출)
+1. OBS 실행 → **소스(Sources)** 패널에서 `+` → **브라우저(Browser)** 추가
+2. 설정:
+   - **URL**: `http://localhost:5173`
+   - **너비**: `1920`  /  **높이**: `1080` ← **반드시 이 값**
+   - ❌ **"장면이 활성화될 때 새로고침" 체크 해제**
+   - ❌ **"보이지 않을 때 소스 종료(Shutdown source when not visible)" 해제**
+3. 우하단 **방송 시작(Start Streaming)**
+
+> ⚠️ 새로고침은 "최신 데이터"가 아니라 **상태 전멸**입니다. 리로드하면 속보 이력이 사라지고
+> 배지가 초기화됩니다. 데이터는 어차피 15초마다 알아서 갱신됩니다.
+
+> ⚠️ 소스 크기를 1920×1080이 아닌 값으로 두면 안 됩니다. 폭이 1200px 이하로 잡히면
+> **모바일 세로 배치로 전환**되어 프레임 밖이 잘립니다. (OBS 안에서는 `window.obsstudio`를
+> 감지해 이 전환을 막지만, 크기 자체는 직접 맞춰야 합니다.)
+
+> ⚠️ OBS를 켜기 **전에** 먼저 터미널에서 `npm run dev`가 돌고 있어야 합니다.
+
+**📌 방송 시작 전 반드시 육안 확인 (자동 감지 불가):**
+차트는 TradingView가 만드는 **크로스오리진 iframe**이라, 안에서 무엇이 그려지는지
+이 앱의 코드로는 원리적으로 읽을 수 없습니다. 송출 전에 OBS 프리뷰에서
+**중앙 차트 1개 + 하단 미니차트 3개가 실제로 그려지는지 눈으로 확인**하세요.
+
+- 차트 자리가 검게 나온다면 → OBS **설정 > 고급 > 소스 > 브라우저 소스 하드웨어 가속** 해제 후 재시작
+- "차트를 불러올 수 없어요" 문구가 뜬다면 → 방화벽/DNS에서 `tradingview.com`과
+  **`tradingview-widget.com`** 두 도메인을 모두 허용해야 합니다 (둘 다 필요합니다)
+
+---
+
+## 3. 화면 구성
+
+| 위치 | 내용 |
+|------|------|
+| 좌측 상단 | TOP STORY — 임팩트×최신성 점수가 가장 높은 기사 (출처·경과시간 표기) |
+| 좌측 | MARKET HEADLINES — 임팩트 가중 최신순 7건 (빨강=ALERT, 노랑=주요, 각 기사에 `Nh ago`) |
+| **중앙 (주인공)** | **차트 (TradingView) — 폰 컨트롤러로 심볼·봉 간격 전환** |
+| 중앙 하단 | 미니차트 3종 (NASDAQ 100 · S&P 500 · DOW) — 위 등락률과 **같은 상품(QQQ/SPY/DIA)** |
+| 우측 상단 | NEXT KEY EVENT — 다음 실적 카운트다운 |
+| 우측 | EARNINGS CALENDAR — 워치리스트(★) 우선 + 대형주. 마이크로캡 노이즈는 필터됨 |
+| 하단 | 고지 밴드(고정) + 티커 테이프 (흐르는 시세) |
+| 팝업 | BREAKING(45분 이내·사운드) / UPDATE(6시간 이내·무음) + 컨트롤러 수동 속보. 12초 표시 |
+| 우측 상단 뱃지 | **시세 기준 시각** — 4절 참고 (초록/노랑 LAG/빨강 STALE/회색 PREV CLOSE) |
+
+> **워치리스트**(ARM·MRVL·VICR·TTMI·COHR·SNX)는 전용 패널 대신
+> 티커 테이프 · 종목 속보 스캔 · 실적 캘린더 ★ 우대에 반영됩니다.
+
+---
+
+## 4. 데이터 정확성 (반드시 읽을 것)
+
+**이 화면의 숫자로 매매하지 마세요.** 값 자체는 정확하지만 *시점*이 늦습니다.
+
+- **소스**: Finnhub 무료 티어 (`.env`의 키 — stock-gate와 동일)
+- **시세·변화율**: Finnhub `/quote` 원본값 그대로 (임의 계산 없음). 독립 소스와 소수점까지 일치 확인함.
+- **⚠️ 확장시간(프리/애프터) 미지원**: 무료 티어 `/quote`는 정규장 밖에서 **갱신되지 않습니다**.
+  장 시작 전에는 화면 값이 전부 **전일 종가**입니다. 그래서 우상단 배지가 그 사실을 그대로 표시합니다:
+  - `07/22, 10:43 ET` (초록) = 정규장 중, 2분 이내 데이터
+  - `LAG …` (노랑) = 정규장 중인데 2분 이상 지연
+  - `STALE …` (빨강) = 정규장 중인데 15분 이상 지연 — 화면 값을 믿지 말 것
+  - `PREV CLOSE 07/21, 16:00 ET` (회색) = 장 밖. 전일 종가라는 뜻이며 정상 상태입니다.
+  - `NO DATA` (빨강) = 시세를 하나도 받지 못함
+  > 이 시각은 **Finnhub가 알려준 마지막 체결 시각**입니다. "내가 데이터를 받아온 시각"이 아닙니다.
+  > (예전 버전은 후자를 표시해서, 몇 시간 묵은 값에도 계속 초록불이 켜졌습니다.)
+- **시간**: 모든 시각은 미 동부시간(ET), 서머타임 자동 반영.
+- **마켓 상태**: 정규장/프리마켓/애프터아워/주말에 더해 **미 증시 휴장일·조기폐장(13:00 ET)** 반영
+  (`src/lib/market-hours.ts`). 휴장일 표는 **2027년까지** 들어 있고, 그 이후에는 `STATUS UNVERIFIED`로 표시됩니다.
+- **실적 카운트다운**: Finnhub가 `hour`(bmo/amc)를 주면 정확한 시각, 안 주면 `시각 미정`으로 표시하고
+  카운트다운도 `IN ~7d`처럼 정밀도를 낮춥니다. (실제로 대부분의 종목은 `hour`가 비어 있습니다.)
+- **Breaking**: 2단 등급입니다.
+  - 🔴 `BREAKING` (사운드 O) = **45분 이내** 기사
+  - 🟡 `UPDATE` (무음) = 45분~6시간
+  - 6시간 넘은 기사는 토스트로 뜨지 않습니다.
+  > Finnhub 무료 뉴스 피드는 기사 나이 중앙값이 **약 30시간**입니다. 진짜 속보 채널이 아닙니다.
+  > 이 화면의 뉴스는 "무슨 일이 있었는지 훑는 용도"이지, 남보다 먼저 아는 용도가 아닙니다.
+
+### API 호출 예산 (중요)
+
+Finnhub 무료 한도는 **분당 60회**입니다. **폴링 주기 ≠ 호출 횟수**입니다 —
+`/api/boards` 1회는 유일 티커 17개를 조회하므로 그 자체로 17회입니다.
+
+현재 기본 설정(폴링 15초 + 서버 캐시 TTL 20초) 기준 **브라우저 1대당 약 35~50 req/min**입니다.
+
+> **탭을 2개 이상 열면 한도를 넘습니다.** 오버레이(`/`)와 컨트롤러(`/control`)는 괜찮지만
+> (컨트롤러는 시세를 받지 않음), 오버레이를 두 화면에 띄우면 호출량이 2배가 됩니다.
+
+한도를 넘으면 429가 나고, 서버는 **5분 이내의 캐시까지만** 재사용한 뒤 그보다 오래되면 값을 버립니다
+(그러면 화면에 `—`와 `NO DATA`가 뜹니다). 오래된 값을 새 값인 척 내보내지 않습니다.
+
+---
+
+## 5. 종목 / 차트 바꾸기
+
+**워치리스트** (우측 stock-gate 종목) — `src/lib/server/finnhub.ts` 상단:
+
+```ts
+export const WATCHLIST = ["ARM", "MRVL", "VICR", "TTMI", "COHR", "SNX"];
+```
+
+**차트 프리셋** (컨트롤러 버튼 목록) — `src/lib/server/control.ts` 상단.
+`tvSymbol`은 TradingView 심볼 형식(거래소:티커). 저장하면 dev 서버가 자동 반영합니다.
+
+> ### ⚠️ 심볼을 추가하기 전에 반드시 읽으세요
+> TradingView **무료 임베드에서는 지수와 선물이 렌더되지 않습니다.**
+> 차트 대신 `This symbol is only available on TradingView` 모달이 뜹니다.
+>
+> 실브라우저로 전수 확인한 결과입니다:
+>
+> | ❌ 렌더 안 됨 | ✅ 렌더 됨 |
+> |---|---|
+> | `NASDAQ:IXIC`, `TVC:IXIC` | `NASDAQ:QQQ` (나스닥100 ETF) |
+> | `SP:SPX`, `TVC:SPX` | `AMEX:SPY` (S&P500 ETF) |
+> | `DJI`, `DJ:DJI`, `TVC:DJI` | `AMEX:DIA` (다우 ETF) |
+> | `TVC:NYA` | `AMEX:IWM`, `NASDAQ:SOXX`, `AMEX:KORU` |
+> | `CME_MINI:NQ1!`, `CME_MINI:ES1!` | `BINANCE:BTCUSDT`, `OANDA:XAUUSD` |
+>
+> **`TVC:` 미러도 똑같이 막힙니다 — 지수는 우회로가 없습니다.**
+> 그래서 지수는 전부 추종 ETF로 대체했고, 덕분에 헤더 등락률(SPY/QQQ/DIA 기준)과
+> 차트가 마침내 같은 상품을 가리킵니다.
+>
+> 새 심볼을 넣었으면 **브라우저에서 실제로 그려지는지 반드시 눈으로 확인**하세요.
+> 앱은 크로스오리진 때문에 "iframe이 생겼는지"까지만 알 수 있습니다.
+
+---
+
+## 6. 환경
+
+- **Node.js 18 이상** (Vite 5 / Svelte 4 / SvelteKit 2)
+- Node가 없다면: https://nodejs.org 에서 **v18 또는 v20 LTS** 설치
+- 타입 검사: `npm run check`
+
+---
+
+## 7. ⚖️ 공개 방송(수익화 스트리밍) 전 확인할 것
+
+**개인 모니터링은 자유롭지만, 공개 송출은 라이선스 문제가 별개로 존재합니다.**
+
+- **Finnhub 무료/개인 플랜은 데이터 재배포를 금지합니다.** 화면에 띄워 공개 방송에 내보내는 것이
+  재배포에 해당할 수 있으며, 이는 **수익화 여부와 무관하게** 성립합니다.
+- **TradingView 위젯**은 어트리뷰션(출처 표기)을 조건으로 무료 사용을 허용합니다.
+  하단 고지 밴드의 `Charts by TradingView` 링크가 그 역할이므로 **지우지 마세요**.
+- 화면 하단 고지 밴드(`DELAYED / PREV CLOSE · 정보 제공용, 투자 조언 아님 · Data: Finnhub ·
+  Charts by TradingView`)는 지연 고지 + 비매매 고지 + 소스 표기를 한 줄로 만족시킵니다.
+  **제거하지 마세요.**
+- `static/sfx/breaking.mp3`는 출처가 확인되지 않았습니다. 공개 방송에 쓰기 전에
+  라이선스가 명확한 음원으로 교체하고 `static/sfx/LICENSE.txt`에 출처를 남기세요.
+
+> 상업적 공개 방송을 계획한다면 Finnhub/거래소와 별도 계약이 필요합니다.
+> self-serve 유료 플랜을 결제하는 것만으로는 해결되지 않을 수 있습니다.
+
+---
+
+## 8. 이 도구의 한계 (솔직하게)
+
+- **남보다 먼저 알기 위한 도구가 아닙니다.** 뉴스 피드가 수 시간 늦고, 시세는 정규장 밖에서 멈춥니다.
+- **매매 판단에 쓰지 마세요.** 주문 전에는 반드시 증권사 정식 시세로 재확인하세요.
+- 이 프로젝트의 대체 불가능한 가치는 **"폰으로 방송 화면을 원격 연출하는 것"** 입니다 —
+  차트 심볼/봉 간격 전환(`/control`)과 진행자가 타이핑한 수동 BREAKING 자막 송출.
+  데이터 패널만 필요하다면 TradingView를 그냥 여는 편이 낫습니다.

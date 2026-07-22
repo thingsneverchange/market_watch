@@ -1,91 +1,62 @@
 import type { RequestHandler } from "./$types";
-import { OPENAI_SECRET } from "$env/static/private";
-
-const NYT_RSS = "https://rss.nytimes.com/services/xml/rss/nyt/Business.xml";
-
-// [핵심] 더 똑똑해진 키워드 분석기
-function heuristicAnalysis(title: string) {
-    const t = title.toLowerCase();
-    let level = 3; // 기본 MID
-    let sentiment = "neu";
-
-    // Level 5 (MAJOR) 키워드
-    if (t.match(/fed|fomc|rate|cpi|inflation|war|crisis|panic|tariff|sanction|ban|trump|biden|earnings/)) level = 5;
-    else if (t.match(/soar|plunge|surge|record|hike|cut|break/)) level = 4;
-
-    // 감성 분석 (색상 결정)
-    if (t.match(/up|rise|gain|bull|profit|settle|jump|record|beat|rally/)) sentiment = "pos";
-    else if (t.match(/down|fall|drop|loss|bear|worry|crash|sue|fine|tariff|ban|sanction|warn|miss/)) sentiment = "neg";
-
-    return { level, sentiment };
-}
-
-async function fetchRSS() {
-  try {
-    const r = await fetch(NYT_RSS);
-    if (!r.ok) return [];
-    const xml = await r.text();
-    const items = [];
-    const blocks = xml.split("<item>").slice(1);
-
-    for (const b of blocks) {
-      // CDATA 파싱 강화
-      const titleRaw = (b.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/)?.[1] ?? b.match(/<title>(.*?)<\/title>/)?.[1])?.trim();
-
-      // HTML 태그 제거 및 디코딩 등 간단 정제
-      const title = titleRaw?.replace(/&quot;/g, '"')?.replace(/&amp;/g, '&');
-
-      const pub = b.match(/<pubDate>(.*?)<\/pubDate>/)?.[1];
-      let timeET = "NOW";
-
-      if (pub) {
-         const d = new Date(pub);
-         if(!Number.isNaN(d.getTime())){
-             timeET = new Intl.DateTimeFormat("en-US", {
-                timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true
-              }).format(d);
-         }
-      }
-
-      if (title) items.push({ title, timeET });
-      if (items.length >= 15) break;
-    }
-    return items;
-  } catch { return []; }
-}
+import { getMarketNews } from "$lib/server/finnhub";
+import { getFeed, fresh } from "$lib/server/marketfeed";
 
 export const GET: RequestHandler = async () => {
-  const items = await fetchRSS();
+  const [news, feed] = await Promise.all([getMarketNews(24), getFeed()]);
+  const nowSec = Date.now() / 1000;
 
-  // 1. Driver Text: 최신 뉴스 그대로 사용 (글자수 제한 해제)
-  // 너무 길면 UI에서 CSS로 ... 처리하는 게 낫습니다.
-  let driverText = "Market awaits key catalysts.";
-  let driverSent = "neutral";
+  // 예전에는 level 내림차순으로만 정렬해서 "LIVE HEADLINES" 상단에
+  // 20시간 전 level 5 기사가 영구히 박제됐다.
+  // 반대로 순수 시간순으로 바꾸면 상단 두 줄이 칼럼·잡기사로 채워진다(실측).
+  // → 시간 감쇠 점수: 6시간마다 레벨 1씩 깎는다.
+  const decay = (n: { level: number; epoch: number }) =>
+    n.level - (nowSec - n.epoch) / 3600 / 6;
+  const ranked = [...news].sort((a, b) => decay(b) - decay(a));
+  const top = ranked[0];
 
-  if (items.length > 0) {
-      const top = items[0];
-      const ana = heuristicAnalysis(top.title);
-      // "Focus on: " 같은 접두어 제거하여 깔끔하게
-      driverText = top.title;
-      driverSent = ana.sentiment;
+  // ── TOP STORY ────────────────────────────────────────
+  // 1순위: Claude Code 가 만든 판단 (신선할 때만)
+  // 2순위: 키워드 규칙 기반 (기존 동작)
+  // 어느 쪽인지 화면이 표시할 수 있도록 source 를 반드시 실어 보낸다.
+  const ai = fresh(feed, "top_story");
+  let driver;
+  if (ai) {
+    driver = {
+      text: ai.payload.text,
+      sentiment: ai.payload.sentiment,
+      source: ai.payload.sources[0]?.title ?? "",
+      url: ai.payload.sources[0]?.url ?? "",
+      why: ai.payload.why,
+      confidence: ai.payload.confidence,
+      epoch: Math.floor(ai.generatedAt / 1000),
+      origin: "ai" as const,
+      noData: false
+    };
+  } else if (top) {
+    driver = {
+      text: top.title,
+      sentiment: top.sentiment,
+      source: top.source,
+      url: top.url,
+      why: "",
+      confidence: "",
+      epoch: top.epoch,
+      origin: "rule" as const, // 인과를 계산하지 않은 키워드 규칙 결과
+      noData: false
+    };
+  } else {
+    driver = {
+      text: "NO NEWS FEED", sentiment: "neu", source: "", url: "", why: "",
+      confidence: "", epoch: 0, origin: "none" as const, noData: true
+    };
   }
 
-  // 2. News List 분석
-  const analyzedNews = items.slice(0, 5).map((x, i) => {
-      const h = heuristicAnalysis(x.title);
-      return {
-          ...x,
-          idx: i,
-          sentiment: h.sentiment,
-          level: h.level
-      };
+  // driver 로 쓴 기사는 리스트에서 제외 (같은 문장이 화면에 두 번 나오던 문제).
+  // 7건 = 좌측 컬럼이 스크롤바 없이 담을 수 있는 실제 개수.
+  const list = ranked.filter((n) => !top || n.id !== top.id).slice(0, 7);
+
+  return new Response(JSON.stringify({ driver, news: list, serverNow: Math.floor(nowSec) }), {
+    headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
-
-  // 중요도 순 정렬
-  analyzedNews.sort((a,b) => b.level - a.level);
-
-  return new Response(JSON.stringify({
-      driver: { text: driverText, sentiment: driverSent },
-      news: analyzedNews
-  }));
 };

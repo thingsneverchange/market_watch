@@ -1,0 +1,15 @@
+{
+  "name": "market-feed",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Claude Code 가 쓰고 market_watch 가 읽는 마켓 판단 피드 (의존성 0개)",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "dev": "node --watch src/server.mjs",
+    "smoke": "node scripts/smoke-test.mjs"
+  }
+}

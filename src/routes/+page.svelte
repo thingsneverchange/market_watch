@@ -1,363 +1,732 @@
 <script lang="ts">
   import "$lib/css/global.css";
-  import MinimalChart from "$lib/components/chart.svelte";
   import BreakingToast from "$lib/components/BreakingToast.svelte";
-  import MiniViz from "$lib/components/MiniViz.svelte";
-  import ImpactBar from "$lib/components/ImpactBar.svelte";
+  import TVChart from "$lib/components/TVChart.svelte";
+  import { marketState } from "$lib/market-hours";
   import { onMount } from "svelte";
 
-  const audioMods = import.meta.glob("$lib/audio/*.{mp3,wav,ogg}", { eager: true, query: "?url", import: "default" }) as Record<string, string>;
-  const audioSources = Object.values(audioMods);
-
-  // --- 상태 ---
+  // ---- 상태 ----
   let etNow = "";
   let marketMsg = "LOADING";
   let isMarketOpen = false;
+  let marketSession = "CLOSED";
 
-  let boards = {
-    top: [] as any[],
-    tape: [] as any[],
-    movers: [] as any[]
-  };
+  // 지수 슬롯은 응답 배열이 아니라 **고정 라벨 목록** 기준으로 그린다.
+  // 예전에는 티커가 죽으면 배열에서 조용히 빠져 자리째 사라지고 나머지가 왼쪽으로 밀렸다.
+  const INDEX_LABELS = ["S&P 500", "NASDAQ 100", "DOW", "NVDA", "AAPL", "MSFT"];
 
+  let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   let digest = {
-    driver: { text: "Analyzing Market Data...", sentiment: "neutral" },
+    driver: { text: "—", sentiment: "neu", source: "", url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
     news: [] as any[]
   };
-
-  let macro = { title: "LOADING...", time: new Date(Date.now() + 3600*1000*24), imp: 5 };
+  let macro: { title: string; time: Date | null; imp: number; estimated: boolean; note: string; origin: string } =
+    { title: "—", time: null, imp: 4, estimated: true, note: "", origin: "rule" };
   let macroText = "--:--";
+  let upcoming: any[] = []; // 다가오는 실적 상세 리스트
 
-  let breakingData: { headline: string, level: number } | null = null;
-  let lastBreakingMsg = ""; // [중복 방지용] 마지막에 띄운 뉴스 기억
+  // ---- 속보 토스트 (단일 소유자) ----
+  // 예전에는 전역 변수 1개 + writer 2개(자동/수동) + 추적되지 않는 setTimeout N개 구조라
+  // 두 번째 속보가 무음·조기소멸했고, 새로고침하면 유령 속보가 사이렌과 함께 재방송됐다.
+  const BREAKING_MS = 12000;
+  type Toast = { seq: number; headline: string; level: number; manual: boolean; silent: boolean; ageSec: number };
+  let breakingData: Toast | null = null;
+  let toastTimer: ReturnType<typeof setTimeout> | null = null;
+  let toastSeq = 0;
+
+  let seenBreaking = new Map<string, number>(); // id → 처음 본 시각(ms). 나이 기준으로 정리한다.
+  let breakingBooted = false;                   // 첫 로드 땐 밀린 뉴스 폭탄 억제
+  let manualBooted = false;
+  let lastManualBreakingId = 0;
+
+  // 하단 지수 미니차트.
+  // ※ 차트와 옆의 %가 **같은 상품**이어야 한다. 예전엔 차트=IXIC(종합), %=QQQ(나스닥100) 였다.
+  //   또 IXIC / SP:SPX / 접두어 없는 "DJI" 는 TradingView 무료 임베드에서 렌더되지 않는다.
+  const MINI_CHARTS = [
+    { label: "NASDAQ 100", tv: "NASDAQ:QQQ" },
+    { label: "S&P 500",    tv: "AMEX:SPY" },
+    { label: "DOW",        tv: "AMEX:DIA" }
+  ];
+
+  // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"
+  let dataAsOf: number | null = null;
+  let firstLoadDone = false;
+  let freshness: { cls: string; text: string } = { cls: "", text: "…" };
+
+  const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
+
+  // 방송 컨트롤 (컨트롤러가 조종 → 오버레이가 폴링 반영)
+  let chartSymbol = "NASDAQ:QQQ";
+  let chartInterval = "1";
+  let chartLabel = "NASDAQ 100";
+  let ctlVersion = 0;
 
   let scale = 1;
 
-  // --- 로직 ---
   function updateTimers() {
     const now = new Date();
-    etNow = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true }).format(now);
+    etNow = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
+    }).format(now);
 
-    // 마켓 오픈 체크
-    const et = new Date(now.toLocaleString("en-US", { timeZone: "America/New_York" }));
-    const min = et.getHours()*60 + et.getMinutes();
-    const day = et.getDay();
+    // 휴장일·조기폐장까지 아는 공용 시장시계. 예전에는 이 로직이 서버/클라에 복붙돼 있었고
+    // 휴장일 처리가 없어 추수감사절·크리스마스에도 "MARKET OPEN" 이 켜졌다.
+    const s = marketState(now);
+    isMarketOpen = s.open;
+    marketMsg = s.msg;
+    marketSession = s.session;
 
-    if (day===0 || day===6) { isMarketOpen=false; marketMsg="WEEKEND"; }
-    else if (min>=570 && min<960) { isMarketOpen=true; marketMsg="MARKET OPEN"; }
-    else { isMarketOpen=false; marketMsg = min<570 ? "PRE-MARKET" : "MARKET CLOSED"; }
+    freshness = computeFreshness(s.open);
 
-    // Key Event 카운트다운
-    if(macro.time) {
-        const diff = macro.time.getTime() - now.getTime();
-        // [수정] 0 이하면 RELEASED 대신 LIVE NOW 처리하거나, 다음 이벤트로 넘김
-        if(diff <= -60000) macroText = "RELEASED"; // 1분 지남
-        else if(diff <= 0) macroText = "LIVE NOW"; // 진행중
-        else {
-            const totalH = Math.floor(diff / 3600000);
-            const totalM = Math.floor((diff % 3600000) / 60000);
-            macroText = `IN ${totalH}h ${totalM}m`;
-        }
+    if (macro.time) {
+      const diff = macro.time.getTime() - now.getTime();
+      if (diff <= -60000) macroText = "RELEASED";
+      else if (diff <= 0) macroText = "LIVE";
+      else {
+        const d = Math.floor(diff / 864e5);
+        const h = Math.floor((diff % 864e5) / 36e5);
+        const m = Math.floor((diff % 36e5) / 6e4);
+        // 시각이 추정치면 분 단위 카운트다운을 주장하지 않는다
+        if (macro.estimated) macroText = d > 0 ? `IN ~${d}d` : `IN ~${h}h`;
+        else macroText = d > 0 ? `IN ${d}d ${h}h` : `IN ${h}h ${m}m`;
+      }
     }
   }
 
-  async function refresh() {
-    // 1. Boards
-    try {
-        const r = await fetch("/api/boards");
-        if(r.ok) {
-            const j = await r.json();
-            // 데이터가 있을 때만 갱신
-            if(j.top && j.top.length > 0) boards = j;
-        }
-    } catch {}
+  /**
+   * 신선도 판정은 세션 인지형이어야 한다.
+   * "15분 넘으면 빨강" 같은 절대 임계값은 주말·장마감 내내 참이라 경보 피로만 만든다.
+   */
+  function computeFreshness(open: boolean): { cls: string; text: string } {
+    if (!firstLoadDone) return { cls: "", text: "…" };
+    if (dataAsOf == null) return { cls: "dead", text: "NO DATA" };
 
-    // 2. Digest (News)
-    try {
-        const r = await fetch("/api/digest");
-        if(r.ok) {
-            const j = await r.json();
-            if(j.driver) digest = j;
+    const ageMin = (Date.now() - dataAsOf) / 60000;
+    const t = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", hour12: false
+    }).format(new Date(dataAsOf));
 
-            // [수정] 뉴스 토스트 중복 방지 로직
-            if(j.news && j.news.length > 0) {
-                const topNews = j.news[0];
-                // Level 5이상 + 이전에 띄운 뉴스가 아닐 때만
-                if(topNews.level >= 5 && topNews.title !== lastBreakingMsg) {
-                    // 확률 체크 (너무 자주 뜨지 않게)
-                    if(Math.random() > 0.5) {
-                        breakingData = { headline: topNews.title, level: topNews.level };
-                        lastBreakingMsg = topNews.title;
-
-                        // 10초 뒤에 데이터 null로 초기화 (컴포넌트가 사라져도 데이터는 지워야 함)
-                        setTimeout(() => { breakingData = null; }, 10000);
-                    }
-                }
-            }
-        }
-    } catch {}
-
-    // 3. Calendar
-    try {
-        const r = await fetch("/api/calendar");
-        if(r.ok) {
-            const j = await r.json();
-            if(j.next) {
-                macro.title = j.next.title;
-                macro.imp = j.next.imp;
-                macro.time = new Date(j.next.time);
-            }
-        }
-    } catch {}
+    if (open) {
+      if (ageMin > 15) return { cls: "dead", text: `STALE ${t} ET` };
+      if (ageMin > 2) return { cls: "stale", text: `LAG ${t} ET` };
+      return { cls: "", text: `${t} ET` };
+    }
+    // 장 밖에서는 전일 종가인 게 정상이다 — 경보가 아니라 사실을 표기한다.
+    return { cls: "prev", text: `PREV CLOSE ${t} ET` };
   }
 
+  async function jget(u: string) {
+    try { const r = await fetch(u); if (r.ok) return await r.json(); } catch {}
+    return null;
+  }
+
+  async function refresh() {
+    const [b, d, c] = await Promise.all([
+      jget("/api/boards"), jget("/api/digest"), jget("/api/calendar")
+    ]);
+    firstLoadDone = true;
+
+    if (b && Array.isArray(b.top)) {
+      boards = b;
+      // ★ 신선도는 소스가 준 체결 시각(dataAsOf)이다.
+      //   예전 코드는 "내가 fetch 한 시각"을 찍어서, Finnhub 가 429 여도 옛 캐시만 있으면
+      //   초록 UPD 가 계속 갱신됐다 (16시간 묵은 전일 종가를 "방금 갱신"으로 위장).
+      dataAsOf = b.dataAsOf ?? null;
+    } else {
+      dataAsOf = null;
+    }
+    if (d && d.driver) digest = d;
+    if (c && c.next) {
+      macro = {
+        title: c.next.title, imp: c.next.imp, time: new Date(c.next.time),
+        estimated: !!c.next.estimated, note: c.next.note ?? "", origin: c.next.origin ?? "rule"
+      };
+    }
+    if (c && Array.isArray(c.upcoming)) upcoming = c.upcoming;
+
+    freshness = computeFreshness(isMarketOpen);
+  }
+
+  /** 토스트 수명의 유일한 소유자 */
+  function showToast(headline: string, level: number, manual: boolean, silent = false, ageSec = 0) {
+    // 진행자가 띄운 수동 속보를 자동 속보가 덮지 않는다 (방송 사고 방지)
+    if (breakingData?.manual && !manual) return;
+    if (toastTimer) clearTimeout(toastTimer);
+    breakingData = { seq: ++toastSeq, headline, level, manual, silent, ageSec };
+    toastTimer = setTimeout(dismissToast, BREAKING_MS);
+  }
+  function dismissToast() {
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    breakingData = null;
+  }
+
+  async function refreshBreaking() {
+    const j = await jget("/api/breaking");
+    // ※ 예전의 `if (!j?.breaking?.length) return;` 는 응답이 빈 배열이면 breakingBooted 를
+    //   영영 세우지 못해, 나중에 도착한 진짜 속보 배치를 통째로 토스트로 쏟아냈다.
+    if (!j || !Array.isArray(j.breaking)) return;
+
+    const now = Date.now();
+    if (!breakingBooted) {
+      for (const n of j.breaking) seenBreaking.set(n.id, now);
+      breakingBooted = true;
+      return;
+    }
+
+    // 미열람 항목 중 **최신 1건만** 토스트하고 나머지는 전부 seen 처리한다.
+    // (예전에는 15초마다 하나씩 시간을 거슬러 재생됐다)
+    const fresh = j.breaking.filter((n: any) => !seenBreaking.has(n.id));
+    for (const n of fresh) seenBreaking.set(n.id, now);
+    const pick = fresh[0];
+    if (pick) {
+      showToast(pick.title, pick.level, false, pick.kind !== "breaking", pick.ageSec ?? 0);
+    }
+
+    // 나이 기준 정리. 개수 기준으로 자르면 잘려나간 id 가 다시 등장했을 때
+    // 이미 방송한 속보가 재토스트된다 (피드가 최대 50시간 머문다).
+    for (const [id, at] of seenBreaking) if (now - at > 48 * 3600e3) seenBreaking.delete(id);
+  }
+
+  // 컨트롤러 상태 폴링 — 차트 심볼/봉 전환 + 수동 속보
+  async function refreshControl() {
+    const j = await jget("/api/control");
+    if (!j) return;
+    if (j.version !== ctlVersion) {
+      ctlVersion = j.version;
+      if (j.tvSymbol && j.tvSymbol !== chartSymbol) chartSymbol = j.tvSymbol;
+      if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
+      if (j.chartLabel) chartLabel = j.chartLabel;
+    }
+
+    if (!manualBooted) {
+      // 첫 폴링에서 서버에 남아 있던 옛 수동 속보를 "이미 본 것"으로 처리한다.
+      // 이게 없으면 방송 중 새로고침할 때마다 몇 시간 전 속보가 사이렌과 함께 재방송된다.
+      manualBooted = true;
+      lastManualBreakingId = j.breaking ? j.breaking.id : 0;
+    } else if (j.breaking) {
+      // 15초 넘은 수동 속보는 띄우지 않는다 (재연결/지연 시 유령 재생 방지)
+      if (j.breaking.id !== lastManualBreakingId && Date.now() - (j.breaking.at ?? 0) < 15000) {
+        lastManualBreakingId = j.breaking.id;
+        showToast(j.breaking.headline, j.breaking.level, true);
+      }
+    } else if (lastManualBreakingId !== 0) {
+      // 컨트롤러의 '내리기' → 최대 1.5초 내 화면에서 실제로 내려간다 (예전엔 아무 효과가 없었다)
+      lastManualBreakingId = 0;
+      if (breakingData?.manual) dismissToast();
+    }
+  }
+
+  let mobile = false;
   function resize() {
-      const sx = window.innerWidth / 1920;
-      const sy = window.innerHeight / 1080;
-      scale = Math.min(sx, sy);
+    // OBS 브라우저 소스에서는 절대 모바일 재배치를 하면 안 된다 (송출 프레임이 깨진다).
+    // window.obsstudio 는 OBS CEF 가 주입하는 객체라 URL 파라미터나 사용자 기억력이 필요 없다.
+    const inOBS = typeof window !== "undefined" && !!(window as any).obsstudio;
+    mobile = !inOBS && window.innerWidth <= 1200;
+    scale = mobile ? 1 : Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  }
+
+  function sent(s: string) {
+    if (s === "bull" || s === "pos") return "pos";
+    if (s === "bear" || s === "neg") return "neg";
+    return "neu";
+  }
+
+  /** 기사 나이. 화면에 시:분만 찍히면 15시간 된 기사가 오늘 것처럼 보인다. */
+  function ago(epochSec: number): string {
+    if (!epochSec) return "";
+    const m = (Date.now() / 1000 - epochSec) / 60;
+    if (m < 1) return "just now";
+    if (m < 60) return `${Math.round(m)}m ago`;
+    if (m < 60 * 48) return `${Math.round(m / 60)}h ago`;
+    return `${Math.round(m / 1440)}d ago`;
   }
 
   onMount(() => {
     resize();
     window.addEventListener("resize", resize);
-    refresh();
+    refresh(); refreshBreaking(); refreshControl();
 
+    // ※ 폴링 주기는 "호출 횟수"가 아니다. refresh 1회 = 유일 티커 17개 조회다.
+    //   Finnhub 무료 한도 60 req/min 안에 들어오려면 주기 15s + 서버 TTL 20s 조합이 필요하다.
+    //   (예전 설정은 실측 176 req/min 으로 한도의 3배였고, 상시 429 상태였다)
     const t1 = setInterval(updateTimers, 1000);
-    const t2 = setInterval(refresh, 10000); // 10초 주기
-
+    const t2 = setInterval(refresh, 15000);
+    const t3 = setInterval(refreshBreaking, 15000);
+    const t5 = setInterval(refreshControl, 1500); // 컨트롤러 반응성
     return () => {
-        window.removeEventListener("resize", resize);
-        clearInterval(t1);
-        clearInterval(t2);
+      window.removeEventListener("resize", resize);
+      [t1, t2, t3, t5].forEach(clearInterval);
+      if (toastTimer) clearTimeout(toastTimer);
     };
   });
-
-  function getSent(s:string) {
-      if(s==='bull'||s==='pos') return 'pos';
-      if(s==='bear'||s==='neg') return 'neg';
-      return 'neu';
-  }
 </script>
 
-<div class="wrap" style="transform: scale({scale});">
-    {#if breakingData}
-        <BreakingToast headline={breakingData.headline} level={breakingData.level} />
-    {/if}
+<div class="wrap" class:m={mobile} style={mobile ? "" : `transform: scale(${scale});`}>
+  <!-- {#key} 가 없으면 breakingData 가 truthy→truthy 로 바뀔 때 Svelte 가 컴포넌트를 재생성하지 않아
+       두 번째 속보는 소리도 등장 애니메이션도 나지 않는다. 헤드라인이 아니라 단조증가 seq 를 키로 쓴다
+       (같은 문구를 다시 송출하는 경우가 실제로 있다). -->
+  {#if breakingData}
+    {#key breakingData.seq}
+      <BreakingToast
+        headline={breakingData.headline}
+        level={breakingData.level}
+        silent={breakingData.silent}
+        ageSec={breakingData.ageSec}
+      />
+    {/key}
+  {/if}
 
-    <header class="hd">
-        <div class="hd-l">
-            <div class="logo">FIRMNOTE</div>
-            <div class="badge" class:active={isMarketOpen}>{marketMsg}</div>
+  <!-- ===== HEADER ===== -->
+  <header class="hd">
+    <div class="hd-l">
+      <div class="logo">MARKET<span>WATCH</span></div>
+      <div class="badge" class:active={isMarketOpen}>
+        <span class="dot"></span>{marketMsg}
+      </div>
+    </div>
+    <!-- 고정 슬롯 렌더: 티커가 죽어도 자리가 남고 "—" 로 결측을 드러낸다 -->
+    <div class="top-strip">
+      {#each INDEX_LABELS as k}
+        {@const t = boards.top.find((x) => x.k === k)}
+        <div class="idx">
+          <span class="k">{k}</span>
+          {#if t}
+            <span class="v" class:u={t.pct >= 0} class:d={t.pct < 0}>
+              {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%
+            </span>
+          {:else}
+            <span class="v miss" title="시세를 받지 못했습니다">—</span>
+          {/if}
         </div>
-        <div class="top-strip">
-            {#each boards.top as t}
-                <div class="idx">
-                    <span class="k">{t.k}</span>
-                    <span class="v" class:u={t.pct>=0} class:d={t.pct<0}>
-                        {t.pct>0?"+":""}{t.v}%
-                    </span>
+      {/each}
+    </div>
+    <div class="hd-r">
+      <div class="clock">{etNow} <span class="et">ET</span></div>
+      <!-- 항상 렌더한다. 예전에는 첫 요청이 실패하면 배지가 DOM 에 아예 생기지 않아
+           오프라인 콜드스타트가 "조용한 장"처럼 보였다. -->
+      <div class="upd {freshness.cls}" title="시세 기준 시각 (소스가 준 마지막 체결 시각)">
+        <span class="upd-dot"></span>{freshness.text}
+      </div>
+    </div>
+  </header>
+
+  <!-- ===== BODY ===== -->
+  <main class="grid">
+    <!-- LEFT: news -->
+    <section class="col left">
+      <!-- "MARKET DRIVER" 는 인과를 계산하지 않는다 — 규칙에 가장 잘 걸린 문장일 뿐이라 TOP STORY 로 정직화 -->
+      <div class="driver {sent(digest.driver.sentiment)}" class:nodata={digest.driver.noData}>
+        <!-- 어떤 방식으로 고른 문장인지 화면에 밝힌다.
+             AI = Claude 가 뉴스를 읽고 판단 / 규칙 = 키워드 정규식이 고른 것 -->
+        <div class="lbl">
+          TOP STORY
+          <span class="origin" class:ai={digest.driver.origin === "ai"}>
+            {digest.driver.origin === "ai" ? "AI 판단" : digest.driver.origin === "rule" ? "규칙기반" : "—"}
+          </span>
+          {#if digest.driver.origin === "ai" && digest.driver.confidence}
+            <span class="conf {digest.driver.confidence}">{digest.driver.confidence}</span>
+          {/if}
+          {#if digest.driver.source}<span class="drv-src">{digest.driver.source}</span>{/if}
+          {#if digest.driver.epoch}<span class="drv-age">{ago(digest.driver.epoch)}</span>{/if}
+        </div>
+        <div class="driver-txt">{digest.driver.text}</div>
+        {#if digest.driver.why}<div class="driver-why">{digest.driver.why}</div>{/if}
+      </div>
+
+      <div class="panel news">
+        <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
+        <div class="lbl">
+          MARKET HEADLINES
+          <span class="src-hint">최신순 · 임팩트 가중</span>
+        </div>
+        <div class="news-list">
+          {#each digest.news as n}
+            <a class="news-item {sent(n.sentiment)}" href={n.url} target="_blank" rel="noreferrer">
+              <div class="n-side" class:l5={n.level >= 5} class:l4={n.level === 4}></div>
+              <div class="n-body">
+                <div class="n-meta">
+                  <span class="n-time">{n.timeET}</span>
+                  {#if n.epoch}<span class="n-age">{ago(n.epoch)}</span>{/if}
+                  {#if n.source}<span class="n-src">{n.source}</span>{/if}
+                  {#if n.level >= 5}<span class="n-flag">ALERT</span>{/if}
                 </div>
-            {/each}
+                <div class="n-tit">{n.title}</div>
+              </div>
+            </a>
+          {/each}
+          {#if digest.news.length === 0}
+            <div class="empty">No headlines yet…</div>
+          {/if}
         </div>
-        <div class="hd-r">
-            <div class="clock">{etNow} ET</div>
-            <MiniViz sources={audioSources} volume={0.4}/>
-        </div>
-    </header>
+      </div>
+    </section>
 
-    <main class="grid">
-        <div class="col left">
-            <div class="card driver {getSent(digest.driver.sentiment)}">
-                <div class="lbl">MARKET DRIVER</div>
-                <div class="driver-txt">{digest.driver.text}</div>
+    <!-- CENTER: 1분봉 차트 (컨트롤러 조종) -->
+    <section class="col center">
+      <div class="chart-card">
+        <div class="chart-head">
+          <span class="ch-name">{chartLabel}</span>
+          <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
+               주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
+          <span class="ch-meta" class:live={isMarketOpen}>
+            {IV_LABEL[chartInterval] ?? chartInterval} · {marketMsg}
+          </span>
+        </div>
+        <div class="chart-body">
+          <TVChart symbol={chartSymbol} interval={chartInterval} />
+        </div>
+      </div>
+
+      <div class="spark-strip">
+        {#each MINI_CHARTS as mc}
+          {@const top = boards.top.find((x) => x.k === mc.label)}
+          <div class="ss-card">
+            <div class="ss-top">
+              <span class="ss-name">{mc.label}</span>
+              {#if top}
+                <span class="ss-pct" class:u={top.pct >= 0} class:d={top.pct < 0}>
+                  {top.pct > 0 ? "+" : ""}{Number(top.pct).toFixed(2)}%
+                </span>
+              {/if}
             </div>
+            <!-- 314x137px 슬롯에 풀 차팅 엔진을 3개 더 띄울 이유가 없다 → 경량 위젯 -->
+            <div class="ss-chart"><TVChart symbol={mc.tv} mini={true} variant="mini" /></div>
+          </div>
+        {/each}
+      </div>
+    </section>
 
-            <div class="card macro">
-                <div class="m-row">
-                    <span class="lbl-y">KEY EVENT</span>
-                    <span class="timer">{macroText}</span>
-                </div>
-                <div class="m-tit">{macro.title}</div>
-            </div>
-
-            <div class="card news">
-                <div class="lbl">IMPACT NEWS</div>
-                <div class="news-list">
-                    {#each digest.news as n}
-                        <div class="news-item {getSent(n.sentiment)}">
-                            <div class="n-meta">
-                                <span class="n-time">{n.timeET}</span>
-                                <ImpactBar level={n.level}/>
-                            </div>
-                            <div class="n-tit">{n.title}</div>
-                        </div>
-                    {/each}
-                </div>
-            </div>
+    <!-- RIGHT: key event + watchlist -->
+    <section class="col right">
+      <div class="keyevent">
+        <div class="ke-row">
+          <span class="ke-lbl">◇ NEXT KEY EVENT</span>
+          <span class="ke-timer">{macroText}</span>
         </div>
+        <div class="ke-tit">{macro.title}</div>
+        {#if macro.note}<div class="ke-note">{macro.note}</div>{/if}
+      </div>
 
-        <div class="col center">
-            <div class="charts-wrap">
-                <div class="c-row h-top">
-                    <div class="c-box">
-                        <MinimalChart symbol="NASDAQ:NDX" interval="5" height={560}/>
-                        <div class="c-ovl">NASDAQ</div>
-                    </div>
-                    <div class="c-box">
-                        <MinimalChart symbol="AMEX:SPY" interval="5" height={560}/>
-                        <div class="c-ovl">S&P 500</div>
-                    </div>
-                    <div class="c-box">
-                        <MinimalChart symbol="DJ:DJI" interval="5" height={560}/>
-                        <div class="c-ovl">DOW JONES</div>
-                    </div>
+      <div class="panel earn">
+        <div class="lbl">📅 EARNINGS CALENDAR</div>
+        <div class="e-list">
+          {#each upcoming as e}
+            <div class="e-row" class:watch={e.watch}>
+              <div class="e-l">
+                <div class="e-tk">
+                  {e.ticker}
+                  {#if e.watch}<span class="e-star">★</span>{/if}
                 </div>
-                <div class="c-row h-bot">
-                    <div class="c-box">
-                        <MinimalChart symbol="OANDA:XAUUSD" interval="15" height={380}/>
-                        <div class="c-ovl">GOLD</div>
-                    </div>
-                    <div class="c-box">
-                        <MinimalChart symbol="BITSTAMP:BTCUSD" interval="15" height={380}/>
-                        <div class="c-ovl">BITCOIN</div>
-                    </div>
+                <div class="e-sub">
+                  {e.dateET} · {e.session}{#if !e.estimated} <span class="e-time">{e.timeET} ET</span>{:else} <span class="e-est">시각 미정</span>{/if}
                 </div>
+              </div>
+              <div class="e-r">
+                <div class="e-dd" class:soon={e.dday <= 1}>
+                  {e.dday <= 0 ? "오늘" : "D-" + e.dday}
+                </div>
+                {#if e.epsEst != null}
+                  <div class="e-eps">EPS 추정 ${Number(e.epsEst).toFixed(2)}</div>
+                {/if}
+              </div>
             </div>
+            {#if e.note}
+              <!-- 해설만 AI가 붙인다. 날짜·시각·EPS 는 위쪽 Finnhub 값 그대로. -->
+              <div class="e-note">{e.note}</div>
+            {/if}
+          {/each}
+          {#if upcoming.length === 0}
+            <div class="empty">다가오는 실적 없음</div>
+          {/if}
         </div>
+      </div>
+    </section>
+  </main>
 
-        <div class="col right">
-            <div class="card movers">
-                <div class="m-head">
-                    ⚡ IMPACT EARNINGS
-                </div>
-                <div class="m-list">
-                    {#each boards.movers as m}
-                        <div class="m-row">
-                            <div class="m-info">
-                                <span class="mt">{m.t}</span>
-                                <span class="m-tag"
-                                      class:g={m.status==='good'}
-                                      class:b={m.status==='bad'}
-                                      class:f={m.status==='future'}>
-                                    {m.label}
-                                </span>
-                            </div>
-                            <span class="mp" class:u={m.pct>=0} class:d={m.pct<0}>
-                                {m.pct>0?"+":""}{Number(m.pct).toFixed(2)}%
-                            </span>
-                        </div>
-                    {/each}
-                    {#if boards.movers.length === 0}
-                        <div class="m-empty">No Data</div>
-                    {/if}
-                </div>
-            </div>
-
-            <div class="card chat">
-                <div class="lbl">LIVE CHAT</div>
-                <div class="chat-area">Chat Embed Area</div>
-            </div>
-        </div>
-    </main>
-
-    <footer class="ft">
-        <div class="track">
-            {#each [...boards.tape, ...boards.tape, ...boards.tape] as t}
-                <div class="mq-item">
-                    <span class="mq-k">{t.k}</span>
-                    <span class="mq-v">{t.v}</span>
-                    <span class="mq-p" class:u={t.pct>=0} class:d={t.pct<0}>
-                        {Number(t.pct).toFixed(2)}%
-                    </span>
-                </div>
-                <span class="mq-sep">•</span>
-            {/each}
-        </div>
-    </footer>
+  <!-- ===== TICKER TAPE ===== -->
+  <footer class="ft">
+    <!-- 고지 밴드: 지연·비매매 고지 + 소스 표기 + TradingView 어트리뷰션.
+         흐르는 테이프 안에 넣으면 스크롤로 사라져 "항상 보임" 요건을 못 채우므로 고정 셀로 둔다. -->
+    <div class="disc">
+      <span>DELAYED / PREV CLOSE · 정보 제공용, 투자 조언 아님</span>
+      <span class="disc-sep">·</span>
+      <span>Data: Finnhub</span>
+      <span class="disc-sep">·</span>
+      <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
+    </div>
+    <!-- 흐르는 테이프는 자체 클리핑 박스 안에 둔다. 안 그러면 translateX 애니메이션이
+         고지 밴드 위로 넘어와 글자가 겹친다. -->
+    <div class="tape-vp">
+    <div class="track">
+      {#each [...boards.tape, ...boards.tape, ...boards.tape] as t}
+        <span class="mq-item">
+          <span class="mq-k">{t.k}</span>
+          <span class="mq-v">{t.v}</span>
+          <span class="mq-p" class:u={t.pct >= 0} class:d={t.pct < 0}>
+            {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%
+          </span>
+        </span>
+        <span class="mq-sep">·</span>
+      {/each}
+    </div>
+    </div>
+  </footer>
 </div>
 
 <style>
-    :global(body) { margin:0; background:#000; overflow:hidden; font-family:'Inter', sans-serif; }
-    .wrap { width:1920px; height:1080px; background:#050505; color:#fff; display:flex; flex-direction:column; transform-origin:top left; overflow:hidden; }
+  :global(body) { margin: 0; background: #000; overflow: hidden; font-family: 'Inter', system-ui, sans-serif; }
+  .wrap {
+    width: 1920px; height: 1080px; background: #08090c; color: #f2f3f5;
+    display: flex; flex-direction: column; transform-origin: top left; overflow: hidden;
+    letter-spacing: -0.01em;
+  }
+  .u { color: #39d98a; } .d { color: #ff5c5c; }
+  .pos { --accent: #39d98a; } .neg { --accent: #ff5c5c; } .neu { --accent: #6b7280; }
 
-    .u{color:#4ade80} .d{color:#f87171}
-    .pos{background:#064e3b; border-left:5px solid #34d399}
-    .neg{background:#7f1d1d; border-left:5px solid #ef4444}
-    .neu{background:#1f2937; border-left:5px solid #9ca3af}
+  /* header */
+  .hd {
+    height: 66px; display: flex; align-items: center; justify-content: space-between;
+    padding: 0 28px; background: #0b0d11; border-bottom: 1px solid #191c22;
+  }
+  .hd-l { display: flex; align-items: center; gap: 18px; }
+  .logo { font-size: 22px; font-weight: 800; letter-spacing: -0.5px; }
+  .logo span { color: #6b7280; font-weight: 500; }
+  .badge {
+    display: flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.06em;
+    background: #14171d; padding: 6px 11px; border-radius: 999px; color: #8a919b;
+    border: 1px solid #20242b;
+  }
+  .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: #4b5563; }
+  .badge.active { color: #fff; background: #1a0f10; border-color: #3a1416; }
+  .badge.active .dot { background: #ff3b30; box-shadow: 0 0 8px #ff3b30; animation: pulse 1.6s infinite; }
+  @keyframes pulse { 50% { opacity: 0.35; } }
 
-    .hd { height:60px; display:flex; align-items:center; justify-content:space-between; padding:0 24px; background:#0a0a0a; border-bottom:1px solid #333; }
-    .hd-l, .hd-r { display:flex; align-items:center; gap:20px; }
-    .logo { font-size:24px; font-weight:900; letter-spacing:-1px; }
-    .badge { font-size:14px; font-weight:800; background:#333; padding:4px 8px; border-radius:4px; color:#aaa; }
-    .badge.active { background:#dc2626; color:#fff; }
-    .clock { font-size:24px; font-weight:800; font-variant-numeric:tabular-nums; }
+  .top-strip { display: flex; gap: 26px; }
+  .idx { display: flex; gap: 8px; font-size: 15px; font-weight: 600; align-items: baseline; }
+  .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
 
-    .top-strip { display:flex; gap:20px; }
-    .idx { display:flex; gap:8px; font-size:18px; font-weight:700; }
-    .idx .k { color:#9ca3af; }
+  .hd-r { display: flex; align-items: center; gap: 14px; }
+  .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .clock .et { color: #6b7280; font-size: 13px; font-weight: 600; }
+  .upd {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #5b8a72;
+    background: #0d1712; border: 1px solid #16281d; padding: 5px 9px; border-radius: 999px;
+    font-variant-numeric: tabular-nums;
+  }
+  .upd .upd-dot { width: 6px; height: 6px; border-radius: 50%; background: #39d98a; }
+  /* LAG — 정규장 중 2분 이상 지연 */
+  .upd.stale { color: #d8a860; background: #1a140a; border-color: #2e2410; }
+  .upd.stale .upd-dot { background: #f5a623; }
+  /* STALE / NO DATA — 화면 값을 믿으면 안 되는 상태 */
+  .upd.dead { color: #ff8a8a; background: #1a0d0d; border-color: #3a1616; }
+  .upd.dead .upd-dot { background: #ff5c5c; }
+  /* 장 밖 = 전일 종가인 게 정상. 경보가 아니라 사실 표기 (중립 회색) */
+  .upd.prev { color: #9aa3ad; background: #12151b; border-color: #23272f; }
+  .upd.prev .upd-dot { background: #6b7280; }
+  .idx .v.miss { color: #6b7280; }
 
-    .grid { flex:1; display:grid; grid-template-columns:400px 1fr 360px; gap:10px; padding:10px; overflow:hidden; }
-    .col { display:flex; flex-direction:column; gap:10px; height:100%; overflow:hidden; }
+  /* body grid: 뉴스 | 차트(주인공) | 워치리스트 */
+  .grid { flex: 1; display: grid; grid-template-columns: 440px 1fr 380px; gap: 14px; padding: 14px; overflow: hidden; }
+  .col { display: flex; flex-direction: column; gap: 14px; height: 100%; overflow: hidden; }
 
-    .card { background:#111; border:1px solid #333; border-radius:6px; overflow:hidden; }
-    .lbl { padding:10px; font-size:14px; font-weight:900; color:#888; background:rgba(255,255,255,0.05); }
+  .lbl {
+    padding: 12px 16px; font-size: 12px; font-weight: 800; letter-spacing: 0.1em;
+    color: #7a828d; display: flex; align-items: center; gap: 8px;
+  }
 
-    .driver { min-height:140px; justify-content:center; display:flex; flex-direction:column; }
-    .driver-txt { padding:16px; font-size:26px; font-weight:800; line-height:1.2; }
+  .panel { background: #0d0f13; border: 1px solid #191c22; border-radius: 12px; overflow: hidden; }
 
-    .macro { padding:14px; }
-    .m-row { display:flex; justify-content:space-between; margin-bottom:4px; }
-    .lbl-y { color:#facc15; font-weight:800; }
-    .timer { font-size:22px; font-weight:800; font-variant-numeric:tabular-nums; }
-    .m-tit { font-size:20px; font-weight:700; text-transform:uppercase; }
+  /* driver */
+  .driver {
+    background: #0d0f13; border: 1px solid #191c22; border-radius: 12px;
+    border-left: 4px solid var(--accent, #6b7280); overflow: hidden;
+    min-height: 132px; display: flex; flex-direction: column;
+  }
+  .driver.nodata { border-left-color: #ff5c5c; }
+  .driver-txt { padding: 4px 18px 20px; font-size: 27px; font-weight: 800; line-height: 1.2; }
+  .drv-src { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.04em;
+    background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
+  .drv-age { margin-left: auto; font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0; }
+  .driver-why { padding: 0 18px 14px; font-size: 14px; line-height: 1.4; color: #9aa3ad; font-weight: 500; letter-spacing: 0; }
+  /* 판단 출처 표기 — 규칙기반은 회색, AI 판단은 파랑. 시청자가 구분할 수 있어야 한다. */
+  .origin { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px;
+    background: #14171d; border: 1px solid #23272f; color: #8a919b; }
+  .origin.ai { background: #101a26; border-color: #1d3350; color: #7db0e8; }
+  .conf { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px; text-transform: uppercase; }
+  .conf.high { background: #0d1712; border: 1px solid #16281d; color: #39d98a; }
+  .conf.medium { background: #1a140a; border: 1px solid #2e2410; color: #d8a860; }
+  .conf.low { background: #1a0d0d; border: 1px solid #3a1616; color: #ff8a8a; }
+  .ke-note { font-size: 13px; color: #c7cdd6; font-weight: 500; margin-top: 8px; line-height: 1.4; letter-spacing: 0; }
+  .e-note { font-size: 12px; color: #8a919b; font-weight: 500; line-height: 1.35; letter-spacing: 0;
+    padding: 0 15px 2px; margin-top: -3px; }
+  .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .e-est { color: #6b7280; }
 
-    .news { flex:1; display:flex; flex-direction:column; }
-    .news-list { flex:1; overflow:hidden; padding:10px; display:flex; flex-direction:column; gap:8px; }
-    .news-item { padding:12px; border-radius:4px; }
-    .n-meta { display:flex; justify-content:space-between; margin-bottom:4px; }
-    .n-time { font-size:13px; font-weight:700; color:#aaa; }
-    .n-tit { font-size:18px; font-weight:700; line-height:1.2; }
+  /* news */
+  .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .news-item {
+    display: flex; gap: 12px; padding: 11px 12px; border-radius: 9px; text-decoration: none; color: inherit;
+    background: #101318; border: 1px solid #191c22;
+  }
+  .n-side { width: 3px; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
+  .n-side.l5 { background: #ff3b30; box-shadow: 0 0 8px rgba(255,59,48,.6); }
+  .n-side.l4 { background: #f5a623; }
+  .n-body { min-width: 0; flex: 1; }
+  .n-meta { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
+  .n-time { font-size: 12px; font-weight: 700; color: #8a919b; font-variant-numeric: tabular-nums; }
+  .n-src { font-size: 11px; font-weight: 800; color: #7d94b8; text-transform: uppercase; letter-spacing: 0.04em;
+    background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
+  .n-flag { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; background: #ff3b30; color: #fff; padding: 2px 6px; border-radius: 4px; }
+  .n-link { margin-left: auto; font-size: 12px; color: #4b5563; font-weight: 700; }
+  .src-hint { margin-left: auto; font-size: 10px; font-weight: 600; color: #4b5563; letter-spacing: 0; }
+  .n-tit { font-size: 17px; font-weight: 600; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 
-    .charts-wrap { display:flex; flex-direction:column; gap:10px; height:100%; }
-    .c-row { display:grid; gap:10px; }
-    .h-top { height:560px; grid-template-columns:1fr 1fr 1fr; }
-    .h-bot { height:380px; grid-template-columns:1fr 1fr; }
-    .c-box { background:#000; border:1px solid #333; position:relative; }
-    .c-ovl { position:absolute; top:10px; left:10px; font-size:16px; font-weight:900; background:rgba(0,0,0,0.6); padding:4px 8px; border-radius:4px; pointer-events:none; }
+  /* center: 큰 차트가 주인공 */
+  .center { min-width: 0; }
+  .chart-card {
+    flex: 1 1 auto; min-height: 0; background: #08090c; border: 1px solid #191c22; border-radius: 12px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .chart-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 18px; border-bottom: 1px solid #191c22; flex: 0 0 auto;
+  }
+  .ch-name { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+  /* 기본은 중립 회색. 정규장일 때만 초록. */
+  .ch-meta { font-size: 12px; font-weight: 800; color: #8a919b; letter-spacing: 0.08em;
+    background: #12151b; border: 1px solid #23272f; padding: 4px 10px; border-radius: 999px; }
+  .ch-meta.live { color: #39d98a; background: #0d1712; border-color: #16281d; }
+  /* TradingView autosize가 높이를 잡도록 명시적 최소 높이 강제 (0-height 방지) */
+  .chart-body { flex: 1 1 auto; min-height: 320px; position: relative; }
 
-    .movers { min-height:400px; display:flex; flex-direction:column; }
-    .m-head { padding:14px; text-align:center; font-size:18px; font-weight:900; background:rgba(255,255,255,0.05); letter-spacing: 0.05em; color:#ddd; }
+  /* 하단 슬림 스파크라인 스트립 */
+  .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
+  .ss-card { background: #0d0f13; border: 1px solid #191c22; border-radius: 10px; padding: 10px 12px 8px;
+    display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+  .ss-top { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  .ss-name { font-size: 12px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
+  .ss-pct { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .ss-chart { flex: 1; min-height: 90px; border-radius: 6px; overflow: hidden; position: relative; }
 
-    .m-list { padding:10px; flex:1; overflow:hidden; display:flex; flex-direction:column; gap:6px; }
-    .m-row {
-        display:flex; justify-content:space-between; align-items:center;
-        padding: 12px 14px;
-        background: rgba(255,255,255,0.03);
-        border-radius: 8px;
-        border: 1px solid rgba(255,255,255,0.05);
-    }
-    .m-info { display:flex; align-items:center; gap:10px; }
-    .mt { font-size:20px; font-weight:800; color:#fff; width: 60px; }
+  .keyevent {
+    background: linear-gradient(180deg, #12100a, #0d0f13); border: 1px solid #2a2410; border-radius: 12px;
+    padding: 16px 20px;
+  }
+  .ke-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .ke-lbl { color: #f5c518; font-weight: 800; font-size: 13px; letter-spacing: 0.08em; }
+  .ke-timer { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .ke-tit { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
 
-    .m-tag {
-        font-size:12px; font-weight:800; padding:4px 8px; border-radius:4px;
-        color:#000; letter-spacing:0.05em; text-transform: uppercase;
-    }
-    .m-tag.f { background: #444; color:#aaa; border:1px solid #555; }
-    .m-tag.g { background: #4ade80; color:#000; box-shadow: 0 0 10px rgba(74,222,128,0.3); }
-    .m-tag.b { background: #f87171; color:#fff; box-shadow: 0 0 10px rgba(248,113,113,0.3); }
+  /* ※ 여기 있던 .movers / .m-row / .m-tag / .m-vol / .mp / .m-pre / .sort-by (19줄) 는
+        렌더되는 마크업이 하나도 없는 유령 클래스라 제거했다. movers 파이프라인 자체도 삭제됨. */
 
-    .mp { font-size:18px; font-weight:700; font-variant-numeric: tabular-nums; }
-    .m-empty { text-align:center; padding:20px; color:#555; font-weight:700; }
+  /* 실적 캘린더 */
+  .earn { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  .e-list { padding: 8px 12px 12px; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 7px; }
+  .e-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 12px 15px; background: #101318; border: 1px solid #191c22; border-radius: 10px;
+  }
+  .e-row.watch { border-color: #2f4a38; background: #0e1512; }
+  .e-l { min-width: 0; }
+  .e-tk { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+  .e-star { color: #39d98a; font-size: 13px; }
+  .e-sub { font-size: 12px; color: #8a919b; font-weight: 600; margin-top: 3px; }
+  .e-time { color: #6b7280; }
+  .e-r { text-align: right; flex-shrink: 0; }
+  .e-dd { font-size: 16px; font-weight: 800; color: #c7cdd6; font-variant-numeric: tabular-nums; }
+  .e-dd.soon { color: #f5a623; }
+  .e-eps { font-size: 11px; color: #6b7280; font-weight: 700; margin-top: 2px; }
 
-    .chat { flex:1; display:flex; flex-direction:column; }
-    .chat-area { flex:1; background:#000; display:flex; align-items:center; justify-content:center; color:#333; font-weight:900; font-size:24px; }
+  .empty { text-align: center; padding: 24px; color: #4b5563; font-weight: 600; }
 
-    .ft { height:40px; background:#000; border-top:1px solid #333; display:flex; align-items:center; overflow:hidden; }
-    .track { display:flex; padding-left:20px; animation:scroll 40s linear infinite; }
-    .mq-item { display:flex; align-items:center; gap:10px; font-size:18px; font-weight:700; color:#fff; white-space:nowrap; }
-    .mq-k { color:#aaa; }
-    .mq-sep { margin:0 30px; color:#555; }
+  /* tape */
+  .ft { height: 46px; background: #0b0d11; border-top: 1px solid #191c22; display: flex; align-items: center; overflow: hidden; }
+  /* 고지 밴드 — 스크롤/애니메이션 없이 항상 보이는 자리. 대비 4.5:1 이상. */
+  .disc {
+    flex: 0 0 auto; display: flex; align-items: center; gap: 7px;
+    padding: 0 16px 0 20px; margin-right: 4px; height: 100%;
+    border-right: 1px solid #191c22;
+    font-size: 13px; font-weight: 600; color: #c7cdd6; white-space: nowrap;
+  }
+  .disc a { color: #c7cdd6; text-decoration: none; border-bottom: 1px solid #3a4049; }
+  .disc-sep { color: #4b5563; }
+  .tape-vp { flex: 1 1 auto; min-width: 0; height: 100%; display: flex; align-items: center; overflow: hidden; }
+  .track { display: flex; padding-left: 20px; animation: scroll 55s linear infinite; white-space: nowrap; }
+  .mq-item { display: inline-flex; align-items: center; gap: 9px; font-size: 16px; font-weight: 700; }
+  .mq-k { color: #8a919b; } .mq-v { color: #f2f3f5; font-variant-numeric: tabular-nums; }
+  .mq-p { font-variant-numeric: tabular-nums; }
+  .mq-sep { margin: 0 22px; color: #2a2e36; }
+  @keyframes scroll { 100% { transform: translateX(-33.33%); } }
 
-    @keyframes scroll { 100% { transform: translateX(-50%); } }
+  /* ============================================================
+     모바일 / 태블릿 (≤1200px) — 통째 축소 대신 세로 재배치.
+     방송용 1920 레이아웃(.wrap, 위 규칙)은 그대로 유지됨.
+     ============================================================ */
+  @media (max-width: 1200px) {
+    :global(body) { overflow: auto; }
+  }
+
+  .wrap.m {
+    width: 100%; height: auto; min-height: 100vh;
+    transform: none !important; overflow: visible;
+  }
+
+  /* 헤더: 접히고 컴팩트하게 */
+  .wrap.m .hd { height: auto; flex-wrap: wrap; gap: 8px 14px; padding: 10px 14px; }
+  .wrap.m .logo { font-size: 18px; }
+  .wrap.m .hd-l { gap: 10px; }
+  .wrap.m .top-strip {
+    order: 3; width: 100%; gap: 14px; overflow-x: auto; flex-wrap: nowrap;
+    padding-bottom: 4px; -webkit-overflow-scrolling: touch;
+  }
+  .wrap.m .top-strip::-webkit-scrollbar { display: none; }
+  .wrap.m .idx { flex-shrink: 0; font-size: 14px; }
+  .wrap.m .hd-r { gap: 10px; }
+  .wrap.m .clock { font-size: 17px; }
+  .wrap.m .upd { font-size: 10px; }
+
+  /* 본문: 3열 → 세로 1열 (차트 먼저) */
+  .wrap.m .grid {
+    display: flex; flex-direction: column; gap: 12px; padding: 12px; overflow: visible;
+  }
+  .wrap.m .col { width: 100%; height: auto; overflow: visible; }
+  .wrap.m .center { order: 1; }
+  .wrap.m .left   { order: 2; }
+  .wrap.m .right  { order: 3; }
+
+  /* 차트: 모바일 고정 높이 */
+  .wrap.m .chart-card { flex: none; height: 46vh; min-height: 280px; }
+  .wrap.m .ch-name { font-size: 18px; }
+  .wrap.m .spark-strip { height: 78px; }
+
+  /* 뉴스: 전부 보이게, 글씨 읽기 좋게 */
+  .wrap.m .driver { min-height: 0; }
+  .wrap.m .driver-txt { font-size: 20px; padding: 4px 16px 16px; }
+  .wrap.m .news { flex: none; }
+  .wrap.m .news-list { overflow: visible; }
+  .wrap.m .n-tit { font-size: 16px; -webkit-line-clamp: 3; line-clamp: 3; }
+
+  /* 실적 캘린더: 전부 보이게 */
+  .wrap.m .earn { flex: none; }
+  .wrap.m .e-list { overflow: visible; }
+
+  /* 모바일에서 36px 미니차트는 판독 불가 → 숨김 (등락률은 .ss-top 에 이미 있다) */
+  .wrap.m .ss-chart { display: none; }
+  .wrap.m .spark-strip { height: auto; }
+
+  /* 하단 티커: 유지 (스크롤). 고지 밴드는 줄바꿈 허용 */
+  .wrap.m .ft { height: auto; flex-wrap: wrap; padding: 6px 0; }
+  .wrap.m .disc { border-right: 0; white-space: normal; font-size: 12px; padding: 4px 12px; }
+
+  /* Breaking 토스트: 화면 하단 고정 */
+  .wrap.m :global(.toast) { position: fixed; bottom: 12px; left: 50%; width: calc(100% - 24px); }
+  .wrap.m :global(.toast .row) { grid-template-columns: auto 1fr; }
+  .wrap.m :global(.toast .imp) { display: none; }
+  .wrap.m :global(.toast .msg) { font-size: 17px; white-space: normal; }
 </style>
