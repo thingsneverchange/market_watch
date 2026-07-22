@@ -15,10 +15,25 @@ ROOT="$(dirname "$HERE")"
 # cron 은 로그인 셸이 아니라 PATH·환경변수가 거의 비어 있다. 반드시 파일에서 읽는다.
 CONF="${MARKET_FEED_ENV:-$ROOT/.env}"
 if [[ -f "$CONF" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$CONF"
-  set +a
+  # ※ `source .env` 를 쓰지 않는다.
+  #    값에 공백이나 줄바꿈이 섞이면 bash 가 그 뒤를 **명령어로 실행**해버린다.
+  #    (실제로 토큰이 두 줄로 잘려 들어가 "command not found" 가 났다)
+  #    KEY=VALUE 만 읽고, 값은 그대로 export 한다.
+  while IFS= read -r _line || [[ -n "$_line" ]]; do
+    [[ "$_line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$_line" =~ ^[[:space:]]*$ ]] && continue
+    if [[ "$_line" =~ ^([A-Za-z_][A-Za-z0-9_]*)=(.*)$ ]]; then
+      _k="${BASH_REMATCH[1]}"; _v="${BASH_REMATCH[2]}"
+      # 감싼 따옴표만 제거
+      [[ "$_v" == \"*\" && "$_v" == *\" ]] && _v="${_v:1:${#_v}-2}"
+      [[ "$_v" == \'*\' && "$_v" == *\' ]] && _v="${_v:1:${#_v}-2}"
+      export "$_k=$_v"
+    else
+      echo "⚠️  .env 형식이 아닌 줄 무시: ${_line:0:40}…" >&2
+      echo "    (값에 줄바꿈이 섞였을 수 있습니다 — 한 줄로 이어 붙이세요)" >&2
+    fi
+  done < "$CONF"
+  unset _line _k _v
 fi
 
 : "${MARKET_FEED_URL:=http://127.0.0.1:6210}"
@@ -52,9 +67,11 @@ if ! flock -n 9 2>/dev/null; then
 fi
 
 # ── 전제 조건 확인 ────────────────────────────────────
-command -v claude >/dev/null 2>&1 || die \
+# cron 은 PATH 가 거의 비어 있다. .env 의 CLAUDE_BIN 을 우선 쓰고, 없으면 PATH 에서 찾는다.
+CLAUDE="${CLAUDE_BIN:-$(command -v claude 2>/dev/null || true)}"
+[[ -n "$CLAUDE" && -x "$CLAUDE" ]] || die \
   "claude CLI 를 찾을 수 없습니다. 설치: npm i -g @anthropic-ai/claude-code
-   (cron 은 PATH 가 비어 있으니 .env 에 CLAUDE_BIN=/full/path/to/claude 를 넣거나 PATH 를 지정하세요)"
+   cron 은 PATH 가 비어 있으니 .env 에 절대경로를 넣으세요:  CLAUDE_BIN=$(command -v claude 2>/dev/null || echo /path/to/claude)"
 
 if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" && -z "${ANTHROPIC_API_KEY:-}" ]]; then
   die "인증 정보가 없습니다.
@@ -67,7 +84,7 @@ fi
 log "생성 시작 (model=$CLAUDE_MODEL)"
 GENERATED_AT="$(node -e 'process.stdout.write(String(Date.now()))')"
 
-RAW="$(claude -p "$(cat "$PROMPT_FILE")" \
+RAW="$("$CLAUDE" -p "$(cat "$PROMPT_FILE")" \
         --model "$CLAUDE_MODEL" \
         --allowed-tools "WebSearch,WebFetch" \
         2>>"$LOG")" || die "claude 실행 실패 (로그: $LOG)"

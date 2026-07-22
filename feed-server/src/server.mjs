@@ -10,6 +10,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { openDb, putItem, getAll, getHistory, stats, KINDS } from "./db.mjs";
 import { validate } from "./validate.mjs";
+import { statusPage } from "./statuspage.mjs";
 import { parseAllowList, normalizeRemote, isAllowed, recordDenied, deniedSummary } from "./ipallow.mjs";
 
 const PORT = Number(process.env.PORT || 6210);
@@ -119,6 +120,25 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
+    // ---------- 상태 페이지 (브라우저로 들어왔을 때) ----------
+    // 여기는 이미 IP 허용목록을 통과한 뒤다. 데이터를 보여줘도 안전하다.
+    if (req.method === "GET" && path === "/" && /text\/html/.test(String(req.headers.accept || ""))) {
+      const html = statusPage({
+        feed: getAll(),
+        yourIp: remote,
+        allowedRules: ALLOW_RULES.map((r) => r.text),
+        denied: deniedSummary()
+      });
+      res.writeHead(200, {
+        "content-type": "text/html; charset=utf-8",
+        "cache-control": "no-store",
+        "x-content-type-options": "nosniff",
+        // 인라인 style 만 쓰고 외부 리소스를 전혀 안 부른다
+        "content-security-policy": "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+      });
+      return res.end(html);
+    }
+
     // ---------- 헬스체크 (허용 IP 만, 데이터 노출 없음) ----------
     if (req.method === "GET" && (path === "/health" || path === "/")) {
       return send(res, 200, {
