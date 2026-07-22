@@ -424,11 +424,30 @@
                 </div>
               </div>
               <div class="e-r">
-                <div class="e-dd" class:soon={e.dday <= 1}>
-                  {e.dday <= 0 ? "오늘" : "D-" + e.dday}
-                </div>
-                {#if e.epsEst != null}
-                  <div class="e-eps">EPS 추정 ${Number(e.epsEst).toFixed(2)}</div>
+                {#if e.status === "reported"}
+                  <!-- 실제값 확보 — 예상 대비 서프라이즈를 보여준다 -->
+                  <div class="e-dd rep">발표</div>
+                  <div class="e-eps">
+                    <b>${Number(e.epsActual).toFixed(2)}</b>
+                    {#if e.epsEst != null}<span class="e-vs">vs ${Number(e.epsEst).toFixed(2)}</span>{/if}
+                    {#if e.surprisePct != null}
+                      <span class="e-sur" class:u={e.surprisePct >= 0} class:d={e.surprisePct < 0}>
+                        {e.surprisePct > 0 ? "+" : ""}{e.surprisePct.toFixed(1)}%
+                      </span>
+                    {/if}
+                  </div>
+                {:else if e.status === "pending"}
+                  <!-- 발표 시각은 지났는데 무료 소스에 실제값이 아직 없다.
+                       발표 전에 쓴 관측을 현재처럼 띄우지 않고, 공백을 공백이라고 말한다. -->
+                  <div class="e-dd pend">발표됨</div>
+                  <div class="e-eps pend-t">결과 집계중</div>
+                {:else}
+                  <div class="e-dd" class:soon={e.dday <= 1}>
+                    {e.dday <= 0 ? "오늘" : "D-" + e.dday}
+                  </div>
+                  {#if e.epsEst != null}
+                    <div class="e-eps">EPS 추정 ${Number(e.epsEst).toFixed(2)}</div>
+                  {/if}
                 {/if}
               </div>
             </div>
@@ -563,6 +582,13 @@
   .ke-note { font-size: 13px; color: #c7cdd6; font-weight: 500; margin-top: 8px; line-height: 1.4; letter-spacing: 0; }
   .e-note { font-size: 12px; color: #8a919b; font-weight: 500; line-height: 1.35; letter-spacing: 0;
     padding: 0 15px 2px; margin-top: -3px; }
+  /* 발표 완료 — 숫자 확보 */
+  .e-dd.rep { color: #39d98a; font-size: 13px; }
+  .e-vs { color: #6b7280; font-weight: 600; margin-left: 3px; }
+  .e-sur { font-weight: 800; margin-left: 5px; }
+  /* 발표됐지만 무료 소스에 아직 숫자가 없는 구간 */
+  .e-dd.pend { color: #d8a860; font-size: 13px; }
+  .e-eps.pend-t { color: #d8a860; font-weight: 700; }
   .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
   .e-est { color: #6b7280; }
 

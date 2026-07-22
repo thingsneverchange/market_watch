@@ -374,7 +374,16 @@ export async function getCompanyNews(ticker: string, days = 2): Promise<NewsItem
 }
 
 // ---- 실적 캘린더 -------------------------------------------
-export type EarnItem = { ticker: string; date: string; hour: string; epsEst: number | null };
+export type EarnItem = {
+  ticker: string;
+  date: string;
+  hour: string;
+  epsEst: number | null;
+  /** 발표된 실제 EPS. null = 아직 집계 안 됨 (무료 소스는 발표 후 한동안 null) */
+  epsActual: number | null;
+  revEst: number | null;
+  revActual: number | null;
+};
 
 /**
  * ※ Finnhub /calendar/earnings 는 1500행 하드캡 + 날짜 내림차순이라,
@@ -400,7 +409,16 @@ export async function getEarnings(days = 21): Promise<EarnItem[]> {
       const key = `${e.symbol}|${e.date}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push({ ticker: e.symbol, date: e.date, hour: e.hour ?? "", epsEst: e.epsEstimate ?? null });
+      const num = (v: any) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
+      out.push({
+        ticker: e.symbol,
+        date: e.date,
+        hour: e.hour ?? "",
+        epsEst: num(e.epsEstimate),
+        epsActual: num(e.epsActual),
+        revEst: num(e.revenueEstimate),
+        revActual: num(e.revenueActual)
+      });
     }
   }
   return out;

@@ -1,35 +1,13 @@
 import type { RequestHandler } from "./$types";
 import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
+import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
 // 필터가 없으면 우측 패널이 아무도 모르는 마이크로캡(ALEX·AMBZ·BCOW…)으로 채워진다.
 // 화면에 의미 있는 종목만 남긴다.
 const UNIVERSE = new Set([...WATCHLIST, ...TAPE_TICKERS, ...INDEX_TICKERS]);
 
-// 주어진 (날짜, ET시각)을 정확한 UTC epoch(ms)로. 미 동부 서머타임 자동 반영.
-function etToEpoch(dateStr: string, etHour: number, etMin: number): number {
-  // 해당 날짜 정오 UTC를 기준으로 America/New_York 오프셋을 실측
-  const probe = new Date(`${dateStr}T12:00:00Z`);
-  const etStr = probe.toLocaleString("en-US", { timeZone: "America/New_York", hour12: false });
-  const utcStr = probe.toLocaleString("en-US", { timeZone: "UTC", hour12: false });
-  // 두 표기의 시(hour) 차이 = ET 오프셋 (음수: UTC보다 뒤)
-  const etH = Number(etStr.split(" ")[1].split(":")[0]);
-  const utcH = Number(utcStr.split(" ")[1].split(":")[0]);
-  let offset = etH - utcH; // 예: EDT면 -4, EST면 -5
-  if (offset > 12) offset -= 24;
-  if (offset < -12) offset += 24;
-  // ET시각을 UTC로: UTC = ET - offset
-  const base = Date.parse(`${dateStr}T00:00:00Z`);
-  return base + (etHour - offset) * 3600e3 + etMin * 60e3;
-}
-
-// 실적 시각 추정: bmo=08:00 ET, amc=16:30 ET, 미정=12:00 ET
-function earnEpoch(dateStr: string, hour: string): number {
-  if (hour === "bmo") return etToEpoch(dateStr, 8, 0);
-  if (hour === "amc") return etToEpoch(dateStr, 16, 30);
-  return etToEpoch(dateStr, 12, 0);
-}
 
 // 다음 KEY EVENT = 워치리스트 종목의 가장 가까운 실적 (없으면 시장 전체 최근접)
 export const GET: RequestHandler = async () => {
@@ -38,7 +16,7 @@ export const GET: RequestHandler = async () => {
 
   const future = earn
     .filter((e) => UNIVERSE.has(e.ticker)) // 알파벳순 마이크로캡 노이즈 제거
-    .map((e) => ({ ...e, ts: earnEpoch(e.date, e.hour) }))
+    .map((e) => ({ ...e, ts: earnEpoch(e.date, e.hour), pendingFrom: earnPendingFrom(e.date, e.hour) }))
     .filter((e) => e.ts > now - 2 * 3600e3) // 시작 2시간 전까지 유효 유지
     .sort((a, b) => a.ts - b.ts);
 
@@ -72,20 +50,44 @@ export const GET: RequestHandler = async () => {
   const noteMap = new Map<string, string>();
   for (const n of aiNotes?.payload.notes ?? []) noteMap.set(n.ticker, n.note);
 
+  /**
+   * 발표 시각이 지났는데 실제값이 아직 없는 구간을 명시한다.
+   *
+   * 실측: GOOGL amc 발표 후 10분 시점에 Finnhub·FMP·AlphaVantage **전부 epsActual=null**.
+   * 무료 소스는 여기서 구조적으로 느리다. 속도를 못 올리면 못 올린다고 화면이 말해야 한다.
+   * 이 공백에 "발표 전에 쓴 관측 기사"를 현재 상황처럼 띄우는 게 제일 나쁘다.
+   */
+  function earnStatus(e: (typeof future)[number]) {
+    if (e.epsActual != null) return "reported" as const;   // 숫자 확보
+    if (e.pendingFrom <= now) return "pending" as const;    // 발표됨 · 결과 집계중
+    return "upcoming" as const;                            // 아직 발표 전
+  }
+
   // 상세 리스트 (워치 우선, 최대 8개)
-  const upcoming = sorted.slice(0, 8).map((e) => ({
-    ticker: e.ticker,
-    watch: watchSet.has(e.ticker),
-    dateET: dateLabel(e.ts),
-    timeET: timeLabel(e.ts),
-    session: hourLabel(e.hour),
-    // hour 가 빈 문자열이면 12:00 ET 는 코드가 찍은 임의값이다. 화면이 정밀 시각을 주장하면 안 된다.
-    estimated: e.hour !== "bmo" && e.hour !== "amc",
-    dday: ddays(e.date),
-    epsEst: e.epsEst,
-    note: noteMap.get(e.ticker) ?? null, // 해설만 AI, 숫자는 API
-    time: new Date(e.ts).toISOString()
-  }));
+  const upcoming = sorted.slice(0, 8).map((e) => {
+    const status = earnStatus(e);
+    const surprisePct =
+      e.epsActual != null && e.epsEst != null && e.epsEst !== 0
+        ? ((e.epsActual - e.epsEst) / Math.abs(e.epsEst)) * 100
+        : null;
+    return {
+      ticker: e.ticker,
+      watch: watchSet.has(e.ticker),
+      dateET: dateLabel(e.ts),
+      timeET: timeLabel(e.ts),
+      session: hourLabel(e.hour),
+      // hour 가 빈 문자열이면 12:00 ET 는 코드가 찍은 임의값이다. 화면이 정밀 시각을 주장하면 안 된다.
+      estimated: e.hour !== "bmo" && e.hour !== "amc",
+      dday: ddays(e.date),
+      epsEst: e.epsEst,
+      epsActual: e.epsActual,
+      surprisePct,
+      status,
+      // 결과 대기 중에는 AI 해설을 붙이지 않는다 — 발표 전에 쓴 해설이 결과처럼 읽힌다
+      note: status === "pending" ? null : (noteMap.get(e.ticker) ?? null),
+      time: new Date(e.ts).toISOString()
+    };
+  });
 
   // 헤더 카운트다운용 next = 시간순 가장 가까운 것 (워치 우선)
   const pick = sorted.find((e) => watchSet.has(e.ticker)) ??

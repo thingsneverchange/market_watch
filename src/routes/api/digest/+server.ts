@@ -1,9 +1,14 @@
 import type { RequestHandler } from "./$types";
-import { getMarketNews } from "$lib/server/finnhub";
+import { getMarketNews, getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
+import { checkSuperseded } from "$lib/server/supersede";
+import { earnPendingFrom } from "$lib/server/et-time";
+
+// 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다
+const MAJOR = new Set([...WATCHLIST, ...INDEX_TICKERS, ...TAPE_TICKERS]);
 
 export const GET: RequestHandler = async () => {
-  const [news, feed] = await Promise.all([getMarketNews(24), getFeed()]);
+  const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);
   const nowSec = Date.now() / 1000;
 
   // 예전에는 level 내림차순으로만 정렬해서 "LIVE HEADLINES" 상단에
@@ -19,7 +24,31 @@ export const GET: RequestHandler = async () => {
   // 1순위: Claude Code 가 만든 판단 (신선할 때만)
   // 2순위: 키워드 규칙 기반 (기존 동작)
   // 어느 쪽인지 화면이 표시할 수 있도록 source 를 반드시 실어 보낸다.
-  const ai = fresh(feed, "top_story");
+  // ★ 시간 신선도만으로는 부족하다.
+  //   Claude 가 7분 전에 "실적 발표를 앞두고" 라고 썼는데 그 사이 실적이 나왔다면,
+  //   그 판단은 7분밖에 안 됐어도 이미 낡았다. 생성 이후 지나간 사건을 확인한다.
+  const rawAi = feed?.items?.top_story;
+  const sup = rawAi
+    ? checkSuperseded({
+        generatedAt: rawAi.generatedAt,
+        events: earn.map((e) => ({
+          ticker: e.ticker,
+          ts: earnPendingFrom(e.date, e.hour),
+          important: MAJOR.has(e.ticker)
+        }))
+      })
+    : { superseded: false, by: [] as string[] };
+
+  // ★ confidence 게이트
+  //   Claude 가 "신뢰할 출처를 찾지 못했다"고 스스로 밝힌(low) 판단은 헤드라인 자격이 없다.
+  //   실제로 이런 문장이 방송 최상단에 올라갔다:
+  //     "…다만 발표 직후 반응을 확인해 줄 신뢰할 출처를 아직 찾지 못했다(최신 속보 없음)"
+  //   정직한 자백이지만 시청자에게는 쓸모가 없고, 그 자리엔 진짜 헤드라인이 있어야 한다.
+  //   대형 이벤트 직후엔 색인된 기사가 없어 low 가 자주 나온다 → 그 구간은 규칙기반이 맡는다.
+  const candidate = fresh(feed, "top_story");
+  const lowConfidence = candidate?.payload.confidence === "low";
+  const ai = sup.superseded || lowConfidence ? undefined : candidate;
+
   let driver;
   if (ai) {
     driver = {
@@ -31,6 +60,8 @@ export const GET: RequestHandler = async () => {
       confidence: ai.payload.confidence,
       epoch: Math.floor(ai.generatedAt / 1000),
       origin: "ai" as const,
+      supersededBy: null,
+      aiHeld: false,
       noData: false
     };
   } else if (top) {
@@ -39,16 +70,23 @@ export const GET: RequestHandler = async () => {
       sentiment: top.sentiment,
       source: top.source,
       url: top.url,
-      why: "",
+      // 왜 규칙기반으로 내려왔는지를 화면이 말한다 (조용히 바꾸지 않는다)
+      why: sup.superseded
+        ? `${sup.by.join("·")} 실적 발표로 이전 AI 판단은 만료됨`
+        : lowConfidence
+          ? "AI 판단이 근거 부족(low)으로 보류됨 — 최신 헤드라인으로 대체"
+          : "",
       confidence: "",
       epoch: top.epoch,
       origin: "rule" as const, // 인과를 계산하지 않은 키워드 규칙 결과
+      supersededBy: sup.superseded ? sup.by : null,
+      aiHeld: lowConfidence,
       noData: false
     };
   } else {
     driver = {
       text: "NO NEWS FEED", sentiment: "neu", source: "", url: "", why: "",
-      confidence: "", epoch: 0, origin: "none" as const, noData: true
+      confidence: "", epoch: 0, origin: "none" as const, supersededBy: null, aiHeld: false, noData: true
     };
   }
 
