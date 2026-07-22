@@ -14,7 +14,7 @@
 # ============================================================
 set -euo pipefail
 
-APP_DIR="${MARKET_FEED_DIR:-/home/market-feed/feed-server}"
+APP_DIR="${MARKET_FEED_DIR:-/home/market-feed}"
 APP_NAME="market-feed"
 PORT="${PORT:-6210}"
 

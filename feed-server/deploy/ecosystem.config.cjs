@@ -12,7 +12,7 @@ module.exports = {
     {
       name: "market-feed",
       script: "./src/server.mjs",
-      cwd: "/home/market-feed/feed-server",
+      cwd: "/home/market-feed",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,
@@ -21,9 +21,9 @@ module.exports = {
       max_memory_restart: "200M",
       kill_timeout: 10000,
       // 비밀값과 IP 허용목록은 전부 .env 에서 읽는다. 여기 하드코딩 금지.
-      node_args: "--env-file=/home/market-feed/feed-server/.env",
-      error_file: "/home/market-feed/feed-server/logs/err.log",
-      out_file: "/home/market-feed/feed-server/logs/out.log",
+      node_args: "--env-file=/home/market-feed/.env",
+      error_file: "/home/market-feed/logs/err.log",
+      out_file: "/home/market-feed/logs/out.log",
       merge_logs: true,
       time: true
     }

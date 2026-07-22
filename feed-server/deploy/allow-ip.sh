@@ -4,7 +4,7 @@
 #
 #  집 인터넷 IP 는 바뀝니다. 접속이 안 되면 이걸 실행하세요:
 #
-#    ssh root@165.232.146.7 '/home/market-feed/feed-server/deploy/allow-ip.sh auto'
+#    ssh root@165.232.146.7 '/home/market-feed/deploy/allow-ip.sh auto'
 #
 #  auto  = SSH 로 접속한 당신의 현재 IP 를 자동으로 넣습니다 (가장 편함)
 #  <IP>  = 특정 IP/CIDR 을 추가합니다
@@ -12,7 +12,7 @@
 # ============================================================
 set -euo pipefail
 
-APP_DIR="${MARKET_FEED_DIR:-/home/market-feed/feed-server}"
+APP_DIR="${MARKET_FEED_DIR:-/home/market-feed}"
 ENV_FILE="$APP_DIR/.env"
 KEY="MARKET_ALLOWED_IPS"
 
