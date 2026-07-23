@@ -416,8 +416,9 @@
                   {:else if e.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
                 </div>
                 <div class="e-sub">
-                  {e.dateET}{#if e.status === "reported" || e.status === "pending"} reported{:else} · {e.session}{/if}
-                  {#if e.tag} · {e.tag}{/if}
+                  <span>{e.dateET}</span>
+                  <span>{e.status === "reported" || e.status === "pending" ? "reported" : "· " + e.session}</span>
+                  {#if e.tag}<span>· {e.tag}</span>{/if}
                 </div>
               </div>
               <div class="e-r">
@@ -657,7 +658,7 @@
   .e-l { min-width: 0; }
   .e-tk { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
   .e-star { color: #39d98a; font-size: 13px; }
-  .e-sub { font-size: 12px; color: #8a919b; font-weight: 600; margin-top: 3px; }
+  .e-sub { font-size: 12px; color: #8a919b; font-weight: 600; margin-top: 3px; display: flex; gap: 5px; flex-wrap: wrap; }
   .e-time { color: #6b7280; }
   .e-r { text-align: right; flex-shrink: 0; }
   .e-dd { font-size: 16px; font-weight: 800; color: #c7cdd6; font-variant-numeric: tabular-nums; }
