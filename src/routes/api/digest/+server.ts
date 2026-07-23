@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getMarketNews, getEarnings, newsTopic, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
+import { getMarketNews, getEarnings, newsTopic, shortHeadline, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
@@ -66,7 +66,8 @@ export const GET: RequestHandler = async () => {
     };
   } else if (top) {
     driver = {
-      text: top.title,
+      // 규칙기반 폴백은 원문 헤드라인이라 길다 → 핵심 구절로 압축 (AI 판단은 이미 짧으니 그대로)
+      text: shortHeadline(top.title),
       sentiment: top.sentiment,
       source: top.source,
       url: top.url,
@@ -99,7 +100,7 @@ export const GET: RequestHandler = async () => {
   const signal = pool.filter((n) => n.matched || n.level >= 3);
   const list = (signal.length >= 4 ? signal : pool)
     .slice(0, 4)
-    .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker) }));
+    .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
   return new Response(JSON.stringify({ driver, news: list, serverNow: Math.floor(nowSec) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }

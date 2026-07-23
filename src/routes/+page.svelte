@@ -389,12 +389,12 @@
             {@const ageM = n.epoch ? (nowMs / 1000 - n.epoch) / 60 : 0}
             {@const s = sent(n.sentiment)}
             <!-- 트레이더 스캔: [임팩트레일] [주체칩 ▲/▾] 한 줄 헤드라인 … [출처·나이]. 90분↑은 흐리게. -->
-            <a class="news-item {s}" class:old={ageM > 90} href={n.url} target="_blank" rel="noreferrer">
+            <a class="news-item {s}" class:old={ageM > 90} href={n.url} target="_blank" rel="noreferrer" title={n.title}>
               <span class="n-rail" class:l5={n.level >= 5} class:l4={n.level === 4}></span>
               <span class="n-topic {s}">
                 <span class="n-arrow">{s === "pos" ? "▲" : s === "neg" ? "▾" : "•"}</span>{n.topic ?? "MKT"}
               </span>
-              <span class="n-tit">{n.title}</span>
+              <span class="n-tit">{n.short ?? n.title}</span>
               <span class="n-right">
                 {#if n.source}<span class="n-src">{n.source}</span>{/if}
                 {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}

@@ -400,6 +400,28 @@ export function newsTopic(headline: string, ticker?: string): string {
   return "MKT";
 }
 
+/**
+ * 헤드라인을 **핵심 한 구절**로 압축한다. 방송 글랜스는 문장을 정독하는 게 아니라 스캔이다.
+ *  · 끝의 출처(" - Reuters" 등)는 이미 따로 표기 → 제거
+ *  · 첫 종속절 경계(콤마 / — / as·after·amid·while·despite·following …)에서 컷 → 핵심 사실만
+ *  · "…" 를 쓰지 않는다 (단어 경계에서 깔끔히 끝냄)
+ */
+export function shortHeadline(title: string): string {
+  let s = (title || "").trim();
+  // 출처 접미사 제거: " - Reuters" / " | CNBC" / " – Bloomberg"
+  s = s.replace(/\s*[-–—|]\s*[A-Z][A-Za-z.&' ]{1,24}$/, "").trim();
+  // 첫 종속절 경계에서 컷 (핵심 주절만 남긴다). 너무 앞이면(주어 잘림) 무시.
+  const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying|on)\s/i);
+  if (m && m.index != null && m.index > 22) s = s.slice(0, m.index).trim();
+  // 그래도 길면 단어 경계로 자른다 (말줄임표 없이)
+  const MAX = 60;
+  if (s.length > MAX) {
+    const sp = s.lastIndexOf(" ", MAX);
+    s = s.slice(0, sp > 22 ? sp : MAX).trim();
+  }
+  return s.replace(/[,\-–—:;]+$/, "").trim();
+}
+
 function mapNews(n: any, ticker?: string): NewsItem {
   const s = scoreNews(n.headline);
   return {
