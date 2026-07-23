@@ -10,6 +10,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 import { openDb, putItem, getAll, getHistory, stats, KINDS } from "./db.mjs";
 import { validate } from "./validate.mjs";
+import { verifyAlert } from "./verify.mjs";
 import { statusPage } from "./statuspage.mjs";
 import { parseAllowList, normalizeRemote, isAllowed, recordDenied, deniedSummary } from "./ipallow.mjs";
 
@@ -164,6 +165,28 @@ const server = http.createServer(async (req, res) => {
       const kind = path.split("/").pop();
       if (!KINDS[kind]) return send(res, 404, { error: `알 수 없는 kind: ${kind}` });
       return send(res, 200, { kind, history: getHistory(kind, Number(url.searchParams.get("limit") || 20)) });
+    }
+
+    // ---------- 속보 검증 (사이렌 전에 haiku 로 1회 확인) ----------
+    // 읽기키로 인증 (market_watch 서버만 호출한다. IP 허용목록이 이미 앞단을 막는다).
+    // 값싼 모델을 구독 토큰으로 돌리므로 종량과금 없음. 같은 헤드라인은 캐시된다.
+    if (req.method === "POST" && path === "/api/verify-alert") {
+      const auth = authorize(req, url, "MARKET_READ_KEY");
+      if (!auth.ok) return send(res, auth.status, { error: auth.message });
+      let body;
+      try {
+        body = JSON.parse(await readBody(req));
+      } catch (e) {
+        return send(res, e.status === 413 ? 413 : 400, { error: "JSON 파싱 실패" });
+      }
+      const title = typeof body?.title === "string" ? body.title : "";
+      if (!title.trim()) return send(res, 400, { error: "title 이 필요합니다" });
+      const v = await verifyAlert({
+        title,
+        source: typeof body?.source === "string" ? body.source : "",
+        ageSec: Number(body?.ageSec) || 0
+      });
+      return send(res, 200, { ok: true, ...v });
     }
 
     // ---------- 쓰기 (Claude Code cron 전용) ----------

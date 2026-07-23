@@ -12,11 +12,25 @@
 type Live = {
   changePct: number;
   session: "pre" | "post" | "regular";
-  asOf: number; // 체결 시각(ms)
+  asOf: number;    // 체결 시각(ms)
+  stale: boolean;  // 마지막 체결이 오래됨 → "라이브"가 아니다 (맥동 pip 억제용)
 };
 
 const TTL_MS = 20_000; // 20초 캐시 (오버레이가 15초마다 폴링 → 티커당 사실상 매 폴링 갱신)
 const FAIL_MS = 60_000;
+
+// Yahoo 비공식 엔드포인트용 헤더. 맨 UA 만 보내면 CDN 휴리스틱에 더 쉽게 걸린다 → 현실적인 세트.
+const YF_HEADERS: Record<string, string> = {
+  "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  accept: "application/json,text/plain,*/*",
+  "accept-language": "en-US,en;q=0.9",
+  referer: "https://finance.yahoo.com/"
+};
+// ★ 라이브 판정 임계. etMinutes 는 '시:분'만 봐서 며칠 묵은 바(주말/야간)도 pre/post/regular 로
+//   분류해버린다. 그러면 UI 가 옛 체결에 빨간 맥동 LIVE pip 을 붙이는 "가짜 라이브"가 된다.
+//   → 마지막 체결이 이보다 오래됐으면 stale 로 표시해 pip 을 끈다. (프리/애프터는 분당 갱신되므로
+//     12분 공백이면 사실상 거래가 멎은 것.)
+const LIVE_STALE_MS = 12 * 60_000;
 
 const cache = new Map<string, { at: number; data: Live | null }>();
 const failUntil = new Map<string, number>();
@@ -39,11 +53,7 @@ async function fetchOne(ticker: string): Promise<Live | null> {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), 3500);
   try {
-    const r = await fetch(url, {
-      headers: { "user-agent": "Mozilla/5.0", accept: "application/json" },
-      signal: ctl.signal,
-      cache: "no-store"
-    });
+    const r = await fetch(url, { headers: YF_HEADERS, signal: ctl.signal, cache: "no-store" });
     if (!r.ok) return null;
     const j: any = await r.json();
     const res = j?.chart?.result?.[0];
@@ -83,7 +93,8 @@ async function fetchOne(ticker: string): Promise<Live | null> {
       session = min < 570 ? "pre" : "post";
     }
 
-    return { changePct: Math.round(changePct * 100) / 100, session, asOf: lastTs };
+    const stale = Date.now() - lastTs > LIVE_STALE_MS;
+    return { changePct: Math.round(changePct * 100) / 100, session, asOf: lastTs, stale };
   } catch {
     return null;
   } finally {

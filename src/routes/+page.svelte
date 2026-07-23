@@ -2,6 +2,7 @@
   import "$lib/css/global.css";
   import BreakingToast from "$lib/components/BreakingToast.svelte";
   import TVChart from "$lib/components/TVChart.svelte";
+  import MusicPlayer from "$lib/components/MusicPlayer.svelte";
   import { marketState } from "$lib/market-hours";
   import { onMount } from "svelte";
 
@@ -11,9 +12,11 @@
   let isMarketOpen = false;
   let marketSession = "CLOSED";
 
-  // 지수 슬롯은 응답 배열이 아니라 **고정 라벨 목록** 기준으로 그린다.
+  // 헤더 상단 스트립은 응답 배열이 아니라 **고정 라벨 목록** 기준으로 그린다.
   // 예전에는 티커가 죽으면 배열에서 조용히 빠져 자리째 사라지고 나머지가 왼쪽으로 밀렸다.
-  const INDEX_LABELS = ["S&P 500", "NASDAQ 100", "DOW", "NVDA", "AAPL", "MSFT"];
+  // ★ 개별 대형주(NVDA/AAPL/MSFT) 대신 크로스에셋으로 다양화 — 지수(주식) + 반도체 + 크립토 + 원자재.
+  //   지수 3종은 Finnhub(장 밖엔 전일 종가), SOXX/BTC/GOLD/OIL 은 Yahoo(밤·주말에도 라이브).
+  const INDEX_LABELS = ["S&P 500", "NASDAQ 100", "DOW", "SOXX", "BTC", "GOLD", "OIL"];
 
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   let digest = {
@@ -22,6 +25,13 @@
   };
   let macro: { title: string; time: Date | null; imp: number; estimated: boolean; note: string; origin: string } =
     { title: "—", time: null, imp: 4, estimated: true, note: "", origin: "rule" };
+
+  // 패널별 신선도 — 헤더의 시세 배지는 /api/boards 만 본다. 감사 지적: /api/digest·/api/calendar 가
+  // 네트워크 레벨로 실패하면 뉴스/실적 패널이 옛 값을 그대로 물고 얼어붙는데(=현재로 위장) 배지는 초록이었다.
+  // → 각 패널의 마지막 성공 여부를 추적해 STALE 을 표시한다. (성공하면 자동 해제)
+  let digestStale = false;
+  let calendarStale = false;
+  let nowMs = Date.now(); // 1초 틱 — 뉴스 나이(ago)를 매초 갱신해 정지 중에도 정직하게 늙게 한다
   let macroText = "--:--";
   let upcoming: any[] = []; // 다가오는 실적 상세 리스트
 
@@ -39,13 +49,14 @@
   let manualBooted = false;
   let lastManualBreakingId = 0;
 
-  // 하단 지수 미니차트.
-  // ※ 차트와 옆의 %가 **같은 상품**이어야 한다. 예전엔 차트=IXIC(종합), %=QQQ(나스닥100) 였다.
-  //   또 IXIC / SP:SPX / 접두어 없는 "DJI" 는 TradingView 무료 임베드에서 렌더되지 않는다.
+  // 하단 미니차트 = 크로스에셋(크립토·원자재). 큰 중앙차트가 이미 지수를 담당하므로
+  // 여기서 또 지수 3종을 반복하지 않고 "다른 방면"(BTC·GOLD·OIL)을 보여 준다.
+  // ※ 차트와 옆의 %가 **같은 상품**이어야 한다 → tv 심볼과 label(크로스에셋 key)을 맞춘다.
+  //   TVC:GOLD / TVC:USOIL / BITSTAMP:BTCUSD 는 TradingView 무료 임베드에서 렌더된다.
   const MINI_CHARTS = [
-    { label: "NASDAQ 100", tv: "NASDAQ:QQQ" },
-    { label: "S&P 500",    tv: "AMEX:SPY" },
-    { label: "DOW",        tv: "AMEX:DIA" }
+    { label: "BTC",  tv: "BITSTAMP:BTCUSD" },
+    { label: "GOLD", tv: "TVC:GOLD" },
+    { label: "OIL",  tv: "TVC:USOIL" }
   ];
 
   // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"
@@ -54,6 +65,19 @@
   let freshness: { cls: string; text: string } = { cls: "", text: "…" };
 
   const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
+
+  // 차트 배지 세션 문구 — marketState() 는 순수 NYSE 시계라서 크로스에셋엔 거짓말을 한다.
+  //   BTC 차트(BINANCE:BTCUSDT)는 주말에도 실시간인데 "WEEKEND" 라고 찍혔다.
+  //   · 크립토 → 24/7 (항상 라이브)
+  //   · 현물 금속/FX/원자재(OANDA:XAU / TVC:GOLD·USOIL 등) → NYSE 세션을 주장하지 않는다(중립 "SPOT")
+  //   · 그 외(지수 추종 ETF: QQQ/SPY/DIA/SOXX/IWM/KORU) → 기존 NYSE 세션 그대로
+  function chartSession(sym: string): { label: string; live: boolean } | null {
+    const s = (sym || "").toUpperCase();
+    if (/BTC|ETH|CRYPTO|BINANCE|COINBASE|BITSTAMP|USDT|DOGE|:SOL|:XRP/.test(s)) return { label: "24/7", live: true };
+    if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "SPOT", live: false };
+    return null; // 지수 ETF → 기존 NYSE 세션 사용
+  }
+  $: chartSess = chartSession(chartSymbol);
 
   // 방송 컨트롤 (컨트롤러가 조종 → 오버레이가 폴링 반영)
   let chartSymbol = "NASDAQ:QQQ";
@@ -65,6 +89,7 @@
 
   function updateTimers() {
     const now = new Date();
+    nowMs = now.getTime(); // 뉴스 나이 재계산용 (정지된 헤드라인도 매초 늙는다)
     etNow = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
     }).format(now);
@@ -136,14 +161,25 @@
     } else {
       dataAsOf = null;
     }
-    if (d && d.driver) digest = d;
-    if (c && c.next) {
-      macro = {
-        title: c.next.title, imp: c.next.imp, time: new Date(c.next.time),
-        estimated: !!c.next.estimated, note: c.next.note ?? "", origin: c.next.origin ?? "rule"
-      };
+    // 성공(응답 파싱됨)하면 stale 해제 + 값 갱신. 실패(null)면 옛 값을 유지하되 STALE 로 표시.
+    if (d) {
+      if (d.driver) digest = d;
+      digestStale = false;
+    } else {
+      digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
     }
-    if (c && Array.isArray(c.upcoming)) upcoming = c.upcoming;
+    if (c) {
+      if (c.next) {
+        macro = {
+          title: c.next.title, imp: c.next.imp, time: new Date(c.next.time),
+          estimated: !!c.next.estimated, note: c.next.note ?? "", origin: c.next.origin ?? "rule"
+        };
+      }
+      if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
+      calendarStale = false;
+    } else {
+      calendarStale = firstLoadDone;
+    }
 
     freshness = computeFreshness(isMarketOpen);
   }
@@ -233,10 +269,11 @@
     return "neu";
   }
 
-  /** 기사 나이. 화면에 시:분만 찍히면 15시간 된 기사가 오늘 것처럼 보인다. */
-  function ago(epochSec: number): string {
+  /** 기사 나이. 화면에 시:분만 찍히면 15시간 된 기사가 오늘 것처럼 보인다.
+   *  now 를 인자로 받아 1초 틱(nowMs)에 반응 → 피드가 멎어도 나이가 정직하게 늘어난다. */
+  function ago(epochSec: number, now = Date.now()): string {
     if (!epochSec) return "";
-    const m = (Date.now() / 1000 - epochSec) / 60;
+    const m = (now / 1000 - epochSec) / 60;
     if (m < 1) return "just now";
     if (m < 60) return `${Math.round(m)}m ago`;
     if (m < 60 * 48) return `${Math.round(m / 60)}h ago`;
@@ -323,6 +360,7 @@
           {#if digest.driver.origin === "ai" && digest.driver.confidence}
             <span class="conf {digest.driver.confidence}">{digest.driver.confidence.toUpperCase()}</span>
           {/if}
+          {#if digestStale}<span class="stale-chip" title="News feed not responding — showing last value">STALE</span>{/if}
         </div>
         <div class="driver-txt">{digest.driver.text}</div>
       </div>
@@ -340,7 +378,7 @@
               <div class="n-body">
                 <div class="n-meta">
                   <span class="n-time">{n.timeET}</span>
-                  {#if n.epoch}<span class="n-age">{ago(n.epoch)}</span>{/if}
+                  {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
                   {#if n.source}<span class="n-src">{n.source}</span>{/if}
                   {#if n.level >= 5}<span class="n-flag">ALERT</span>{/if}
                 </div>
@@ -362,8 +400,8 @@
           <span class="ch-name">{chartLabel}</span>
           <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
                주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
-          <span class="ch-meta" class:live={isMarketOpen}>
-            {IV_LABEL[chartInterval] ?? chartInterval} · {marketMsg}
+          <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
+            {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
           </span>
         </div>
         <div class="chart-body">
@@ -402,7 +440,9 @@
       </div>
 
       <div class="panel earn">
-        <div class="lbl">📅 EARNINGS CALENDAR<span class="src-hint">recently reported</span></div>
+        <div class="lbl">📅 EARNINGS CALENDAR
+          {#if calendarStale}<span class="stale-chip" title="Calendar feed not responding — showing last value">STALE</span>{/if}
+          <span class="src-hint">recently reported</span></div>
         <div class="e-list">
           {#each upcoming as e}
             <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
@@ -460,7 +500,7 @@
     <div class="disc">
       <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
-      <span>Data: Finnhub</span>
+      <span>Data: Finnhub &amp; Yahoo</span>
       <span class="disc-sep">·</span>
       <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
     </div>
@@ -481,6 +521,9 @@
     </div>
     </div>
   </footer>
+
+  <!-- 배경음악 (YouTube 재생목록). 좌하단 컴팩트 플레이어. -->
+  <MusicPlayer />
 </div>
 
 <style>
@@ -512,8 +555,9 @@
   .badge.active .dot { background: #ff3b30; box-shadow: 0 0 8px #ff3b30; animation: pulse 1.6s infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
 
-  .top-strip { display: flex; gap: 26px; }
-  .idx { display: flex; gap: 8px; font-size: 15px; font-weight: 600; align-items: baseline; }
+  /* 7슬롯(지수3 + 크로스에셋4)으로 늘어 gap 을 조금 좁힌다. 좁은 폭에선 가로 스크롤 없이 줄인다. */
+  .top-strip { display: flex; gap: 20px; flex-wrap: nowrap; }
+  .idx { display: flex; gap: 7px; font-size: 15px; font-weight: 600; align-items: baseline; white-space: nowrap; }
   .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
 
   .hd-r { display: flex; align-items: center; gap: 14px; }
@@ -567,6 +611,9 @@
   .conf.high { background: #0d1712; border: 1px solid #16281d; color: #39d98a; }
   .conf.medium { background: #1a140a; border: 1px solid #2e2410; color: #d8a860; }
   .conf.low { background: #1a0d0d; border: 1px solid #3a1616; color: #ff8a8a; }
+  /* 피드 정지 표시 — 정상 동작 땐 안 보이고, /api/digest·/api/calendar 실패 때만 뜬다 */
+  .stale-chip { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; padding: 1px 6px; border-radius: 4px;
+    background: #1a140a; border: 1px solid #2e2410; color: #d8a860; }
   /* 발표 완료 — 숫자 확보 */
   .e-dd.rep { color: #39d98a; font-size: 13px; }
   /* 발표됐지만 아직 결과·반응 집계 안 됨 */

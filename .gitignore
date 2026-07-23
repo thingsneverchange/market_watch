@@ -1,14 +1,27 @@
 node_modules
-.svelte-kit
+
+# Output
+.output
+.vercel
+.netlify
+.wrangler
+/.svelte-kit
 /build
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env
 .env
 .env.*
 !.env.example
-.DS_Store
-# feed-server 런타임 산출물
-feed-server/data/
-feed-server/logs/
-feed-server/logs_server.txt
-*.db
-*.db-wal
-*.db-shm
+!.env.test
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# Local dev
+.claude/
+_unused_assets/

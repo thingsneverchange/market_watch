@@ -15,7 +15,10 @@ const BASE = "https://finnhub.io/api/v1";
 // ---- 워치리스트 (stock-gate 판정 종목 + 시장 대표주) --------
 //   티커테이프 · 종목 속보 스캔 · 실적 캘린더 ★ 우대에 쓰인다.
 export const WATCHLIST = ["ARM", "MRVL", "VICR", "TTMI", "COHR", "SNX"];
-export const INDEX_TICKERS = ["SPY", "QQQ", "DIA", "NVDA", "AAPL", "MSFT"];
+// ★ 헤더 지수 슬롯 = 주가지수 3종만. 이게 신선도(dataAsOf) 앵커다.
+//   예전에는 여기에 NVDA/AAPL/MSFT 개별주를 섞었지만, 헤더 상단은 이제
+//   크로스에셋(SOXX·BTC·GOLD·OIL, crossasset.ts)이 담당한다. 개별 대형주는 아래 테이프에 남는다.
+export const INDEX_TICKERS = ["SPY", "QQQ", "DIA"];
 export const TAPE_TICKERS = [
   "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
   ...WATCHLIST
@@ -31,6 +34,15 @@ const failUntil = new Map<string, number>();
 
 const MAX_STALE_MS = 5 * 60_000; // 이보다 오래된 캐시는 반환하지 않는다 (null → 화면이 결측을 표시)
 
+// 경로별 안정적 지터 (0..1). 같은 경로는 항상 같은 값이라 만료 시점이 경로마다 어긋난다.
+//  → 17개 시세가 같은 tick 에 일제히 만료돼 Finnhub 로 ~24건 버스트를 쏘던 것을 분산한다.
+//    (감사: 평균은 41.5/min 로 여유지만, 초당 동시성 상한을 건드리는 건 이 동기화된 버스트다)
+function pathHash(path: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < path.length; i++) { h ^= path.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) / 4294967295;
+}
+
 // ※ TTL 은 반드시 폴링 주기(12s)보다 커야 한다. 작으면 캐시 히트율이 구조적으로 0 이다.
 async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
   if (!FINNHUB_API_KEY) return null;
@@ -38,7 +50,9 @@ async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
   const hit = cache.get(path);
   const stale = () => (hit && now - hit.at < MAX_STALE_MS ? hit.data : null);
 
-  if (hit && now - hit.at < ttlMs) return hit.data;
+  const jit = pathHash(path);                 // 0..1, 경로마다 고정
+  const effTtl = ttlMs * (0.85 + jit * 0.3);  // ±15% 지터 → 만료 시점 분산
+  if (hit && now - hit.at < effTtl) return hit.data;
   if ((failUntil.get(path) ?? 0) > now) return stale();
 
   const running = inflight.get(path);
@@ -49,9 +63,12 @@ async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
       const sep = path.includes("?") ? "&" : "?";
       const r = await fetch(`${BASE}${path}${sep}token=${FINNHUB_API_KEY}`, { cache: "no-store" });
       if (!r.ok) {
-        // 403 = 플랜 제약(장기), 429 = 스로틀(단기).
-        // 실패를 캐시하지 않으면 무한 재시도가 429 를 자가증폭한다.
-        failUntil.set(path, now + (r.status === 403 ? 3_600_000 : 30_000));
+        // 403 = 플랜 제약(장기), 429 = 스로틀(전용 백오프, 경로별 45~90s 지터로 재동기화 방지),
+        // 그 외 = 30s. 실패를 캐시하지 않으면 무한 재시도가 429 를 자가증폭한다.
+        const backoff = r.status === 403 ? 3_600_000
+          : r.status === 429 ? 45_000 + Math.floor(jit * 45_000)
+          : 30_000;
+        failUntil.set(path, now + backoff);
         console.warn(`[finnhub] ${r.status} ${path.split("?")[0]}`);
         return stale();
       }

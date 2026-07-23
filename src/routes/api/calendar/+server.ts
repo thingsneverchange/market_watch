@@ -81,6 +81,8 @@ export const GET: RequestHandler = async () => {
         : null;
     const r = recapMap.get(e.ticker);
     const live = liveReactions.get(e.ticker);
+    // 라이브지만 마지막 체결이 오래됐으면(주말·야간·거래정지) "라이브"가 아니다 → pip 을 끈다.
+    const liveFresh = !!live && !live.stale;
     // 리캡의 result 를 Finnhub epsActual 보다 우선한다 (무료 소스는 발표 직후 null 이라 늦다)
     const result =
       r?.result ??
@@ -100,12 +102,13 @@ export const GET: RequestHandler = async () => {
       ts: e.ts,
       // 최근 실적 결과 + 시장반응 (Claude 리캡 우선, 없으면 Finnhub 실제값에서 유도)
       result, // beat | miss | inline | null
-      // ★ 반응 %는 라이브 시세 우선(계속 갱신), Yahoo 실패 시 Claude 스냅샷으로 폴백
+      // ★ 반응 %는 라이브 시세 우선(계속 갱신), Yahoo 실패/부재 시 Claude 스냅샷으로 폴백.
+      //   stale 이어도 마지막 체결값 자체는 유효하므로 %는 보여 주되, 아래 reactionLive 로 pip 만 끈다.
       reactionPct: live ? live.changePct : (r?.reactionPct ?? null),
-      reactionWhen: live
-        ? live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : "LIVE"
-        : (r?.reactionWhen ?? null),
-      reactionLive: !!live, // 라이브 값인지 (UI 가 표시/애니메이션 판단)
+      reactionWhen: liveFresh
+        ? live!.session === "pre" ? "PRE" : live!.session === "post" ? "AH" : "LIVE"
+        : (r?.reactionWhen ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null)),
+      reactionLive: liveFresh, // 진짜 라이브(최근 체결)일 때만 맥동 pip
       tag: r?.tag ?? null,
       time: new Date(e.ts).toISOString()
     };

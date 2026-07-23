@@ -1,5 +1,6 @@
 import type { RequestHandler } from "./$types";
 import { getMarketNews, getCompanyNews, WATCHLIST } from "$lib/server/finnhub";
+import { classifyAlert } from "$lib/server/alertverify";
 
 // 실측된 문제:
 //  · Finnhub general 피드의 기사 나이 중앙값이 31.9시간(최대 50.8h)인데 최신성 필터가 전혀 없었다.
@@ -41,7 +42,7 @@ export const GET: RequestHandler = async () => {
   });
 
   // 3) 2단 등급. 하드 컷 하나만 두면 응답이 상시 빈 배열이 되어 기능이 죽으므로 등급으로 나눈다.
-  const items = merged
+  const staged = merged
     .filter((n) => n.epoch > 0 && n.level >= 4 && !NOISE.test(n.title))
     .filter((n) => nowSec - n.epoch <= UPDATE_MAX_AGE)
     .sort((a, b) => b.epoch - a.epoch)
@@ -51,6 +52,17 @@ export const GET: RequestHandler = async () => {
       ageSec: nowSec - n.epoch,
       kind: nowSec - n.epoch <= BREAKING_MAX_AGE ? "breaking" : "update"
     }));
+
+  // 4) 사이렌 게이트 — "breaking"(사이렌감)만 haiku 로 1회 검증한다.
+  //    UPDATE(무음)는 그대로 통과. 검증기 미설정이면 게이트가 "off" 라 기존 동작.
+  const items: typeof staged = [];
+  for (const n of staged) {
+    if (n.kind !== "breaking") { items.push(n); continue; }
+    const gate = classifyAlert({ id: n.id, title: n.title, source: n.source, ageSec: n.ageSec });
+    if (gate === "pending") continue;                       // 검증 끝날 때까지 보류 (다음 폴에 등장)
+    if (gate === "noise") { items.push({ ...n, kind: "update" }); continue; } // 무음 강등
+    items.push(n);                                          // off/ok → 사이렌 유지
+  }
 
   return new Response(JSON.stringify({ breaking: items, serverNow: nowSec }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
