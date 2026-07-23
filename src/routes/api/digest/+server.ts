@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getMarketNews, getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
+import { getMarketNews, getEarnings, newsTopic, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
@@ -91,8 +91,13 @@ export const GET: RequestHandler = async () => {
   }
 
   // driver 로 쓴 기사는 리스트에서 제외 (같은 문장이 화면에 두 번 나오던 문제).
-  // 7건 = 좌측 컬럼이 스크롤바 없이 담을 수 있는 실제 개수.
-  const list = ranked.filter((n) => !top || n.id !== top.id).slice(0, 7);
+  // ★ 트레이더 관점: 양보다 신호. level≥3(시장 관련) 또는 분류된 것만 남기고, 그게 너무 적으면
+  //   전체로 백필한다. 각 항목엔 대표 주체(topic) 칩을 붙여 "무엇에 관한 것"을 먼저 스캔하게 한다.
+  const pool = ranked.filter((n) => !top || n.id !== top.id);
+  const signal = pool.filter((n) => n.matched || n.level >= 3);
+  const list = (signal.length >= 5 ? signal : pool)
+    .slice(0, 6)
+    .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker) }));
 
   return new Response(JSON.stringify({ driver, news: list, serverNow: Math.floor(nowSec) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }

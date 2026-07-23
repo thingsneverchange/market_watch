@@ -373,17 +373,19 @@
         </div>
         <div class="news-list">
           {#each digest.news as n}
-            <a class="news-item {sent(n.sentiment)}" href={n.url} target="_blank" rel="noreferrer">
-              <div class="n-side" class:l5={n.level >= 5} class:l4={n.level === 4}></div>
-              <div class="n-body">
-                <div class="n-meta">
-                  <span class="n-time">{n.timeET}</span>
-                  {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
-                  {#if n.source}<span class="n-src">{n.source}</span>{/if}
-                  {#if n.level >= 5}<span class="n-flag">ALERT</span>{/if}
-                </div>
-                <div class="n-tit">{n.title}</div>
-              </div>
+            {@const ageM = n.epoch ? (nowMs / 1000 - n.epoch) / 60 : 0}
+            {@const s = sent(n.sentiment)}
+            <!-- 트레이더 스캔: [임팩트레일] [주체칩 ▲/▾] 한 줄 헤드라인 … [출처·나이]. 90분↑은 흐리게. -->
+            <a class="news-item {s}" class:old={ageM > 90} href={n.url} target="_blank" rel="noreferrer">
+              <span class="n-rail" class:l5={n.level >= 5} class:l4={n.level === 4}></span>
+              <span class="n-topic {s}">
+                <span class="n-arrow">{s === "pos" ? "▲" : s === "neg" ? "▾" : "•"}</span>{n.topic ?? "MKT"}
+              </span>
+              <span class="n-tit">{n.title}</span>
+              <span class="n-right">
+                {#if n.source}<span class="n-src">{n.source}</span>{/if}
+                {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
+              </span>
             </a>
           {/each}
           {#if digest.news.length === 0}
@@ -633,27 +635,31 @@
   /* 라이브 시세임을 알리는 맥동 점 */
   .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
     box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }
-  .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
 
-  /* news */
+  /* news — 트레이더 스캔용: 주체 먼저 · 한 줄 · 오래된 건 흐리게 */
   .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 6px; }
+  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 5px; }
   .news-item {
-    display: flex; gap: 12px; padding: 11px 12px; border-radius: 9px; text-decoration: none; color: inherit;
-    background: #101318; border: 1px solid #191c22;
+    display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 9px;
+    text-decoration: none; color: inherit; background: #101318; border: 1px solid #191c22;
   }
-  .n-side { width: 3px; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
-  .n-side.l5 { background: #ff3b30; box-shadow: 0 0 8px rgba(255,59,48,.6); }
-  .n-side.l4 { background: #f5a623; }
-  .n-body { min-width: 0; flex: 1; }
-  .n-meta { display: flex; align-items: center; gap: 9px; margin-bottom: 4px; }
-  .n-time { font-size: 12px; font-weight: 700; color: #8a919b; font-variant-numeric: tabular-nums; }
-  .n-src { font-size: 11px; font-weight: 800; color: #7d94b8; text-transform: uppercase; letter-spacing: 0.04em;
-    background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
-  .n-flag { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; background: #ff3b30; color: #fff; padding: 2px 6px; border-radius: 4px; }
-  .n-link { margin-left: auto; font-size: 12px; color: #4b5563; font-weight: 700; }
+  .news-item.old { opacity: 0.5; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
+  .n-rail { width: 3px; align-self: stretch; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
+  .n-rail.l5 { background: #ff3b30; box-shadow: 0 0 8px rgba(255,59,48,.6); }
+  .n-rail.l4 { background: #f5a623; }
+  /* 주체 칩 — 티커/토픽 + 방향 화살표. 눈이 가장 먼저 닿는 곳. */
+  .n-topic { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; min-width: 58px;
+    font-size: 13px; font-weight: 800; letter-spacing: 0.02em; padding: 3px 8px; border-radius: 6px;
+    background: #14171d; border: 1px solid #23272f; color: #c7cdd6; }
+  .n-topic.pos { color: #39d98a; border-color: #16281d; background: #0d1712; }
+  .n-topic.neg { color: #ff6b6b; border-color: #3a1616; background: #1a0d0d; }
+  .n-arrow { font-size: 9px; opacity: 0.9; }
+  .n-tit { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.2; color: #dfe3e8;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .n-right { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 0; line-height: 1.15; }
+  .n-src { font-size: 9px; font-weight: 700; color: #5b6472; text-transform: uppercase; letter-spacing: 0.03em; }
   .src-hint { margin-left: auto; font-size: 10px; font-weight: 600; color: #4b5563; letter-spacing: 0; }
-  .n-tit { font-size: 17px; font-weight: 600; line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  .n-age { font-size: 12px; font-weight: 800; color: #8a919b; font-variant-numeric: tabular-nums; }
 
   /* center: 큰 차트가 주인공 */
   .center { min-width: 0; }
