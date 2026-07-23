@@ -3,7 +3,7 @@
   import BreakingToast from "$lib/components/BreakingToast.svelte";
   import TVChart from "$lib/components/TVChart.svelte";
   import MusicPlayer from "$lib/components/MusicPlayer.svelte";
-  import { marketState } from "$lib/market-hours";
+  import { marketState, marketBell, type MarketBell } from "$lib/market-hours";
   import { onMount } from "svelte";
 
   // ---- 상태 ----
@@ -11,6 +11,7 @@
   let marketMsg = "LOADING";
   let isMarketOpen = false;
   let marketSession = "CLOSED";
+  let bell: MarketBell = { kind: null, ms: 0 }; // 개장/마감 임박 카운트다운
 
   // 헤더 상단 스트립은 응답 배열이 아니라 **고정 라벨 목록** 기준으로 그린다.
   // 예전에는 티커가 죽으면 배열에서 조용히 빠져 자리째 사라지고 나머지가 왼쪽으로 밀렸다.
@@ -100,9 +101,16 @@
     isMarketOpen = s.open;
     marketMsg = s.msg;
     marketSession = s.session;
+    bell = marketBell(now); // 개장/마감 임박 (실측 시장시계 파생 — 하드코딩·DST·조기폐장 모두 반영)
 
     freshness = computeFreshness(s.open);
     // 이벤트 카운트다운은 템플릿에서 countdown(ev.time, …, nowMs) 로 매초 재계산된다.
+  }
+
+  /** 개장/마감 임박 카운트다운 mm:ss */
+  function bellText(ms: number): string {
+    const t = Math.max(0, Math.floor(ms / 1000));
+    return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, "0")}`;
   }
 
   /** 이벤트까지 남은 시간. 추정 시각이면 분 단위 정밀 카운트다운을 주장하지 않는다. */
@@ -322,6 +330,12 @@
       <div class="badge" class:active={isMarketOpen}>
         <span class="dot"></span>{marketMsg}
       </div>
+      <!-- 개장/마감 임박 카운트다운 (마지막 1시간에만, 마지막 5분엔 맥동) -->
+      {#if bell.kind}
+        <div class="bell {bell.kind}" class:soon={bell.ms <= 300000}>
+          <span class="bell-dot"></span>{bell.kind === "open" ? "OPENS IN" : "CLOSES IN"} {bellText(bell.ms)}
+        </div>
+      {/if}
     </div>
     <!-- 고정 슬롯 렌더: 티커가 죽어도 자리가 남고 "—" 로 결측을 드러낸다 -->
     <div class="top-strip">
@@ -559,6 +573,17 @@
   .badge.active { color: #fff; background: #1a0f10; border-color: #3a1416; }
   .badge.active .dot { background: #ff3b30; box-shadow: 0 0 8px #ff3b30; animation: pulse 1.6s infinite; }
   @keyframes pulse { 50% { opacity: 0.35; } }
+
+  /* 개장/마감 임박 카운트다운 칩 */
+  .bell { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 800;
+    letter-spacing: 0.04em; padding: 6px 12px; border-radius: 999px; font-variant-numeric: tabular-nums; }
+  .bell .bell-dot { width: 7px; height: 7px; border-radius: 50%; }
+  .bell.open { color: #d8a860; background: #1a140a; border: 1px solid #2e2410; }
+  .bell.open .bell-dot { background: #f5a623; }
+  .bell.close { color: #ff8a8a; background: #1a0d0d; border: 1px solid #3a1616; }
+  .bell.close .bell-dot { background: #ff5c5c; }
+  .bell.soon .bell-dot { animation: pulse 1s infinite; }
+  .bell.soon { animation: pulse 1.4s infinite; }
 
   /* 7슬롯(지수3 + 크로스에셋4)으로 늘어 gap 을 조금 좁힌다. 좁은 폭에선 가로 스크롤 없이 줄인다. */
   .top-strip { display: flex; gap: 20px; flex-wrap: nowrap; }

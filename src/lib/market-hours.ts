@@ -117,3 +117,47 @@ export function marketState(now: Date = new Date()): MarketState {
 export function isRegularHours(now: Date = new Date()): boolean {
   return marketState(now).open;
 }
+
+/**
+ * (ET 날짜, 자정 기준 분) → 정확한 UTC epoch(ms). 서머타임 자동 반영.
+ * ※ et-time.ts:etToEpoch 와 같은 정오-프로브 기법이지만, 저건 $lib/server 라 클라이언트에서
+ *   import 할 수 없어 여기 클라이언트-세이프하게 다시 둔다 (순수 Intl/Date, 서버 API 없음).
+ */
+function etMinuteToEpoch(dateStr: string, minutesFromMidnight: number): number {
+  const probe = new Date(`${dateStr}T12:00:00Z`);
+  const etH = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", hourCycle: "h23" }).format(probe)
+  );
+  let offset = etH - 12; // EDT=-4, EST=-5
+  if (offset > 12) offset -= 24;
+  if (offset < -12) offset += 24;
+  const base = Date.parse(`${dateStr}T00:00:00Z`);
+  return base - offset * 3600e3 + minutesFromMidnight * 60e3;
+}
+
+export type MarketBell = { kind: "open" | "close" | null; ms: number };
+
+/**
+ * 개장/마감 임박 카운트다운. **오직 실측 시장시계에서 파생** — 하드코딩 없음.
+ *  · 개장 1시간 전(정규 전 세션): "OPENS IN mm:ss"
+ *  · 마감 1시간 전(정규장 중):     "CLOSES IN mm:ss"  ← 조기폐장이면 그날 마감(13:00)에 자동 맞춤
+ *  · 주말·휴장·비거래 구간엔 아무것도 반환하지 않는다 (session 이 PRE/OPEN 일 때만 계산).
+ *  · 서머타임은 etMinuteToEpoch 가 날짜별 오프셋을 실측해 처리한다.
+ */
+export function marketBell(now: Date = new Date()): MarketBell {
+  const s = marketState(now);
+  const nowMs = now.getTime();
+  const WINDOW = 3600_000; // 1시간
+
+  // 개장 임박 — PRE 세션(거래일에만 존재)에서 정규장 개장까지 1시간 이내
+  if (s.session === "PRE") {
+    const toOpen = etMinuteToEpoch(s.etDate, REG_OPEN) - nowMs;
+    if (toOpen > 0 && toOpen <= WINDOW) return { kind: "open", ms: toOpen };
+  }
+  // 마감 임박 — 정규장 중 그날 마감(조기폐장 반영)까지 1시간 이내
+  if (s.session === "OPEN") {
+    const toClose = etMinuteToEpoch(s.etDate, s.closeMin) - nowMs;
+    if (toClose > 0 && toClose <= WINDOW) return { kind: "close", ms: toClose };
+  }
+  return { kind: null, ms: 0 };
+}
