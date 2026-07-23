@@ -23,16 +23,16 @@
     driver: { text: "—", sentiment: "neu", source: "", url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
     news: [] as any[]
   };
-  let macro: { title: string; time: Date | null; imp: number; estimated: boolean; note: string; origin: string } =
-    { title: "—", time: null, imp: 4, estimated: true, note: "", origin: "rule" };
+  // UPCOMING = 다가오는 주요 이벤트 2개 (거시 일정 + 실적, 시간순). 각자 카운트다운.
+  type UpEvent = { title: string; time: Date; estimated: boolean; imp: number; origin: string };
+  let upcomingEvents: UpEvent[] = [];
 
   // 패널별 신선도 — 헤더의 시세 배지는 /api/boards 만 본다. 감사 지적: /api/digest·/api/calendar 가
   // 네트워크 레벨로 실패하면 뉴스/실적 패널이 옛 값을 그대로 물고 얼어붙는데(=현재로 위장) 배지는 초록이었다.
   // → 각 패널의 마지막 성공 여부를 추적해 STALE 을 표시한다. (성공하면 자동 해제)
   let digestStale = false;
   let calendarStale = false;
-  let nowMs = Date.now(); // 1초 틱 — 뉴스 나이(ago)를 매초 갱신해 정지 중에도 정직하게 늙게 한다
-  let macroText = "--:--";
+  let nowMs = Date.now(); // 1초 틱 — 뉴스 나이(ago)·이벤트 카운트다운을 매초 갱신
   let upcoming: any[] = []; // 다가오는 실적 상세 리스트
 
   // ---- 속보 토스트 (단일 소유자) ----
@@ -102,20 +102,19 @@
     marketSession = s.session;
 
     freshness = computeFreshness(s.open);
+    // 이벤트 카운트다운은 템플릿에서 countdown(ev.time, …, nowMs) 로 매초 재계산된다.
+  }
 
-    if (macro.time) {
-      const diff = macro.time.getTime() - now.getTime();
-      if (diff <= -60000) macroText = "RELEASED";
-      else if (diff <= 0) macroText = "LIVE";
-      else {
-        const d = Math.floor(diff / 864e5);
-        const h = Math.floor((diff % 864e5) / 36e5);
-        const m = Math.floor((diff % 36e5) / 6e4);
-        // 시각이 추정치면 분 단위 카운트다운을 주장하지 않는다
-        if (macro.estimated) macroText = d > 0 ? `IN ~${d}d` : `IN ~${h}h`;
-        else macroText = d > 0 ? `IN ${d}d ${h}h` : `IN ${h}h ${m}m`;
-      }
-    }
+  /** 이벤트까지 남은 시간. 추정 시각이면 분 단위 정밀 카운트다운을 주장하지 않는다. */
+  function countdown(t: Date, estimated: boolean, now: number): string {
+    const diff = t.getTime() - now;
+    if (diff <= -60000) return "PASSED";
+    if (diff <= 0) return "NOW";
+    const d = Math.floor(diff / 864e5);
+    const h = Math.floor((diff % 864e5) / 36e5);
+    const m = Math.floor((diff % 36e5) / 6e4);
+    if (estimated) return d > 0 ? `IN ~${d}d` : `IN ~${h}h`;
+    return d > 0 ? `IN ${d}d ${h}h` : `IN ${h}h ${m}m`;
   }
 
   /**
@@ -169,11 +168,12 @@
       digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
     }
     if (c) {
-      if (c.next) {
-        macro = {
-          title: c.next.title, imp: c.next.imp, time: new Date(c.next.time),
-          estimated: !!c.next.estimated, note: c.next.note ?? "", origin: c.next.origin ?? "rule"
-        };
+      const evs = Array.isArray(c.nextEvents) ? c.nextEvents : (c.next ? [c.next] : null);
+      if (evs) {
+        upcomingEvents = evs.map((e: any) => ({
+          title: e.title, time: new Date(e.time), estimated: !!e.estimated,
+          imp: e.imp, origin: e.origin ?? "rule"
+        }));
       }
       if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
       calendarStale = false;
@@ -433,12 +433,15 @@
     <!-- RIGHT: key event + watchlist -->
     <section class="col right">
       <div class="keyevent">
-        <div class="ke-row">
-          <span class="ke-lbl">◇ NEXT KEY EVENT</span>
-          <span class="ke-timer">{macroText}</span>
-        </div>
-        <!-- 대표 키워드(이벤트명)만. 부연 설명은 싣지 않는다. -->
-        <div class="ke-tit">{macro.title}</div>
+        <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
+        {#each upcomingEvents as ev, i (ev.title)}
+          <!-- 다가오는 주요 이벤트 2개. 각자 카운트다운. 두 번째는 살짝 낮춰 위계를 준다. -->
+          <div class="ke-item" class:sub={i > 0}>
+            <div class="ke-tit">{ev.title}</div>
+            <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
+          </div>
+        {/each}
+        {#if upcomingEvents.length === 0}<div class="ke-item"><div class="ke-tit">—</div></div>{/if}
       </div>
 
       <div class="panel earn">
@@ -641,7 +644,7 @@
   /* ★ YouTube 폰 축소(4~5배)에서도 읽히도록 텍스트를 키운다. 4건만 크게. */
   .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
   .news-item {
-    display: flex; align-items: center; gap: 11px; padding: 12px 13px; border-radius: 10px;
+    display: flex; align-items: flex-start; gap: 11px; padding: 12px 13px; border-radius: 10px;
     text-decoration: none; color: inherit; background: #101318; border: 1px solid #191c22;
   }
   .news-item.old { opacity: 0.5; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
@@ -655,8 +658,9 @@
   .n-topic.pos { color: #39d98a; border-color: #16281d; background: #0d1712; }
   .n-topic.neg { color: #ff6b6b; border-color: #3a1616; background: #1a0d0d; }
   .n-arrow { font-size: 11px; opacity: 0.95; }
-  .n-tit { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.2; color: #eef1f4;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 잘라내지 않는다 — 헤드라인 전체를 줄바꿈으로 보여 준다 ("…" 금지). 4건이라 자리는 충분. */
+  .n-tit { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.28; color: #eef1f4;
+    white-space: normal; overflow: visible; padding-top: 1px; }
   .n-right { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 0; line-height: 1.15; }
   .n-src { font-size: 10px; font-weight: 700; color: #5b6472; text-transform: uppercase; letter-spacing: 0.03em; }
   .src-hint { margin-left: auto; font-size: 10px; font-weight: 600; color: #4b5563; letter-spacing: 0; }
@@ -693,10 +697,16 @@
     background: linear-gradient(180deg, #12100a, #0d0f13); border: 1px solid #2a2410; border-radius: 12px;
     padding: 16px 20px;
   }
-  .ke-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+  .ke-hdr { margin-bottom: 8px; }
   .ke-lbl { color: #f5c518; font-weight: 800; font-size: 13px; letter-spacing: 0.08em; }
-  .ke-timer { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
-  .ke-tit { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
+  .ke-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 0; }
+  .ke-item + .ke-item { border-top: 1px solid #2a2410; } /* 두 이벤트 사이 구분선 */
+  .ke-tit { font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
+  .ke-timer { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+  /* 두 번째(다음의 다음) 이벤트는 위계를 낮춘다 */
+  .ke-item.sub { opacity: 0.8; }
+  .ke-item.sub .ke-tit { font-size: 17px; font-weight: 600; }
+  .ke-item.sub .ke-timer { font-size: 16px; color: #c7cdd6; }
 
   /* ※ 여기 있던 .movers / .m-row / .m-tag / .m-vol / .mp / .m-pre / .sort-by (19줄) 는
         렌더되는 마크업이 하나도 없는 유령 클래스라 제거했다. movers 파이프라인 자체도 삭제됨. */
@@ -786,9 +796,8 @@
   .wrap.m .driver-txt { font-size: 20px; padding: 4px 16px 16px; }
   .wrap.m .news { flex: none; }
   .wrap.m .news-list { overflow: visible; }
-  /* 실제 폰에서 URL 을 직접 열면 헤드라인은 두 줄까지 감싸 읽기 좋게 */
-  .wrap.m .n-tit { font-size: 17px; white-space: normal; overflow: visible;
-    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
+  /* 실제 폰에서 URL 을 직접 열면 헤드라인 전체를 줄바꿈으로 (잘라내지 않음) */
+  .wrap.m .n-tit { font-size: 17px; white-space: normal; overflow: visible; }
 
   /* 실적 캘린더: 전부 보이게 */
   .wrap.m .earn { flex: none; }

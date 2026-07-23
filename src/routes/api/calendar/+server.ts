@@ -126,42 +126,43 @@ export const GET: RequestHandler = async () => {
     })
     .slice(0, 8);
 
-  // 헤더 카운트다운용 next = **아직 발표 전인** 것 중 가장 가까운 것 (워치 우선)
-  //   과거 실적(리캡 대상)이 섞여 있으므로 미래만 골라야 카운트다운이 성립한다.
+  // ── UPCOMING (다가오는 주요 이벤트 2개) ─────────────────
+  // Claude 가 고른 거시 일정(FOMC/CPI 등 — Finnhub 무료는 경제 캘린더 403 이라 API 대체 불가)과
+  // 다가오는 실적을 **시간순으로 병합**해 가장 가까운 2개를 보여 준다.
   const upcomingOnly = future.filter((e) => e.pendingFrom > now).sort((a, b) => a.ts - b.ts);
-  const pick = upcomingOnly.find((e) => watchSet.has(e.ticker)) ?? upcomingOnly[0];
-
-  // ── NEXT KEY EVENT ───────────────────────────────────
-  // 1순위: Claude Code 가 고른 거시 일정(FOMC/CPI 등). Finnhub 무료는 경제 캘린더가 403 이라
-  //        이건 API 로 대체할 수 없는 정보다. 단, 실적보다 늦은 이벤트면 실적이 먼저다.
-  // 2순위: Finnhub 실적 캘린더
   const aiEvent = fresh(feed, "key_event");
   const aiTs = aiEvent ? Date.parse(aiEvent.payload.whenET) : NaN;
-  const earnTs = pick ? pick.ts : Infinity;
-  const useAi = aiEvent && Number.isFinite(aiTs) && aiTs > now - 2 * 3600e3 && aiTs <= earnTs;
 
-  const next = useAi
-    ? {
-        title: aiEvent!.payload.title,
-        time: new Date(aiTs).toISOString(),
-        estimated: aiEvent!.payload.estimated,
-        note: aiEvent!.payload.note,
-        imp: aiEvent!.payload.importance,
-        origin: "ai" as const
-      }
-    : pick
-      ? {
-          title: `${pick.ticker} EARNINGS${pick.hour === "bmo" ? " · PRE-MKT" : pick.hour === "amc" ? " · AFTER-MKT" : ""}`,
-          time: new Date(pick.ts).toISOString(),
-          // 시각이 추정치면 헤더가 "IN 3h 12m" 같은 정밀 카운트다운을 주장하면 안 된다
-          estimated: pick.hour !== "bmo" && pick.hour !== "amc",
-          note: "",
-          imp: watchSet.has(pick.ticker) ? 5 : 4,
-          origin: "rule" as const
-        }
-      : null;
+  type Ev = { title: string; ts: number; estimated: boolean; note: string; imp: number; origin: "ai" | "rule" };
+  const evPool: Ev[] = [];
+  if (aiEvent && Number.isFinite(aiTs) && aiTs > now - 2 * 3600e3) {
+    evPool.push({
+      title: aiEvent.payload.title, ts: aiTs, estimated: aiEvent.payload.estimated,
+      note: aiEvent.payload.note, imp: aiEvent.payload.importance, origin: "ai"
+    });
+  }
+  for (const e of upcomingOnly) {
+    evPool.push({
+      title: `${e.ticker} EARNINGS${e.hour === "bmo" ? " · PRE-MKT" : e.hour === "amc" ? " · AFTER-MKT" : ""}`,
+      ts: e.ts,
+      // 시각이 추정치면 정밀 카운트다운을 주장하지 않는다 (IN ~3d 로 낮춘다)
+      estimated: e.hour !== "bmo" && e.hour !== "amc",
+      note: "", imp: watchSet.has(e.ticker) ? 5 : 4, origin: "rule"
+    });
+  }
+  const seenT = new Set<string>();
+  const nextEvents = evPool
+    .sort((a, b) => a.ts - b.ts)
+    .filter((e) => (seenT.has(e.title) ? false : (seenT.add(e.title), true)))
+    .slice(0, 2)
+    .map((e) => ({
+      title: e.title, time: new Date(e.ts).toISOString(),
+      estimated: e.estimated, note: e.note, imp: e.imp, origin: e.origin
+    }));
 
-  return new Response(JSON.stringify({ next, upcoming }), {
+  const next = nextEvents[0] ?? null; // 하위호환
+
+  return new Response(JSON.stringify({ next, nextEvents, upcoming }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };
