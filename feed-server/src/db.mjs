@@ -12,7 +12,6 @@ import { dirname } from "node:path";
 export const KINDS = {
   top_story: { maxAgeMs: 90 * 60_000, label: "TOP STORY" },
   key_event: { maxAgeMs: 18 * 3600_000, label: "NEXT KEY EVENT" },
-  earnings_note: { maxAgeMs: 48 * 3600_000, label: "EARNINGS NOTE" },
   // 최근 발표된 종목의 결과(예상 상회/하회) + 시장반응(주가 %). 발표 직후엔 색인이 없어
   // 조금 시차가 있지만, 발표 뒤 몇 시간 유효하면 되므로 8시간.
   earnings_recap: { maxAgeMs: 8 * 3600_000, label: "EARNINGS RECAP" }
