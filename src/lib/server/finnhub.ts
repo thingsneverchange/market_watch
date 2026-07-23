@@ -24,6 +24,29 @@ export const TAPE_TICKERS = [
   ...WATCHLIST
 ];
 
+// ★ 실적 캘린더용 "시장이 실제로 보는 종목" 유니버스.
+//   문제: 예전엔 이 목록이 위 15개뿐이라 INTEL(INTC) 실적 같은 대형 이벤트가 통째로 필터링됐다.
+//   Finnhub 무료엔 시가총액 스크리너가 없어(종목당 호출 필요) 완전 자동화는 어렵지만,
+//   "시장을 움직이는 대형주"를 넓게 담아 놓치지 않게 한다. 반도체를 특히 두텁게(워치리스트 성격).
+export const MAJORS = [
+  // 반도체 / 반도체장비 — 시장 주도 섹터
+  "INTC", "AMD", "NVDA", "MU", "QCOM", "TXN", "AVGO", "AMAT", "LRCX", "KLAC",
+  "ADI", "NXPI", "MCHP", "ON", "SWKS", "QRVO", "MPWR", "TER", "ENTG", "GFS",
+  "WOLF", "TSM", "ASML", "SMCI", "ARM", "MRVL",
+  // 메가캡 테크 / 소프트웨어
+  "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "NFLX", "ORCL",
+  "ADBE", "CRM", "CSCO", "IBM", "NOW", "INTU", "AMD", "PLTR", "UBER", "SHOP",
+  // 금융
+  "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "SCHW", "AXP", "V", "MA", "PYPL",
+  // 헬스케어 / 제약
+  "JNJ", "UNH", "LLY", "PFE", "MRK", "ABBV", "TMO", "ABT", "BMY", "AMGN", "GILD",
+  // 소비 / 리테일
+  "WMT", "COST", "HD", "LOW", "MCD", "SBUX", "NKE", "KO", "PEP", "PG", "TGT", "DIS",
+  // 에너지 / 산업 / 통신 / 자동차
+  "XOM", "CVX", "COP", "BA", "CAT", "GE", "HON", "UPS", "RTX",
+  "CMCSA", "T", "VZ", "F", "GM"
+];
+
 // ---- 캐시 ---------------------------------------------------
 //  기존 구현의 두 가지 치명적 문제를 고친 것:
 //   1) 실패 시 나이 제한 없이 옛 캐시를 무한 반환 → 몇 시간 전 값이 "신선한" 얼굴로 나갔다

@@ -9,10 +9,15 @@
 
 ## 대상 종목
 
-아래 종목 중 **지난 48시간 이내에 실적을 발표한** 것들:
+**지난 48시간 이내에 실적을 발표한 대형주 중 시장이 실제로 주목한 것**을 골라라.
+아래는 예시일 뿐, 여기 없어도 큰 이름이 방금 발표했으면(예: INTEL/INTC) **반드시 포함해라.**
 
-- 대형주: NVDA, AAPL, MSFT, AMZN, GOOGL, META, TSLA, AMD
-- 워치리스트: ARM, MRVL, VICR, TTMI, COHR, SNX
+- 반도체: INTC, AMD, NVDA, MU, QCOM, TXN, AVGO, AMAT, LRCX, KLAC, ADI, NXPI, MCHP, ON
+- 메가캡 테크: AAPL, MSFT, AMZN, GOOGL, META, TSLA, NFLX, ORCL, CRM, ADBE
+- 워치리스트(★ 우대): ARM, MRVL, VICR, TTMI, COHR, SNX
+- 그 외 지수를 움직인 대형주(금융·헬스케어·소비 등)도 컸다면 포함
+
+**핵심: "고정 목록"이 아니라 "그 시간대에 시장이 가장 크게 반응한 실적"을 우선하라.**
 
 ## 해야 할 일
 

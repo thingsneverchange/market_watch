@@ -1,11 +1,11 @@
 import type { RequestHandler } from "./$types";
-import { getMarketNews, getEarnings, newsTopic, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
+import { getMarketNews, getEarnings, newsTopic, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 
-// 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다
-const MAJOR = new Set([...WATCHLIST, ...INDEX_TICKERS, ...TAPE_TICKERS]);
+// 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다 (INTC 등 대형주 포함)
+const MAJOR = new Set([...WATCHLIST, ...INDEX_TICKERS, ...TAPE_TICKERS, ...MAJORS]);
 
 export const GET: RequestHandler = async () => {
   const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);

@@ -1,13 +1,13 @@
 import type { RequestHandler } from "./$types";
-import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
+import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 import { getLiveReactions } from "$lib/server/livequote";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
 // 필터가 없으면 우측 패널이 아무도 모르는 마이크로캡(ALEX·AMBZ·BCOW…)으로 채워진다.
-// 화면에 의미 있는 종목만 남긴다.
-const UNIVERSE = new Set([...WATCHLIST, ...TAPE_TICKERS, ...INDEX_TICKERS]);
+// ★ 단, 유니버스가 좁으면 INTEL(INTC) 같은 대형 실적이 통째로 사라진다 → MAJORS 로 넓게 잡는다.
+const UNIVERSE = new Set([...WATCHLIST, ...TAPE_TICKERS, ...INDEX_TICKERS, ...MAJORS]);
 
 
 // 다음 KEY EVENT = 워치리스트 종목의 가장 가까운 실적 (없으면 시장 전체 최근접)
@@ -55,9 +55,15 @@ export const GET: RequestHandler = async () => {
   const recapMap = new Map<string, EarningsRecap["companies"][number]>();
   for (const c of recap?.payload.companies ?? []) recapMap.set(c.ticker, c);
 
-  // 리캡 대상 종목의 **라이브 확장시간 반응**을 Yahoo 에서 가져온다 (20초 캐시).
-  // 발표 후 주가는 계속 움직이므로 이 숫자는 매 폴링마다 갱신된다.
-  const liveReactions = recapMap.size ? await getLiveReactions([...recapMap.keys()]) : new Map();
+  // 라이브 확장시간 반응(Yahoo, 20초 캐시)을 가져올 대상 =
+  //   Claude 리캡 종목 + **최근 발표된(발표시각 지난) 모든 대형주**.
+  //   ★ 예전엔 리캡 목록만 대상이라, INTEL 처럼 방금 실적 낸 종목이 반응 %도 없이 묻혔다.
+  const reportedTickers = future
+    .filter((e) => earnPendingFrom(e.date, e.hour) <= now)
+    .sort((a, b) => b.ts - a.ts)
+    .map((e) => e.ticker);
+  const reactionTargets = [...new Set([...recapMap.keys(), ...reportedTickers])].slice(0, 12);
+  const liveReactions = reactionTargets.length ? await getLiveReactions(reactionTargets) : new Map();
 
   /**
    * 발표 시각이 지났는데 실제값이 아직 없는 구간을 명시한다.
@@ -114,15 +120,17 @@ export const GET: RequestHandler = async () => {
     };
   });
 
-  // ★ "최근에 나온 것들 순으로" — 발표된 것(reported/pending)을 위로, 최근 발표 먼저.
-  //   그다음 예정(upcoming)을 가까운 순으로.
-  const rank = (s: string) => (s === "reported" ? 0 : s === "pending" ? 1 : 2);
+  // ★ "최근에 나온 것들 순으로" — 이미 발표된 것(reported+pending)을 **하나로 묶어** 최근 순으로,
+  //   예정(upcoming)만 뒤로 보낸다.
+  //   예전엔 reported(0) < pending(1) 로 나눠서, 어젯밤 막 발표한 pending(INTEL)이
+  //   숫자가 집계된 어제 아침 reported 들보다 아래로 밀려 8행에서 잘려나갔다.
+  const rank = (s: string) => (s === "upcoming" ? 1 : 0); // 발표 완료(reported/pending) 먼저
   const upcoming = rows
     .sort((a, b) => {
       const ra = rank(a.status), rb = rank(b.status);
       if (ra !== rb) return ra - rb;
       // 발표된 것끼리는 최근 발표가 위, 예정끼리는 가까운 것이 위
-      return ra === 2 ? a.ts - b.ts : b.ts - a.ts;
+      return ra === 1 ? a.ts - b.ts : b.ts - a.ts;
     })
     .slice(0, 8);
 
