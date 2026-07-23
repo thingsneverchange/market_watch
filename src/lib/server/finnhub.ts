@@ -15,10 +15,10 @@ const BASE = "https://finnhub.io/api/v1";
 // ---- 워치리스트 (stock-gate 판정 종목 + 시장 대표주) --------
 //   티커테이프 · 종목 속보 스캔 · 실적 캘린더 ★ 우대에 쓰인다.
 export const WATCHLIST = ["ARM", "MRVL", "VICR", "TTMI", "COHR", "SNX"];
-// ★ 헤더 지수 슬롯 = 주가지수 3종만. 이게 신선도(dataAsOf) 앵커다.
-//   예전에는 여기에 NVDA/AAPL/MSFT 개별주를 섞었지만, 헤더 상단은 이제
-//   크로스에셋(SOXX·BTC·GOLD·OIL, crossasset.ts)이 담당한다. 개별 대형주는 아래 테이프에 남는다.
-export const INDEX_TICKERS = ["SPY", "QQQ", "DIA"];
+// ★ 주가지수 슬롯 = 신선도(dataAsOf) 앵커. 헤더 상단은 이 중 S&P/NASDAQ/DOW 만 쓰고,
+//   IWM(러셀2000)은 하단 미니차트의 % 매칭용으로만 담는다(헤더엔 안 뜸).
+//   개별 대형주(NVDA/AAPL/MSFT)는 아래 테이프, 크로스에셋(SOXX·BTC·GOLD·OIL)은 crossasset.ts.
+export const INDEX_TICKERS = ["SPY", "QQQ", "DIA", "IWM"];
 export const TAPE_TICKERS = [
   "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
   ...WATCHLIST

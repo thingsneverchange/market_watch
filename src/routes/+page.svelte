@@ -50,14 +50,13 @@
   let manualBooted = false;
   let lastManualBreakingId = 0;
 
-  // 하단 미니차트 = 크로스에셋(크립토·원자재). 큰 중앙차트가 이미 지수를 담당하므로
-  // 여기서 또 지수 3종을 반복하지 않고 "다른 방면"(BTC·GOLD·OIL)을 보여 준다.
-  // ※ 차트와 옆의 %가 **같은 상품**이어야 한다 → tv 심볼과 label(크로스에셋 key)을 맞춘다.
-  //   TVC:GOLD / TVC:USOIL / BITSTAMP:BTCUSD 는 TradingView 무료 임베드에서 렌더된다.
+  // 하단 미니차트 = 주요 지수 3종(DOW·S&P 500·러셀2000). 큰 중앙차트가 NASDAQ 을 담당하므로
+  // 나머지 미국 대표지수를 여기서 보여 준다. (NYSE 종합지수는 무료 임베드 미렌더라 러셀2000 로 대체)
+  // ※ 차트 tv 심볼과 옆 % 의 label(boards.top key)을 맞춘다. ETF 프록시는 무료 임베드에서 렌더된다.
   const MINI_CHARTS = [
-    { label: "BTC",  tv: "BITSTAMP:BTCUSD" },
-    { label: "GOLD", tv: "TVC:GOLD" },
-    { label: "OIL",  tv: "TVC:USOIL" }
+    { label: "DOW",          tv: "AMEX:DIA" },
+    { label: "S&P 500",      tv: "AMEX:SPY" },
+    { label: "RUSSELL 2000", tv: "AMEX:IWM" }
   ];
 
   // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"

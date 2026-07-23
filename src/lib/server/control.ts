@@ -26,7 +26,8 @@ export const CHART_PRESETS: ChartPreset[] = [
   { key: "iwm",  label: "러셀2000",    tvSymbol: "AMEX:IWM" },
   { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" },
   { key: "btc",  label: "BTC",        tvSymbol: "BINANCE:BTCUSDT" },
-  { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" }
+  { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" },
+  { key: "rut",  label: "러셀2000",    tvSymbol: "AMEX:IWM" }
 ];
 
 /** 컨트롤러가 보낼 수 있는 봉 간격 화이트리스트 */

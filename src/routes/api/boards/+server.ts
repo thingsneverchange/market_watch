@@ -5,7 +5,7 @@ import { getCrossAssets, CROSS_ASSETS } from "$lib/server/crossasset";
 // ※ 라벨을 정직하게: QQQ 는 나스닥 종합지수(IXIC)가 아니라 나스닥100(NDX) 추종 ETF다.
 //   예전에는 "NASDAQ" 이라 부르면서 옆 차트에는 IXIC 를 띄웠다 (같은 화면 안 서로 다른 지수).
 const LABEL: Record<string, string> = {
-  SPY: "S&P 500", QQQ: "NASDAQ 100", DIA: "DOW"
+  SPY: "S&P 500", QQQ: "NASDAQ 100", DIA: "DOW", IWM: "RUSSELL 2000"
 };
 
 function fmt(n: number) {
