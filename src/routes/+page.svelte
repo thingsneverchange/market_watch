@@ -331,8 +331,8 @@
           {#if digest.driver.source}<span class="drv-src">{digest.driver.source}</span>{/if}
           {#if digest.driver.epoch}<span class="drv-age">{ago(digest.driver.epoch)}</span>{/if}
         </div>
+        <!-- 대표 키워드(헤드라인)만. 부연 설명은 싣지 않는다. -->
         <div class="driver-txt">{digest.driver.text}</div>
-        {#if digest.driver.why}<div class="driver-why">{digest.driver.why}</div>{/if}
       </div>
 
       <div class="panel news">
@@ -405,59 +405,55 @@
           <span class="ke-lbl">◇ NEXT KEY EVENT</span>
           <span class="ke-timer">{macroText}</span>
         </div>
+        <!-- 대표 키워드(이벤트명)만. 부연 설명은 싣지 않는다. -->
         <div class="ke-tit">{macro.title}</div>
-        {#if macro.note}<div class="ke-note">{macro.note}</div>{/if}
       </div>
 
       <div class="panel earn">
-        <div class="lbl">📅 EARNINGS CALENDAR</div>
+        <div class="lbl">📅 EARNINGS CALENDAR<span class="src-hint">최근 발표순</span></div>
         <div class="e-list">
           {#each upcoming as e}
-            <div class="e-row" class:watch={e.watch}>
+            <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
+            <div class="e-row" class:watch={e.watch} class:done={e.status !== "upcoming"}>
               <div class="e-l">
                 <div class="e-tk">
                   {e.ticker}
                   {#if e.watch}<span class="e-star">★</span>{/if}
+                  {#if e.result === "beat"}<span class="e-res beat">예상 상회</span>
+                  {:else if e.result === "miss"}<span class="e-res miss">예상 하회</span>
+                  {:else if e.result === "inline"}<span class="e-res inline">부합</span>{/if}
                 </div>
                 <div class="e-sub">
-                  {e.dateET} · {e.session}{#if !e.estimated} <span class="e-time">{e.timeET} ET</span>{:else} <span class="e-est">시각 미정</span>{/if}
+                  {e.dateET}{#if e.status === "reported" || e.status === "pending"} 발표{:else} · {e.session}{/if}
+                  {#if e.tag} · {e.tag}{/if}
                 </div>
               </div>
               <div class="e-r">
-                {#if e.status === "reported"}
-                  <!-- 실제값 확보 — 예상 대비 서프라이즈를 보여준다 -->
-                  <div class="e-dd rep">발표</div>
-                  <div class="e-eps">
-                    <b>${Number(e.epsActual).toFixed(2)}</b>
-                    {#if e.epsEst != null}<span class="e-vs">vs ${Number(e.epsEst).toFixed(2)}</span>{/if}
-                    {#if e.surprisePct != null}
-                      <span class="e-sur" class:u={e.surprisePct >= 0} class:d={e.surprisePct < 0}>
-                        {e.surprisePct > 0 ? "+" : ""}{e.surprisePct.toFixed(1)}%
-                      </span>
-                    {/if}
+                {#if e.reactionPct != null}
+                  <!-- 시장반응: 발표 후 주가 움직임 -->
+                  <div class="e-react" class:u={e.reactionPct >= 0} class:d={e.reactionPct < 0}>
+                    {e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
                   </div>
+                  {#if e.reactionWhen}<div class="e-when">{e.reactionWhen}</div>{/if}
+                {:else if e.status === "reported"}
+                  <div class="e-dd rep">발표</div>
+                  {#if e.epsActual != null}
+                    <div class="e-eps"><b>${Number(e.epsActual).toFixed(2)}</b></div>
+                  {/if}
                 {:else if e.status === "pending"}
-                  <!-- 발표 시각은 지났는데 무료 소스에 실제값이 아직 없다.
-                       발표 전에 쓴 관측을 현재처럼 띄우지 않고, 공백을 공백이라고 말한다. -->
+                  <!-- 발표됐지만 결과·반응이 아직 집계 안 됨. 공백을 공백이라 말한다. -->
                   <div class="e-dd pend">발표됨</div>
-                  <div class="e-eps pend-t">결과 집계중</div>
+                  <div class="e-eps pend-t">집계중</div>
                 {:else}
                   <div class="e-dd" class:soon={e.dday <= 1}>
                     {e.dday <= 0 ? "오늘" : "D-" + e.dday}
                   </div>
-                  {#if e.epsEst != null}
-                    <div class="e-eps">EPS 추정 ${Number(e.epsEst).toFixed(2)}</div>
-                  {/if}
                 {/if}
               </div>
             </div>
-            {#if e.note}
-              <!-- 해설만 AI가 붙인다. 날짜·시각·EPS 는 위쪽 Finnhub 값 그대로. -->
-              <div class="e-note">{e.note}</div>
-            {/if}
           {/each}
           {#if upcoming.length === 0}
-            <div class="empty">다가오는 실적 없음</div>
+            <div class="empty">최근 실적 없음</div>
           {/if}
         </div>
       </div>
@@ -584,11 +580,19 @@
     padding: 0 15px 2px; margin-top: -3px; }
   /* 발표 완료 — 숫자 확보 */
   .e-dd.rep { color: #39d98a; font-size: 13px; }
-  .e-vs { color: #6b7280; font-weight: 600; margin-left: 3px; }
-  .e-sur { font-weight: 800; margin-left: 5px; }
-  /* 발표됐지만 무료 소스에 아직 숫자가 없는 구간 */
+  /* 발표됐지만 아직 결과·반응 집계 안 됨 */
   .e-dd.pend { color: #d8a860; font-size: 13px; }
   .e-eps.pend-t { color: #d8a860; font-weight: 700; }
+  /* 발표된 행은 살짝 강조 */
+  .e-row.done { border-color: #23303a; background: #0e1418; }
+  /* 결과 뱃지: 예상 상회/하회/부합 */
+  .e-res { font-size: 11px; font-weight: 800; padding: 2px 7px; border-radius: 5px; letter-spacing: 0.02em; }
+  .e-res.beat { background: #0d1712; color: #39d98a; border: 1px solid #16281d; }
+  .e-res.miss { background: #1a0d0d; color: #ff8a8a; border: 1px solid #3a1616; }
+  .e-res.inline { background: #14171d; color: #9aa3ad; border: 1px solid #23272f; }
+  /* 시장반응: 발표 후 주가 % */
+  .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
   .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
   .e-est { color: #6b7280; }
 

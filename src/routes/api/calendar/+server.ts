@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types";
 import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
-import { getFeed, fresh } from "$lib/server/marketfeed";
+import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
@@ -45,10 +45,10 @@ export const GET: RequestHandler = async () => {
   );
   const ddays = (dateStr: string) => Math.round((Date.parse(dateStr + "T00:00:00Z") - todayET) / 864e5);
 
-  // Claude Code 가 붙인 종목별 해설 (날짜·시각·EPS 는 여전히 Finnhub 값을 쓴다)
-  const aiNotes = fresh(feed, "earnings_note");
-  const noteMap = new Map<string, string>();
-  for (const n of aiNotes?.payload.notes ?? []) noteMap.set(n.ticker, n.note);
+  // Claude Code 가 만든 최근 실적 리캡 (결과 + 시장반응). 날짜·EPS 는 여전히 Finnhub.
+  const recap = fresh(feed, "earnings_recap");
+  const recapMap = new Map<string, EarningsRecap["companies"][number]>();
+  for (const c of recap?.payload.companies ?? []) recapMap.set(c.ticker, c);
 
   /**
    * 발표 시각이 지났는데 실제값이 아직 없는 구간을 명시한다.
@@ -63,31 +63,51 @@ export const GET: RequestHandler = async () => {
     return "upcoming" as const;                            // 아직 발표 전
   }
 
-  // 상세 리스트 (워치 우선, 최대 8개)
-  const upcoming = sorted.slice(0, 8).map((e) => {
+  // 각 종목 행 구성. 설명(note)은 넣지 않는다 — 결과/시장반응 데이터만.
+  const rows = sorted.map((e) => {
     const status = earnStatus(e);
     const surprisePct =
       e.epsActual != null && e.epsEst != null && e.epsEst !== 0
         ? ((e.epsActual - e.epsEst) / Math.abs(e.epsEst)) * 100
         : null;
+    const r = recapMap.get(e.ticker);
+    // 리캡의 result 를 Finnhub epsActual 보다 우선한다 (무료 소스는 발표 직후 null 이라 늦다)
+    const result =
+      r?.result ??
+      (surprisePct == null ? null : surprisePct > 0.5 ? "beat" : surprisePct < -0.5 ? "miss" : "inline");
     return {
       ticker: e.ticker,
       watch: watchSet.has(e.ticker),
       dateET: dateLabel(e.ts),
       timeET: timeLabel(e.ts),
       session: hourLabel(e.hour),
-      // hour 가 빈 문자열이면 12:00 ET 는 코드가 찍은 임의값이다. 화면이 정밀 시각을 주장하면 안 된다.
       estimated: e.hour !== "bmo" && e.hour !== "amc",
       dday: ddays(e.date),
       epsEst: e.epsEst,
       epsActual: e.epsActual,
       surprisePct,
       status,
-      // 결과 대기 중에는 AI 해설을 붙이지 않는다 — 발표 전에 쓴 해설이 결과처럼 읽힌다
-      note: status === "pending" ? null : (noteMap.get(e.ticker) ?? null),
+      ts: e.ts,
+      // 최근 실적 결과 + 시장반응 (Claude 리캡 우선, 없으면 Finnhub 실제값에서 유도)
+      result, // beat | miss | inline | null
+      reactionPct: r?.reactionPct ?? null,
+      reactionWhen: r?.reactionWhen ?? null,
+      tag: r?.tag ?? null,
       time: new Date(e.ts).toISOString()
     };
   });
+
+  // ★ "최근에 나온 것들 순으로" — 발표된 것(reported/pending)을 위로, 최근 발표 먼저.
+  //   그다음 예정(upcoming)을 가까운 순으로.
+  const rank = (s: string) => (s === "reported" ? 0 : s === "pending" ? 1 : 2);
+  const upcoming = rows
+    .sort((a, b) => {
+      const ra = rank(a.status), rb = rank(b.status);
+      if (ra !== rb) return ra - rb;
+      // 발표된 것끼리는 최근 발표가 위, 예정끼리는 가까운 것이 위
+      return ra === 2 ? a.ts - b.ts : b.ts - a.ts;
+    })
+    .slice(0, 8);
 
   // 헤더 카운트다운용 next = 시간순 가장 가까운 것 (워치 우선)
   const pick = sorted.find((e) => watchSet.has(e.ticker)) ??
@@ -117,7 +137,7 @@ export const GET: RequestHandler = async () => {
           time: new Date(pick.ts).toISOString(),
           // 시각이 추정치면 헤더가 "IN 3h 12m" 같은 정밀 카운트다운을 주장하면 안 된다
           estimated: pick.hour !== "bmo" && pick.hour !== "amc",
-          note: noteMap.get(pick.ticker) ?? "",
+          note: "",
           imp: watchSet.has(pick.ticker) ? 5 : 4,
           origin: "rule" as const
         }

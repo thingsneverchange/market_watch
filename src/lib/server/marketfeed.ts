@@ -34,12 +34,23 @@ export type KeyEvent = {
 
 export type EarningsNote = { notes: { ticker: string; note: string }[] };
 
+export type EarningsRecap = {
+  companies: {
+    ticker: string;
+    result: "beat" | "miss" | "inline";
+    reactionPct: number | null;
+    reactionWhen: string | null;
+    tag: string | null;
+  }[];
+};
+
 export type Feed = {
   serverNow: number;
   items: {
     top_story?: FeedItem<TopStory>;
     key_event?: FeedItem<KeyEvent>;
     earnings_note?: FeedItem<EarningsNote>;
+    earnings_recap?: FeedItem<EarningsRecap>;
   };
 };
 

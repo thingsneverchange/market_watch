@@ -2,7 +2,7 @@
 # ============================================================
 #  Claude Code 로 마켓 판단을 생성해 market-feed 에 밀어넣는다.
 #
-#  사용법:  ./update-feed.sh top_story|key_event|earnings_note
+#  사용법:  ./update-feed.sh top_story|key_event|earnings_recap
 #  cron 예시는 이 파일 맨 아래 주석 참고.
 # ============================================================
 set -uo pipefail
@@ -46,8 +46,8 @@ log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${KIND:-?}" "$*" >
 die() { log "ERROR: $*"; echo "ERROR: $*" >&2; exit 1; }
 
 case "$KIND" in
-  top_story|key_event|earnings_note) ;;
-  *) die "사용법: $0 top_story|key_event|earnings_note" ;;
+  top_story|key_event|earnings_recap) ;;
+  *) die "사용법: $0 top_story|key_event|earnings_recap" ;;
 esac
 
 PROMPT_FILE="$HERE/prompts/$(echo "$KIND" | tr '_' '-').md"
@@ -112,7 +112,8 @@ echo "$RESULT"
 #  17 */6 * * *  /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh key_event
 #
 #  # 매일 한국시간 오전 7시 실적 해설
-#  0 7 * * *     /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh earnings_note
+#  # 실적 리캡 (최근 발표 결과+반응) — 정규장 마감 후 자주
+#  */20 * * * *  /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh earnings_recap
 #
 #  ※ 맥이 잠자면 cron 은 안 돕니다. 상시 갱신이 필요하면
 #     시스템 설정 > 배터리 > "디스플레이 꺼짐 시 자동 잠자기 방지" 를 켜세요.
