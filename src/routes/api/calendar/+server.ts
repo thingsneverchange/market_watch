@@ -11,13 +11,16 @@ const UNIVERSE = new Set([...WATCHLIST, ...TAPE_TICKERS, ...INDEX_TICKERS]);
 
 // 다음 KEY EVENT = 워치리스트 종목의 가장 가까운 실적 (없으면 시장 전체 최근접)
 export const GET: RequestHandler = async () => {
-  const [earn, feed] = await Promise.all([getEarnings(21), getFeed()]);
+  const [earn, feed] = await Promise.all([getEarnings(21, 3), getFeed()]);
   const now = Date.now();
 
   const future = earn
     .filter((e) => UNIVERSE.has(e.ticker)) // 알파벳순 마이크로캡 노이즈 제거
     .map((e) => ({ ...e, ts: earnEpoch(e.date, e.hour), pendingFrom: earnPendingFrom(e.date, e.hour) }))
-    .filter((e) => e.ts > now - 2 * 3600e3) // 시작 2시간 전까지 유효 유지
+    // 최근 발표(리캡 대상)를 계속 보여주려면 과거 창을 넓혀야 한다. 48시간 = 전 거래일 발표 포함.
+    // (getEarnings 는 미래만 주므로 lookbackDays=3 으로 과거 실적도 받아온다)
+    // 리캡 자체의 유효기간(8h)이 "최근"의 실질 상한을 잡는다.
+    .filter((e) => e.ts > now - 48 * 3600e3)
     .sort((a, b) => a.ts - b.ts);
 
   const watchSet = new Set(WATCHLIST);
@@ -109,9 +112,10 @@ export const GET: RequestHandler = async () => {
     })
     .slice(0, 8);
 
-  // 헤더 카운트다운용 next = 시간순 가장 가까운 것 (워치 우선)
-  const pick = sorted.find((e) => watchSet.has(e.ticker)) ??
-    [...future].sort((a, b) => a.ts - b.ts)[0];
+  // 헤더 카운트다운용 next = **아직 발표 전인** 것 중 가장 가까운 것 (워치 우선)
+  //   과거 실적(리캡 대상)이 섞여 있으므로 미래만 골라야 카운트다운이 성립한다.
+  const upcomingOnly = future.filter((e) => e.pendingFrom > now).sort((a, b) => a.ts - b.ts);
+  const pick = upcomingOnly.find((e) => watchSet.has(e.ticker)) ?? upcomingOnly[0];
 
   // ── NEXT KEY EVENT ───────────────────────────────────
   // 1순위: Claude Code 가 고른 거시 일정(FOMC/CPI 등). Finnhub 무료는 경제 캘린더가 403 이라

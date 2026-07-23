@@ -566,7 +566,6 @@
   .drv-src { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.04em;
     background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
   .drv-age { margin-left: auto; font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0; }
-  .driver-why { padding: 0 18px 14px; font-size: 14px; line-height: 1.4; color: #9aa3ad; font-weight: 500; letter-spacing: 0; }
   /* 판단 출처 표기 — 규칙기반은 회색, AI 판단은 파랑. 시청자가 구분할 수 있어야 한다. */
   .origin { font-size: 10px; font-weight: 800; letter-spacing: 0.04em; padding: 1px 6px; border-radius: 4px;
     background: #14171d; border: 1px solid #23272f; color: #8a919b; }
@@ -575,9 +574,6 @@
   .conf.high { background: #0d1712; border: 1px solid #16281d; color: #39d98a; }
   .conf.medium { background: #1a140a; border: 1px solid #2e2410; color: #d8a860; }
   .conf.low { background: #1a0d0d; border: 1px solid #3a1616; color: #ff8a8a; }
-  .ke-note { font-size: 13px; color: #c7cdd6; font-weight: 500; margin-top: 8px; line-height: 1.4; letter-spacing: 0; }
-  .e-note { font-size: 12px; color: #8a919b; font-weight: 500; line-height: 1.35; letter-spacing: 0;
-    padding: 0 15px 2px; margin-top: -3px; }
   /* 발표 완료 — 숫자 확보 */
   .e-dd.rep { color: #39d98a; font-size: 13px; }
   /* 발표됐지만 아직 결과·반응 집계 안 됨 */
@@ -594,7 +590,6 @@
   .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
   .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
   .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
-  .e-est { color: #6b7280; }
 
   /* news */
   .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }

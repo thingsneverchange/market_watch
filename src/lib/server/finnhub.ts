@@ -390,10 +390,16 @@ export type EarnItem = {
  *   한 번에 3주를 요청하면 "가장 가까운 2주가 통째로 잘려 나간다" (실측: minDate 가 요청 끝날짜 근처).
  *   그래서 5일 창으로 쪼개 병합한다. TTL 900s 라 순증 호출은 없다.
  */
-export async function getEarnings(days = 21): Promise<EarnItem[]> {
+export async function getEarnings(days = 21, lookbackDays = 0): Promise<EarnItem[]> {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const now = Date.now();
   const windows: Promise<any>[] = [];
+  // 과거 창(최근 발표 리캡용). 기본 0 = 미래만.
+  for (let s = -lookbackDays; s < 0; s += 5) {
+    const from = new Date(now + s * 864e5);
+    const to = new Date(now + Math.min(s + 5, 0) * 864e5);
+    windows.push(fhFetch(`/calendar/earnings?from=${fmt(from)}&to=${fmt(to)}`, 900_000));
+  }
   for (let s = 0; s < days; s += 5) {
     const from = new Date(now + s * 864e5);
     const to = new Date(now + Math.min(s + 5, days) * 864e5);
