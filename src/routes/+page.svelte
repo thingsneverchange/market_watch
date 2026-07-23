@@ -297,7 +297,7 @@
               {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%
             </span>
           {:else}
-            <span class="v miss" title="시세를 받지 못했습니다">—</span>
+            <span class="v miss" title="No quote">—</span>
           {/if}
         </div>
       {/each}
@@ -306,7 +306,7 @@
       <div class="clock">{etNow} <span class="et">ET</span></div>
       <!-- 항상 렌더한다. 예전에는 첫 요청이 실패하면 배지가 DOM 에 아예 생기지 않아
            오프라인 콜드스타트가 "조용한 장"처럼 보였다. -->
-      <div class="upd {freshness.cls}" title="시세 기준 시각 (소스가 준 마지막 체결 시각)">
+      <div class="upd {freshness.cls}" title="Quote timestamp (last trade from source)">
         <span class="upd-dot"></span>{freshness.text}
       </div>
     </div>
@@ -316,22 +316,14 @@
   <main class="grid">
     <!-- LEFT: news -->
     <section class="col left">
-      <!-- "MARKET DRIVER" 는 인과를 계산하지 않는다 — 규칙에 가장 잘 걸린 문장일 뿐이라 TOP STORY 로 정직화 -->
+      <!-- TOP STORY: 헤드라인 + confidence 뱃지(HIGH 등)만. 출처·시각·설명은 싣지 않는다. -->
       <div class="driver {sent(digest.driver.sentiment)}" class:nodata={digest.driver.noData}>
-        <!-- 어떤 방식으로 고른 문장인지 화면에 밝힌다.
-             AI = Claude 가 뉴스를 읽고 판단 / 규칙 = 키워드 정규식이 고른 것 -->
         <div class="lbl">
           TOP STORY
-          <span class="origin" class:ai={digest.driver.origin === "ai"}>
-            {digest.driver.origin === "ai" ? "AI 판단" : digest.driver.origin === "rule" ? "규칙기반" : "—"}
-          </span>
           {#if digest.driver.origin === "ai" && digest.driver.confidence}
-            <span class="conf {digest.driver.confidence}">{digest.driver.confidence}</span>
+            <span class="conf {digest.driver.confidence}">{digest.driver.confidence.toUpperCase()}</span>
           {/if}
-          {#if digest.driver.source}<span class="drv-src">{digest.driver.source}</span>{/if}
-          {#if digest.driver.epoch}<span class="drv-age">{ago(digest.driver.epoch)}</span>{/if}
         </div>
-        <!-- 대표 키워드(헤드라인)만. 부연 설명은 싣지 않는다. -->
         <div class="driver-txt">{digest.driver.text}</div>
       </div>
 
@@ -339,7 +331,7 @@
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
         <div class="lbl">
           MARKET HEADLINES
-          <span class="src-hint">최신순 · 임팩트 가중</span>
+          <span class="src-hint">latest · impact-weighted</span>
         </div>
         <div class="news-list">
           {#each digest.news as n}
@@ -410,7 +402,7 @@
       </div>
 
       <div class="panel earn">
-        <div class="lbl">📅 EARNINGS CALENDAR<span class="src-hint">최근 발표순</span></div>
+        <div class="lbl">📅 EARNINGS CALENDAR<span class="src-hint">recently reported</span></div>
         <div class="e-list">
           {#each upcoming as e}
             <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
@@ -419,41 +411,41 @@
                 <div class="e-tk">
                   {e.ticker}
                   {#if e.watch}<span class="e-star">★</span>{/if}
-                  {#if e.result === "beat"}<span class="e-res beat">예상 상회</span>
-                  {:else if e.result === "miss"}<span class="e-res miss">예상 하회</span>
-                  {:else if e.result === "inline"}<span class="e-res inline">부합</span>{/if}
+                  {#if e.result === "beat"}<span class="e-res beat">BEAT</span>
+                  {:else if e.result === "miss"}<span class="e-res miss">MISS</span>
+                  {:else if e.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
                 </div>
                 <div class="e-sub">
-                  {e.dateET}{#if e.status === "reported" || e.status === "pending"} 발표{:else} · {e.session}{/if}
+                  {e.dateET}{#if e.status === "reported" || e.status === "pending"} reported{:else} · {e.session}{/if}
                   {#if e.tag} · {e.tag}{/if}
                 </div>
               </div>
               <div class="e-r">
                 {#if e.reactionPct != null}
-                  <!-- 시장반응: 발표 후 주가 움직임 -->
+                  <!-- 시장반응: 발표 후 주가 움직임. reactionLive 면 라이브 시세(계속 갱신). -->
                   <div class="e-react" class:u={e.reactionPct >= 0} class:d={e.reactionPct < 0}>
-                    {e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
+                    {#if e.reactionLive}<span class="live-pip"></span>{/if}{e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
                   </div>
                   {#if e.reactionWhen}<div class="e-when">{e.reactionWhen}</div>{/if}
                 {:else if e.status === "reported"}
-                  <div class="e-dd rep">발표</div>
+                  <div class="e-dd rep">REPORTED</div>
                   {#if e.epsActual != null}
                     <div class="e-eps"><b>${Number(e.epsActual).toFixed(2)}</b></div>
                   {/if}
                 {:else if e.status === "pending"}
                   <!-- 발표됐지만 결과·반응이 아직 집계 안 됨. 공백을 공백이라 말한다. -->
-                  <div class="e-dd pend">발표됨</div>
-                  <div class="e-eps pend-t">집계중</div>
+                  <div class="e-dd pend">REPORTED</div>
+                  <div class="e-eps pend-t">awaiting</div>
                 {:else}
                   <div class="e-dd" class:soon={e.dday <= 1}>
-                    {e.dday <= 0 ? "오늘" : "D-" + e.dday}
+                    {e.dday <= 0 ? "TODAY" : "D-" + e.dday}
                   </div>
                 {/if}
               </div>
             </div>
           {/each}
           {#if upcoming.length === 0}
-            <div class="empty">최근 실적 없음</div>
+            <div class="empty">No recent earnings</div>
           {/if}
         </div>
       </div>
@@ -465,7 +457,7 @@
     <!-- 고지 밴드: 지연·비매매 고지 + 소스 표기 + TradingView 어트리뷰션.
          흐르는 테이프 안에 넣으면 스크롤로 사라져 "항상 보임" 요건을 못 채우므로 고정 셀로 둔다. -->
     <div class="disc">
-      <span>DELAYED / PREV CLOSE · 정보 제공용, 투자 조언 아님</span>
+      <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
       <span>Data: Finnhub</span>
       <span class="disc-sep">·</span>
@@ -587,8 +579,12 @@
   .e-res.miss { background: #1a0d0d; color: #ff8a8a; border: 1px solid #3a1616; }
   .e-res.inline { background: #14171d; color: #9aa3ad; border: 1px solid #23272f; }
   /* 시장반응: 발표 후 주가 % */
-  .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1;
+    display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
   .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
+  /* 라이브 시세임을 알리는 맥동 점 */
+  .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
+    box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }
   .n-age { font-size: 11px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
 
   /* news */

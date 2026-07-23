@@ -1,0 +1,128 @@
+// ============================================================
+//  라이브 확장시간(프리/애프터마켓) 시세
+//
+//  Finnhub·FMP 무료는 확장시간에 quote 를 갱신하지 않는다(전일 종가에 고정).
+//  하지만 Yahoo v8 chart 에 includePrePost=true 를 붙이고 **실제 데이터포인트**를
+//  읽으면 프리/애프터마켓 체결가가 나온다 (meta 필드는 null 이라 안 됨 — 포인트를 봐야 함).
+//
+//  실적 리캡의 result/tag(정성 판단)는 Claude 가 주고, 반응 %(정량)는 여기서 라이브로 얻는다.
+//  Yahoo 비공식 엔드포인트라 실패는 흔하다 → 실패 시 null 을 돌려주고 호출자가 Claude 값으로 폴백.
+// ============================================================
+
+type Live = {
+  changePct: number;
+  session: "pre" | "post" | "regular";
+  asOf: number; // 체결 시각(ms)
+};
+
+const TTL_MS = 20_000; // 20초 캐시 (오버레이가 15초마다 폴링 → 티커당 사실상 매 폴링 갱신)
+const FAIL_MS = 60_000;
+
+const cache = new Map<string, { at: number; data: Live | null }>();
+const failUntil = new Map<string, number>();
+const inflight = new Map<string, Promise<Live | null>>();
+
+/** ET 기준 분(자정 이후). 확장시간 판정용. */
+function etMinutes(ms: number): number {
+  const p = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+  }).formatToParts(new Date(ms));
+  const h = Number(p.find((x) => x.type === "hour")?.value ?? 0);
+  const m = Number(p.find((x) => x.type === "minute")?.value ?? 0);
+  return h * 60 + m;
+}
+
+async function fetchOne(ticker: string): Promise<Live | null> {
+  const url =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
+    `?interval=1m&range=1d&includePrePost=true`;
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 3500);
+  try {
+    const r = await fetch(url, {
+      headers: { "user-agent": "Mozilla/5.0", accept: "application/json" },
+      signal: ctl.signal,
+      cache: "no-store"
+    });
+    if (!r.ok) return null;
+    const j: any = await r.json();
+    const res = j?.chart?.result?.[0];
+    if (!res) return null;
+
+    const meta = res.meta ?? {};
+    const regClose = Number(meta.regularMarketPrice);      // 가장 최근 정규장 종가
+    const prevClose = Number(meta.chartPreviousClose ?? meta.previousClose); // 그 전 종가
+    const ts: number[] = res.timestamp ?? [];
+    const closes: (number | null)[] = res.indicators?.quote?.[0]?.close ?? [];
+
+    // 마지막 유효 체결 포인트
+    let lastPrice: number | null = null;
+    let lastTs = 0;
+    for (let i = closes.length - 1; i >= 0; i--) {
+      if (closes[i] != null && Number.isFinite(closes[i]!)) {
+        lastPrice = Number(closes[i]);
+        lastTs = Number(ts[i]) * 1000;
+        break;
+      }
+    }
+    if (lastPrice == null || !Number.isFinite(regClose) || regClose <= 0) return null;
+
+    const min = etMinutes(lastTs);
+    const inRegular = min >= 570 && min < 960; // 09:30~16:00 ET
+
+    // 확장시간: 정규장 종가 대비 (= 실적 발표 후 반응)
+    // 정규장 중: 전일 종가 대비 (= 그날의 등락)
+    let changePct: number;
+    let session: Live["session"];
+    if (inRegular) {
+      const base = Number.isFinite(prevClose) && prevClose > 0 ? prevClose : regClose;
+      changePct = ((lastPrice - base) / base) * 100;
+      session = "regular";
+    } else {
+      changePct = ((lastPrice - regClose) / regClose) * 100;
+      session = min < 570 ? "pre" : "post";
+    }
+
+    return { changePct: Math.round(changePct * 100) / 100, session, asOf: lastTs };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** 티커의 라이브 확장시간 반응. 실패/미가용이면 null. */
+export async function getLiveReaction(ticker: string): Promise<Live | null> {
+  const now = Date.now();
+  const hit = cache.get(ticker);
+  if (hit && now - hit.at < TTL_MS) return hit.data;
+  if ((failUntil.get(ticker) ?? 0) > now) return hit?.data ?? null;
+
+  const running = inflight.get(ticker);
+  if (running) return running;
+
+  const p = (async () => {
+    const data = await fetchOne(ticker);
+    if (data) {
+      cache.set(ticker, { at: Date.now(), data });
+    } else {
+      failUntil.set(ticker, Date.now() + FAIL_MS);
+    }
+    inflight.delete(ticker);
+    return data;
+  })();
+  inflight.set(ticker, p);
+  return p;
+}
+
+/** 여러 티커 병렬 (실패는 개별 null) */
+export async function getLiveReactions(tickers: string[]): Promise<Map<string, Live>> {
+  const out = new Map<string, Live>();
+  await Promise.all(
+    tickers.map(async (t) => {
+      const r = await getLiveReaction(t);
+      if (r) out.set(t, r);
+    })
+  );
+  return out;
+}

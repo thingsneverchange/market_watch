@@ -2,6 +2,7 @@ import type { RequestHandler } from "./$types";
 import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS } from "$lib/server/finnhub";
 import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
+import { getLiveReactions } from "$lib/server/livequote";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
 // 필터가 없으면 우측 패널이 아무도 모르는 마이크로캡(ALEX·AMBZ·BCOW…)으로 채워진다.
@@ -33,7 +34,7 @@ export const GET: RequestHandler = async () => {
     return a.ts - b.ts;
   });
 
-  const hourLabel = (h: string) => h === "bmo" ? "장전" : h === "amc" ? "장마감후" : "장중";
+  const hourLabel = (h: string) => h === "bmo" ? "PRE-MKT" : h === "amc" ? "AFTER-MKT" : "INTRADAY";
   const dateLabel = (ts: number) =>
     new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(new Date(ts));
   const timeLabel = (ts: number) =>
@@ -48,10 +49,15 @@ export const GET: RequestHandler = async () => {
   );
   const ddays = (dateStr: string) => Math.round((Date.parse(dateStr + "T00:00:00Z") - todayET) / 864e5);
 
-  // Claude Code 가 만든 최근 실적 리캡 (결과 + 시장반응). 날짜·EPS 는 여전히 Finnhub.
+  // Claude Code 가 만든 최근 실적 리캡: result(예상 상회/하회) + tag(짧은 이유)는 정성 판단.
+  // 반응 %(정량)는 아래에서 라이브 시세로 덮어쓴다 → Claude 값은 폴백일 뿐.
   const recap = fresh(feed, "earnings_recap");
   const recapMap = new Map<string, EarningsRecap["companies"][number]>();
   for (const c of recap?.payload.companies ?? []) recapMap.set(c.ticker, c);
+
+  // 리캡 대상 종목의 **라이브 확장시간 반응**을 Yahoo 에서 가져온다 (20초 캐시).
+  // 발표 후 주가는 계속 움직이므로 이 숫자는 매 폴링마다 갱신된다.
+  const liveReactions = recapMap.size ? await getLiveReactions([...recapMap.keys()]) : new Map();
 
   /**
    * 발표 시각이 지났는데 실제값이 아직 없는 구간을 명시한다.
@@ -74,6 +80,7 @@ export const GET: RequestHandler = async () => {
         ? ((e.epsActual - e.epsEst) / Math.abs(e.epsEst)) * 100
         : null;
     const r = recapMap.get(e.ticker);
+    const live = liveReactions.get(e.ticker);
     // 리캡의 result 를 Finnhub epsActual 보다 우선한다 (무료 소스는 발표 직후 null 이라 늦다)
     const result =
       r?.result ??
@@ -93,8 +100,12 @@ export const GET: RequestHandler = async () => {
       ts: e.ts,
       // 최근 실적 결과 + 시장반응 (Claude 리캡 우선, 없으면 Finnhub 실제값에서 유도)
       result, // beat | miss | inline | null
-      reactionPct: r?.reactionPct ?? null,
-      reactionWhen: r?.reactionWhen ?? null,
+      // ★ 반응 %는 라이브 시세 우선(계속 갱신), Yahoo 실패 시 Claude 스냅샷으로 폴백
+      reactionPct: live ? live.changePct : (r?.reactionPct ?? null),
+      reactionWhen: live
+        ? live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : "LIVE"
+        : (r?.reactionWhen ?? null),
+      reactionLive: !!live, // 라이브 값인지 (UI 가 표시/애니메이션 판단)
       tag: r?.tag ?? null,
       time: new Date(e.ts).toISOString()
     };
