@@ -638,28 +638,29 @@
 
   /* news — 트레이더 스캔용: 주체 먼저 · 한 줄 · 오래된 건 흐리게 */
   .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 5px; }
+  /* ★ YouTube 폰 축소(4~5배)에서도 읽히도록 텍스트를 키운다. 4건만 크게. */
+  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
   .news-item {
-    display: flex; align-items: center; gap: 10px; padding: 9px 11px; border-radius: 9px;
+    display: flex; align-items: center; gap: 11px; padding: 12px 13px; border-radius: 10px;
     text-decoration: none; color: inherit; background: #101318; border: 1px solid #191c22;
   }
   .news-item.old { opacity: 0.5; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
-  .n-rail { width: 3px; align-self: stretch; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
+  .n-rail { width: 4px; align-self: stretch; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
   .n-rail.l5 { background: #ff3b30; box-shadow: 0 0 8px rgba(255,59,48,.6); }
   .n-rail.l4 { background: #f5a623; }
   /* 주체 칩 — 티커/토픽 + 방향 화살표. 눈이 가장 먼저 닿는 곳. */
-  .n-topic { flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px; min-width: 58px;
-    font-size: 13px; font-weight: 800; letter-spacing: 0.02em; padding: 3px 8px; border-radius: 6px;
+  .n-topic { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; min-width: 66px;
+    font-size: 15px; font-weight: 800; letter-spacing: 0.02em; padding: 4px 9px; border-radius: 7px;
     background: #14171d; border: 1px solid #23272f; color: #c7cdd6; }
   .n-topic.pos { color: #39d98a; border-color: #16281d; background: #0d1712; }
   .n-topic.neg { color: #ff6b6b; border-color: #3a1616; background: #1a0d0d; }
-  .n-arrow { font-size: 9px; opacity: 0.9; }
-  .n-tit { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.2; color: #dfe3e8;
+  .n-arrow { font-size: 11px; opacity: 0.95; }
+  .n-tit { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.2; color: #eef1f4;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .n-right { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 0; line-height: 1.15; }
-  .n-src { font-size: 9px; font-weight: 700; color: #5b6472; text-transform: uppercase; letter-spacing: 0.03em; }
+  .n-src { font-size: 10px; font-weight: 700; color: #5b6472; text-transform: uppercase; letter-spacing: 0.03em; }
   .src-hint { margin-left: auto; font-size: 10px; font-weight: 600; color: #4b5563; letter-spacing: 0; }
-  .n-age { font-size: 12px; font-weight: 800; color: #8a919b; font-variant-numeric: tabular-nums; }
+  .n-age { font-size: 14px; font-weight: 800; color: #99a1ab; font-variant-numeric: tabular-nums; }
 
   /* center: 큰 차트가 주인공 */
   .center { min-width: 0; }
@@ -785,7 +786,9 @@
   .wrap.m .driver-txt { font-size: 20px; padding: 4px 16px 16px; }
   .wrap.m .news { flex: none; }
   .wrap.m .news-list { overflow: visible; }
-  .wrap.m .n-tit { font-size: 16px; -webkit-line-clamp: 3; line-clamp: 3; }
+  /* 실제 폰에서 URL 을 직접 열면 헤드라인은 두 줄까지 감싸 읽기 좋게 */
+  .wrap.m .n-tit { font-size: 17px; white-space: normal; overflow: visible;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
 
   /* 실적 캘린더: 전부 보이게 */
   .wrap.m .earn { flex: none; }

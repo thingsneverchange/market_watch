@@ -93,10 +93,12 @@ export const GET: RequestHandler = async () => {
   // driver 로 쓴 기사는 리스트에서 제외 (같은 문장이 화면에 두 번 나오던 문제).
   // ★ 트레이더 관점: 양보다 신호. level≥3(시장 관련) 또는 분류된 것만 남기고, 그게 너무 적으면
   //   전체로 백필한다. 각 항목엔 대표 주체(topic) 칩을 붙여 "무엇에 관한 것"을 먼저 스캔하게 한다.
+  // ★ YouTube 송출 → 다수 시청자가 1920 프레임을 폰에서 4~5배 축소해 본다.
+  //   그래서 '적게·크게·짧게'. 4건만, 각 행을 크게 뽑아 축소해도 읽히게 한다.
   const pool = ranked.filter((n) => !top || n.id !== top.id);
   const signal = pool.filter((n) => n.matched || n.level >= 3);
-  const list = (signal.length >= 5 ? signal : pool)
-    .slice(0, 6)
+  const list = (signal.length >= 4 ? signal : pool)
+    .slice(0, 4)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker) }));
 
   return new Response(JSON.stringify({ driver, news: list, serverNow: Math.floor(nowSec) }), {
