@@ -157,13 +157,13 @@
   {#if status !== "ok"}
     <div class="tv-overlay" class:err={status === "error"} class:small={mini}>
       {#if status === "loading"}
-        <span class="spin"></span> 차트 로딩…
+        <span class="spin"></span> Loading chart…
       {:else}
-        차트를 불러올 수 없어요 <code>{failedSymbol}</code>
+        Chart unavailable <code>{failedSymbol}</code>
         {#if !mini}
           <small>
-            방화벽/DNS 에서 <b>tradingview.com</b> 과 <b>tradingview-widget.com</b>
-            두 도메인을 모두 허용해야 합니다. 심볼이 무료 임베드 미제공일 수도 있습니다.
+            Allow <b>tradingview.com</b> and <b>tradingview-widget.com</b> through your
+            firewall/DNS. The symbol may also be unavailable on the free embed.
           </small>
         {/if}
       {/if}

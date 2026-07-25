@@ -3,6 +3,7 @@
   import BreakingToast from "$lib/components/BreakingToast.svelte";
   import TVChart from "$lib/components/TVChart.svelte";
   import MusicPlayer from "$lib/components/MusicPlayer.svelte";
+  import LiveVideo from "$lib/components/LiveVideo.svelte";
   import { marketState, marketBell, marketStatus, type MarketBell, type MarketStatus } from "$lib/market-hours";
   import { onMount } from "svelte";
 
@@ -467,7 +468,14 @@
         </div>
       {/if}
 
-      <div class="panel news">
+      <!-- 영상 송출 중엔 이 자리(헤드라인)를 영상이 차지한다. 차트는 건드리지 않는다. -->
+      {#if video}
+        {#key video.id}
+          <LiveVideo videoId={video.id} label={video.label} />
+        {/key}
+      {/if}
+
+      <div class="panel news" class:hidden={!!video}>
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
         <div class="lbl">
           MARKET HEADLINES
@@ -495,34 +503,15 @@
     <section class="col center">
       <div class="chart-card">
         <div class="chart-head">
-          <span class="ch-name">{video ? (video.label || "LIVE") : chartLabel}</span>
+          <span class="ch-name">{chartLabel}</span>
           <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
                주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
-          {#if video}
-            <span class="ch-meta live">● ON AIR</span>
-          {:else}
-            <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
-              {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
-            </span>
-          {/if}
+          <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
+            {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
+          </span>
         </div>
         <div class="chart-body">
-          <!-- 영상이 켜지면 차트 자리를 차지한다. 차트는 컴포넌트를 유지해 복귀가 즉시 되게 둔다. -->
-          <div class="chart-slot" class:hidden={!!video}>
-            <TVChart symbol={chartSymbol} interval={chartInterval} />
-          </div>
-          {#if video}
-            {#key video.id}
-              <iframe
-                class="live-video"
-                src={`https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&mute=0&rel=0&modestbranding=1&playsinline=1&cc_load_policy=1&cc_lang_pref=ko&hl=ko`}
-                title={video.label || "Live video"}
-                allow="autoplay; encrypted-media; picture-in-picture"
-                referrerpolicy="strict-origin-when-cross-origin"
-                allowfullscreen
-              ></iframe>
-            {/key}
-          {/if}
+          <TVChart symbol={chartSymbol} interval={chartInterval} />
         </div>
       </div>
 
@@ -867,10 +856,8 @@
   .ch-meta.live { color: #39d98a; background: #0d1712; border-color: #16281d; }
   /* TradingView autosize가 높이를 잡도록 명시적 최소 높이 강제 (0-height 방지) */
   .chart-body { flex: 1 1 auto; min-height: 320px; position: relative; }
-  /* 차트 슬롯 — 영상 송출 중에는 숨기되 언마운트하지 않는다 (복귀 시 재로딩 지연 방지) */
-  .chart-slot { position: absolute; inset: 0; }
-  .chart-slot.hidden { visibility: hidden; }
-  .live-video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
+  /* 영상 송출 중 헤드라인 패널은 숨긴다 (좌측 컬럼 자리를 영상이 쓴다) */
+  .news.hidden { display: none; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
