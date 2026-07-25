@@ -6,6 +6,11 @@
   // 화면에 띄울 차트들 (최대 4). 순서가 곧 배치 순서다.
   let activeKeys: string[] = [];
   let chartAuto = true;   // 정규장이면 TradingView 로 자동 전환
+  let chartSniper = false;                        // 급등락 자동 포커스
+  let chartStyle: "line" | "candle" = "line";
+  // "지금 시장이 보고 있는 것" — 평소 변동성 대비 이례성 순
+  let movers: { key: string; label: string; price: number; changePct: number;
+    recentPct: number; z: number; dir: number }[] = [];
   const MAX_SLOTS = 4;
   let interval = "1";
   let headline = "";
@@ -99,6 +104,8 @@
         presets = j.presets ?? [];
         activeKeys = Array.isArray(j.chartKeys) && j.chartKeys.length ? j.chartKeys : [];
         chartAuto = j.chartAuto !== false;
+        chartSniper = !!j.chartSniper;
+        chartStyle = j.chartStyle === "candle" ? "candle" : "line";
         interval = j.chartInterval;
         liveVideo = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
         if (j.music) music = { playing: j.music.playing, volume: j.music.volume };
@@ -197,6 +204,33 @@
     flash(`${isFutPreset ? "Range" : "Interval"} → ${ranges.find(i=>i.v===v)?.t}`);
     await post({ action: "chart", keys: activeKeys, interval: v });
   }
+  async function loadMovers() {
+    try {
+      const r = await fetch("/api/movers?n=8");
+      if (r.ok) movers = (await r.json()).movers ?? [];
+    } catch {}
+  }
+  /** 추천 목록에서 바로 차트에 올린다 (프리셋에 없는 종목은 fv: 키로) */
+  async function airMover(key: string) {
+    const preset = presets.find((p) => p.fut === key);
+    const k = preset ? preset.key : `fv:${key}`;
+    if (activeKeys.includes(k)) { flash("Already on air"); return; }
+    activeKeys = activeKeys.length >= MAX_SLOTS
+      ? [...activeKeys.slice(0, -1), k]   // 꽉 찼으면 마지막 슬롯 교체
+      : [...activeKeys, k];
+    flash(`Added ${movers.find(m => m.key === key)?.label ?? key}`);
+    await post({ action: "chart", keys: activeKeys, interval });
+  }
+  async function toggleSniper() {
+    chartSniper = !chartSniper;
+    flash(chartSniper ? "Auto-Sniper ON" : "Auto-Sniper OFF");
+    await post({ action: "chart", keys: activeKeys, interval, sniper: chartSniper });
+  }
+  async function setStyle(v: "line" | "candle") {
+    chartStyle = v;
+    flash(`Chart style → ${v}`);
+    await post({ action: "chart", keys: activeKeys, interval, style: v });
+  }
   async function toggleChartAuto() {
     chartAuto = !chartAuto;
     flash(chartAuto ? "Regular hours → TradingView" : "Always self-rendered futures");
@@ -233,10 +267,13 @@
     loadSuggestions();
     loadVideos();
     loadCadence();
+    loadMovers();
     // 추천은 1분마다 갱신 (이벤트가 시작/종료되면 자동 반영)
     // ※ 이 페이지엔 봉 간격 설정용 로컬 setInterval() 이 있어 전역이 가려진다 → window 로 명시.
     const t = window.setInterval(() => { loadSuggestions(); loadVideos(); }, 60000);
-    return () => window.clearInterval(t);
+    // 시세 추천은 더 자주 — 급등락은 1분이면 이미 늦다
+    const tm = window.setInterval(loadMovers, 20000);
+    return () => { window.clearInterval(t); window.clearInterval(tm); };
   });
 </script>
 
@@ -278,6 +315,51 @@
         </div>
       {/each}
     </div>
+  </section>
+
+  <section>
+    <h2>🎯 Auto-Sniper <span class="h2sub">— auto-focus whatever is spiking</span></h2>
+    <button class="btn wide" class:on={chartSniper} on:click={toggleSniper}>
+      {chartSniper ? "AUTO-SNIPER ON" : "AUTO-SNIPER OFF"}
+      <small>{chartSniper
+        ? "takes the LAST slot · holds 90s · only moves ≥2.5x normal volatility"
+        : "your chart picks stay exactly as you set them"}</small>
+    </button>
+    <div class="mhint">Your first chart is never replaced. Idle while futures are closed —
+      a “30-minute move” from last Friday isn’t news.</div>
+  </section>
+
+  <section>
+    <h2>🔥 Market focus <span class="h2sub">— unusual vs its own normal volatility</span></h2>
+    {#if movers.length}
+      <div class="movers">
+        {#each movers as m}
+          <button class="mv" class:up={m.dir > 0} class:dn={m.dir < 0}
+                  on:click={() => airMover(m.key)}>
+            <span class="mv-l">{m.label}</span>
+            <span class="mv-z">{m.z}x</span>
+            <span class="mv-p">{m.recentPct > 0 ? "+" : ""}{m.recentPct}%<small>30m</small></span>
+          </button>
+        {/each}
+      </div>
+      <div class="mhint">Tap to put it on air. “2.4x” = the last 30 minutes moved 2.4&times; this
+        symbol’s own typical range — so a quiet bond spiking outranks oil’s everyday swing.</div>
+    {:else}
+      <div class="mhint">Nothing unusual right now.</div>
+    {/if}
+  </section>
+
+  <section>
+    <h2>🕯 Style</h2>
+    <div class="grid iv">
+      <button class="btn iv-b" class:on={chartStyle === "line"} on:click={() => setStyle("line")}>
+        Line<small>exact closes</small></button>
+      <button class="btn iv-b" class:on={chartStyle === "candle"} on:click={() => setStyle("candle")}>
+        Candles<small>from 5m closes</small></button>
+    </div>
+    <div class="mhint">The free feed gives closes only, not per-bar OHLC — so candle wicks are
+      built from 5-minute closes and can be slightly short. Open/close are exact. True tick
+      candles come from the TradingView mode during regular hours.</div>
   </section>
 
   <section>
@@ -453,6 +535,16 @@
   .only{position:absolute;top:4px;right:5px;font-size:9px;font-weight:800;color:#6b7280;
     background:#12151b;border:1px solid #23272f;border-radius:4px;padding:2px 5px;cursor:pointer}
   .only:hover{color:#c7cdd6;border-color:#3a4150}
+  .movers{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  .mv{display:flex;align-items:baseline;gap:8px;background:#12151b;border:1px solid #23272f;
+    border-radius:8px;padding:10px 12px;cursor:pointer;text-align:left;color:#c7cdd6}
+  .mv:hover{border-color:#3a4150}
+  .mv-l{font-size:13px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mv-z{font-size:11px;font-weight:800;color:#f0b429}
+  .mv-p{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+  .mv-p small{font-size:8px;color:#6b7280;margin-left:3px;font-weight:700}
+  .mv.up .mv-p{color:#39d98a}
+  .mv.dn .mv-p{color:#ff5c5c}
   .wide{width:100%;display:flex;flex-direction:column;gap:3px;align-items:center;padding:14px}
   .wide small{font-size:10px;font-weight:600;color:#6b7280}
   .wide.on small{color:#4ade80}

@@ -76,6 +76,10 @@ export type ControlState = {
   // AUTO = 정규장이면 TradingView(캔들·지표), 그 외엔 선물 자체 렌더.
   // 끄면 항상 선물 자체 렌더 — TradingView 가 안 뜨는 환경에서도 화면이 안 빈다.
   chartAuto: boolean;
+  // Auto-Sniper — 이례적으로 급등·급락하는 종목을 한 슬롯에 자동으로 물린다.
+  chartSniper: boolean;
+  // 라인 / 캔들
+  chartStyle: "line" | "candle";
   breaking: { id: number; headline: string; level: number; at: number } | null; // 수동 속보
   video: VideoState;            // 송출 중인 영상 (null = 차트 표시)
   // 배경음악 — 오디오는 방송 화면(오버레이)에서 나야 OBS 가 잡는다.
@@ -111,6 +115,8 @@ const state: ControlState = {
   chartKeys: ["nq"],   // 24시간 방송의 기본 = 나스닥 선물 1개
   chartInterval: "1",
   chartAuto: true,
+  chartSniper: false,
+  chartStyle: "line",
   breaking: null,
   video: null,
   music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
@@ -128,18 +134,29 @@ export function getState(): ControlState {
 }
 
 /**
- * 차트 슬롯 설정. 최대 4개, 화이트리스트에 있는 key 만 통과시킨다.
+ * 임시 선물 차트 키 ("fv:LB" = Finviz 심볼 LB).
+ * 추천 목록에서 프리셋에 없는 종목(목재·설탕 등)을 바로 띄울 수 있게 허용한다.
+ * 심볼은 Map 조회 키로만 쓰이고 형식을 강제하므로 주입 위험이 없다.
+ * 존재하지 않는 심볼이면 /api/futchart 가 ok:false 를 주고 차트가 "unavailable" 을 띄운다.
+ */
+const AD_HOC = /^fv:[A-Z0-9]{1,4}$/;
+
+/**
+ * 차트 슬롯 설정. 최대 4개, 화이트리스트(또는 fv: 형식)만 통과시킨다.
  * 빈 배열이 오면 무시한다 — 차트 없는 방송 화면은 사고다.
  */
-export function setCharts(keys: string[], interval?: string, auto?: boolean) {
+export function setCharts(keys: string[], interval?: string, auto?: boolean,
+                          sniper?: boolean, style?: string) {
   const valid = (Array.isArray(keys) ? keys : [])
     .map((k) => String(k))
-    .filter((k) => CHART_PRESETS.some((p) => p.key === k))
+    .filter((k) => CHART_PRESETS.some((p) => p.key === k) || AD_HOC.test(k))
     .slice(0, MAX_SLOTS);
   if (valid.length) state.chartKeys = valid;
   // 화이트리스트 검증 — 임의 문자열이 들어오면 차트 헤더 라벨이 깨진다
   if (interval && INTERVALS.includes(interval)) state.chartInterval = interval;
   if (typeof auto === "boolean") state.chartAuto = auto;
+  if (typeof sniper === "boolean") state.chartSniper = sniper;
+  if (style === "line" || style === "candle") state.chartStyle = style;
   state.version++;
   state.updatedAt = Date.now();
   return state;

@@ -23,11 +23,16 @@
   export let name = "";
   /** 4분할처럼 좁을 때 글자·여백을 줄인다 */
   export let compact = false;
+  export let style: "line" | "candle" = "line";
+  /** Auto-Sniper 가 물어온 슬롯이면 이유를 표시한다 */
+  export let why = "";
 
   type Payload = {
     ok: boolean; label?: string; price?: number; changePct?: number;
     changeAbs?: number | null;
     base?: number | null; points?: number[]; marks?: { at: number; label: string }[];
+    candles?: { o: number; h: number; l: number; c: number }[];
+    candleMin?: number | null;
     reason?: string;
   };
 
@@ -50,7 +55,8 @@
   async function load() {
     const mine = ++token;
     try {
-      const r = await fetch(`/api/futchart?key=${encodeURIComponent(symbol)}&tf=${tf}`);
+      const r = await fetch(
+        `/api/futchart?key=${encodeURIComponent(symbol)}&tf=${tf}&style=${style}`);
       const j: Payload = await r.json();
       if (mine !== token) return;           // 늦게 온 옛 응답은 버린다
       if (!j.ok) { err = j.reason || "no data"; data = null; return; }
@@ -61,8 +67,8 @@
     }
   }
 
-  // 심볼이나 타임프레임이 바뀌면 즉시 다시 받는다
-  $: symbol, tf, load();
+  // 심볼·주기·표시방식이 바뀌면 즉시 다시 받는다
+  $: symbol, tf, style, load();
 
   onMount(() => {
     ro = new ResizeObserver(([e]) => {
@@ -83,8 +89,15 @@
   $: up = (data?.changePct ?? 0) >= 0;
   $: stroke = up ? "#39d98a" : "#ff5c5c";
 
+  $: candles = data?.candles ?? [];
+  $: isCandle = style === "candle" && candles.length > 1;
+
   // 보합선도 범위에 넣어야 한다. 값이 종일 정산가 위에 있으면 선이 화면 밖으로 밀린다.
-  $: pool = base !== null ? [...pts, base] : pts;
+  //  캔들이면 꼬리(고가·저가)까지 넣어야 위아래가 잘리지 않는다.
+  $: pool = [
+    ...(isCandle ? candles.flatMap((c) => [c.h, c.l]) : pts),
+    ...(base !== null ? [base] : [])
+  ];
   $: lo = pool.length ? Math.min(...pool) : 0;
   $: hi = pool.length ? Math.max(...pool) : 1;
   // 위아래 6% 여백 — 곡선이 테두리에 붙으면 답답하다
@@ -94,7 +107,10 @@
 
   $: plotW = Math.max(0, W - PAD.l - PAD.r);
   $: plotH = Math.max(0, H - PAD.t - PAD.b);
-  $: X = (i: number) => PAD.l + (pts.length > 1 ? (i / (pts.length - 1)) * plotW : 0);
+  $: N = isCandle ? candles.length : pts.length;
+  $: X = (i: number) => PAD.l + (N > 1 ? (i / (N - 1)) * plotW : 0);
+  // 봉 폭 — 사이 간격을 조금 남긴다
+  $: cw = isCandle ? Math.max(1.5, (plotW / N) * 0.68) : 0;
   $: Y = (v: number) => PAD.t + (1 - (v - min) / (max - min || 1)) * plotH;
 
   $: line = pts.map((v, i) => `${i ? "L" : "M"}${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(" ");
@@ -130,8 +146,11 @@
     return Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: max });
   }
 
-  $: lastX = pts.length ? X(pts.length - 1) : 0;
-  $: lastY = pts.length ? Y(pts[pts.length - 1]) : 0;
+  $: lastVal = isCandle
+    ? (candles.length ? candles[candles.length - 1].c : 0)
+    : (pts.length ? pts[pts.length - 1] : 0);
+  $: lastX = N ? X(N - 1) : 0;
+  $: lastY = lastVal ? Y(lastVal) : 0;
 
   // ── 큰 시세 표기 ───────────────────────────
   //  %만 보면 "몇 포인트 빠졌나"가 안 잡힌다. 포인트 등락을 같은 크기로 나란히 둔다.
@@ -139,15 +158,17 @@
   $: abs = typeof data?.changeAbs === "number" && Number.isFinite(data.changeAbs)
     ? data.changeAbs : null;
   $: sign = (data?.changePct ?? 0) >= 0 ? "+" : "−";  // 진짜 마이너스 기호(−)가 방송에서 또렷하다
-  $: absTxt = abs === null || !pts.length ? "" : sign + fmtQuote(abs, pts[pts.length - 1]);
+  $: absTxt = abs === null || !lastVal ? "" : sign + fmtQuote(abs, lastVal);
   $: pctTxt = sign + Math.abs(data?.changePct ?? 0).toFixed(2) + "%";
-  $: priceTxt = pts.length ? fmtQuote(pts[pts.length - 1]) : "—";
+  $: priceTxt = lastVal ? fmtQuote(lastVal) : "—";
 
   // 눈금 라벨이 보합선 라벨·현재가 태그와 세로로 겹치는지 (겹치면 눈금을 숨긴다)
   const GAP = 13;
   $: collides = (y: number) =>
     Math.abs(y - lastY) < GAP || (base !== null && Math.abs(y - Y(base)) < GAP);
-  $: ready = pts.length > 1 && W > 0 && H > 0;
+  $: visibleMarks = (data?.marks ?? []).filter(
+    (m, i, arr) => i === 0 || m.label !== arr[i - 1].label);
+  $: ready = (isCandle ? candles.length > 1 : pts.length > 1) && W > 0 && H > 0;
 </script>
 
 <div class="fc" bind:this={box}>
@@ -160,6 +181,15 @@
         {#if absTxt}<span class="fc-abs">{absTxt}</span>{/if}
         <span class="fc-pct">{pctTxt}</span>
       </div>
+      {#if why}
+        <!-- 차트가 왜 이걸로 바뀌었는지 밝힌다 (근거 없이 바뀌면 시청자가 못 따라온다) -->
+        <div class="fc-why">{why}</div>
+      {/if}
+      {#if isCandle && data?.candleMin}
+        <!-- 진짜 틱 캔들이 아니라 5분 종가를 묶은 봉이다. 숨기지 않는다.
+             (하단에 두면 시간축 라벨과 겹친다) -->
+        <div class="fc-src">{data.candleMin}m bars · from 5m closes</div>
+      {/if}
     </div>
   {/if}
   {#if ready}
@@ -181,16 +211,20 @@
         {/if}
       {/each}
 
-      <!-- 세로 격자 + 시간 눈금 -->
-      {#each data?.marks ?? [] as m}
-        {#if m.at > 0 && m.at < pts.length - 1}
+      <!-- 세로 격자 + 시간 눈금.
+           거래시간이 짧은 종목(목재 등)은 Finviz 눈금이 "2PM 2PM 2PM" 처럼 겹쳐 온다.
+           연속 중복 라벨은 접어서 고장난 것처럼 보이지 않게 한다. -->
+      {#each visibleMarks as m}
+        {#if m.at > 0 && m.at < N - 1}
           <line x1={X(m.at)} y1={PAD.t} x2={X(m.at)} y2={PAD.t + plotH}
                 stroke="#1b2029" stroke-width="1" />
           <text x={X(m.at)} y={PAD.t + plotH + 16} class="ax mid">{m.label}</text>
         {/if}
       {/each}
 
-      <path d={area} fill={`url(#${uid})`} />
+      {#if !isCandle}
+        <path d={area} fill={`url(#${uid})`} />
+      {/if}
 
       <!-- 보합선(전일 정산가): 곡선이 이 위면 오늘 상승 -->
       {#if base !== null}
@@ -199,13 +233,26 @@
         <text x={PAD.l + plotW + 8} y={Y(base) + 4} class="ax base">{fmtPx(base)}</text>
       {/if}
 
-      <path d={line} fill="none" stroke={stroke} stroke-width="2"
-            stroke-linejoin="round" stroke-linecap="round" />
+      {#if isCandle}
+        <!-- 봉: 심지(고가-저가) + 몸통(시가-종가). 종가≥시가면 초록. -->
+        {#each candles as c, i}
+          {@const up2 = c.c >= c.o}
+          {@const col = up2 ? "#39d98a" : "#ff5c5c"}
+          {@const yo = Y(c.o)}
+          {@const yc = Y(c.c)}
+          <line x1={X(i)} y1={Y(c.h)} x2={X(i)} y2={Y(c.l)} stroke={col} stroke-width="1" />
+          <rect x={X(i) - cw / 2} y={Math.min(yo, yc)} width={cw}
+                height={Math.max(1, Math.abs(yc - yo))} fill={col} />
+        {/each}
+      {:else}
+        <path d={line} fill="none" stroke={stroke} stroke-width="2"
+              stroke-linejoin="round" stroke-linecap="round" />
+      {/if}
 
       <!-- 현재가 태그 -->
       <line x1={PAD.l} y1={lastY} x2={lastX} y2={lastY} stroke={stroke}
             stroke-width="1" stroke-dasharray="3 3" opacity="0.45" />
-      <circle cx={lastX} cy={lastY} r="3.5" fill={stroke} />
+      {#if !isCandle}<circle cx={lastX} cy={lastY} r="3.5" fill={stroke} />{/if}
       <rect x={PAD.l + plotW + 3} y={lastY - 10} width={PAD.r - 6} height="20" rx="3" fill={stroke} />
       <text x={PAD.l + plotW + 8} y={lastY + 4} class="ax now">{fmtPx(pts[pts.length - 1])}</text>
     </svg>
@@ -234,6 +281,13 @@
   .fc-read.sm .fc-price { font-size: 26px; }
   .fc-read.sm .fc-abs, .fc-read.sm .fc-pct { font-size: 18px; }
   .fc-read.sm .fc-row { gap: 9px; }
+  /* Auto-Sniper 사유 */
+  .fc-why { margin-top: 3px; font-size: 11px; font-weight: 800; letter-spacing: 0.04em;
+    color: #f0b429; }
+  .fc-read.sm .fc-why { font-size: 9px; }
+  /* 봉 출처 고지 */
+  .fc-src { margin-top: 2px; font-size: 9px; font-weight: 700;
+    color: #4b5563; letter-spacing: 0.03em; }
   .ax { fill: #6b7280; font-size: 11px; font-weight: 700;
     font-variant-numeric: tabular-nums; }
   .ax.mid { text-anchor: middle; }

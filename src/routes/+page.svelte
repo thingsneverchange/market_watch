@@ -102,9 +102,10 @@
   //  어떤 소스로 그릴지는 **서버가 정해서** 내려준다(mode: "tv" | "fut").
   //  클라이언트마다 시각이 달라 화면이 엇갈리는 것을 막기 위해서다.
   type Slot = { key: string; label: string; note: string; mode: "tv" | "fut";
-    tvSymbol: string; futKey: string };
+    tvSymbol: string; futKey: string; sniper?: boolean; why?: string };
   let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut",
     tvSymbol: "NASDAQ:QQQ", futKey: "NQ" }];
+  let chartStyle: "line" | "candle" = "line";
   let chartInterval = "1";
   let ctlVersion = 0;
 
@@ -311,6 +312,7 @@
       ctlVersion = j.version;
       if (Array.isArray(j.slots) && j.slots.length) slots = j.slots;
       if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
+      if (j.chartStyle === "line" || j.chartStyle === "candle") chartStyle = j.chartStyle;
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
       const v = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
       if (v?.id !== video?.id) video = v;
@@ -521,10 +523,14 @@
       <!-- 1~4개 차트. 슬롯 수가 곧 배치 (1=전체, 2=좌우, 3=1+2, 4=2x2) -->
       <div class="chart-grid" data-n={slots.length}>
         {#each slots as sl (sl.key)}
-          <div class="chart-card">
+          <div class="chart-card" class:sniped={sl.sniper}>
             <div class="chart-head">
               <!-- 선물 모드는 차트 안의 큰 시세 표기가 이름을 담당한다 (중복 방지) -->
               <span class="ch-name">{sl.mode === "tv" ? sl.label : ""}</span>
+              {#if sl.sniper}
+                <!-- 자동으로 물어온 슬롯임을 명확히 -->
+                <span class="ch-snipe">◎ SNIPER</span>
+              {/if}
               {#if sl.note}
                 <!-- 지수 원본이 아니라 대체물임을 숨기지 않는다 -->
                 <span class="ch-note">{sl.note}</span>
@@ -544,8 +550,12 @@
             </div>
             <div class="chart-body">
               {#if sl.mode === "fut"}
-                <FuturesChart symbol={sl.futKey} tf={futTf} name={sl.label}
-                              compact={slots.length > 2} />
+                <!-- 임시 슬롯(fv:)은 라벨이 심볼코드("SB")뿐이라 이름을 넘기지 않는다.
+                     그러면 차트가 소스가 준 진짜 이름("Sugar")을 쓴다. -->
+                <FuturesChart symbol={sl.futKey} tf={futTf}
+                              name={sl.key.startsWith("fv:") ? "" : sl.label}
+                              compact={slots.length > 2} style={chartStyle}
+                              why={sl.why ?? ""} />
               {:else}
                 <TVChart symbol={sl.tvSymbol} interval={chartInterval} />
               {/if}
@@ -907,6 +917,11 @@
   }
   .ch-name { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
   /* 대체물(ETF 프록시 등)임을 화면에서 숨기지 않는다 */
+  /* Auto-Sniper 가 잡은 차트는 테두리로 구분 — 자동으로 바뀐 걸 시청자가 알아야 한다 */
+  .chart-card.sniped { border-color: #7a5c12; }
+  .ch-snipe { font-size: 10px; font-weight: 800; color: #f0b429; letter-spacing: 0.08em;
+    background: #17140c; border: 1px solid #3d3212; padding: 3px 8px; border-radius: 999px;
+    white-space: nowrap; }
   .ch-note { font-size: 10px; font-weight: 700; color: #7c6a3a; letter-spacing: 0.04em;
     background: #17140c; border: 1px solid #2b2411; padding: 3px 7px; border-radius: 999px;
     white-space: nowrap; margin-right: auto; }
