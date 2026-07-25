@@ -18,7 +18,18 @@ export const GET: RequestHandler = async () => {
   const decay = (n: { level: number; epoch: number }) =>
     n.level - (nowSec - n.epoch) / 3600 / 6;
   const ranked = [...news].sort((a, b) => decay(b) - decay(a));
-  const top = ranked[0];
+
+  // ★ TOP STORY 도 헤드라인 목록과 **같은 관련성 기준**을 통과한 것 중에서 고른다.
+  //   예전엔 ranked[0] 을 그대로 썼는데, decay 는 신선도를 크게 쳐서 방금 올라온
+  //   무관한 기사(level 2 · matched=false)가 19시간 된 5★ 를 이겼다.
+  //     실측: "How this 70-year-old honey bee farmer is keeping his family" (CNBC, level 2)
+  //           decay = 2 - 0/6 = 2.00
+  //           "Physical oil prices jump with some nearing $110" (level 5, 22시간)
+  //           decay = 5 - 22/6 = 1.33   → 꿀벌 기사가 방송 최상단을 차지했다.
+  //   헤드라인 목록은 이미 같은 기사를 걸러내고 있었다. **두 곳의 기준이 달랐던 게 문제**다.
+  //   관련 기사가 하나도 없으면 억지로 채우지 않는다 (NO NEWS FEED 로 간다).
+  const relevant = ranked.filter((n) => n.matched || n.level >= 3);
+  const top = relevant[0] ?? null;
 
   // ── TOP STORY ────────────────────────────────────────
   // 1순위: Claude Code 가 만든 판단 (신선할 때만)
