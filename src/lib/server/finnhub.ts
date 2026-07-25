@@ -377,27 +377,28 @@ export type NewsItem = {
 
 // 헤드라인의 대표 주체를 짧은 칩으로 뽑는다. 트레이더는 문장이 아니라 "무엇에 관한 것"을 먼저 스캔한다.
 // 종목 뉴스는 티커, 시장 뉴스는 매크로 토픽(FED/CPI/OIL…), 아무것도 안 걸리면 "MKT".
+// 라벨은 한국어(방송 언어), 종목은 티커 그대로 — 한국 금융 관행("엔비디아 NVDA")과 동일.
 const TOPIC_RULES: [RegExp, string][] = [
-  [/\b(fomc|federal reserve|\bfed\b|rate\s?(?:cut|hike)|interest rate)/i, "FED"],
-  [/\b(cpi|ppi|pce|inflation|deflation)/i, "CPI"],
-  [/\b(nonfarm|payrolls?|jobless|unemployment|jobs report)/i, "JOBS"],
-  [/\b(gdp|recession|growth data)/i, "GDP"],
-  [/\b(oil|crude|brent|wti|opec)\b/i, "OIL"],
-  [/\bgold\b/i, "GOLD"],
-  [/\b(bitcoin|ethereum|crypto|\bbtc\b|\beth\b)/i, "CRYPTO"],
-  [/\b(dollar|yen|euro|forex|currency)\b/i, "FX"],
-  // GEO 를 BONDS 보다 먼저 — "blood and treasure" 의 treasure 가 BONDS 로 오분류되던 문제.
-  [/\b(war|invasion|missile|airstrike|airstrikes|geopolit\w*|conflict|hostilities)\b/i, "GEO"],
-  [/\b(treasur(?:y|ies)|bond yields?|\bbonds?\b|10[- ]?year|30[- ]?year)\b/i, "BONDS"],
-  [/\b(tariff|sanction|export ban|trade war)\b/i, "TRADE"],
-  [/\b(chip|semiconductor|nvidia|tsmc|foundry)\b/i, "CHIPS"],
-  [/\b(acquir\w*|merger|takeover|buyout|\bm&a\b)\b/i, "M&A"],
-  [/\b(earnings|revenue|guidance|profit|results)\b/i, "EARNINGS"]
+  [/\b(fomc|federal reserve|\bfed\b|rate\s?(?:cut|hike)|interest rate)/i, "연준"],
+  [/\b(cpi|ppi|pce|inflation|deflation)/i, "물가"],
+  [/\b(nonfarm|payrolls?|jobless|unemployment|jobs report)/i, "고용"],
+  [/\b(gdp|recession|growth data)/i, "성장"],
+  [/\b(oil|crude|brent|wti|opec)\b/i, "유가"],
+  [/\bgold\b/i, "금"],
+  [/\b(bitcoin|ethereum|crypto|\bbtc\b|\beth\b)/i, "코인"],
+  [/\b(dollar|yen|euro|forex|currency)\b/i, "환율"],
+  // 지정학을 금리보다 먼저 — "blood and treasure" 의 treasure 가 금리로 오분류되던 문제.
+  [/\b(war|invasion|missile|airstrike|airstrikes|geopolit\w*|conflict|hostilities)\b/i, "지정학"],
+  [/\b(treasur(?:y|ies)|bond yields?|\bbonds?\b|10[- ]?year|30[- ]?year)\b/i, "금리"],
+  [/\b(tariff|sanction|export ban|trade war)\b/i, "관세"],
+  [/\b(chip|semiconductor|nvidia|tsmc|foundry)\b/i, "반도체"],
+  [/\b(acquir\w*|merger|takeover|buyout|\bm&a\b)\b/i, "인수합병"],
+  [/\b(earnings|revenue|guidance|profit|results)\b/i, "실적"]
 ];
 export function newsTopic(headline: string, ticker?: string): string {
   if (ticker) return ticker.toUpperCase();
   for (const [re, tag] of TOPIC_RULES) if (re.test(headline || "")) return tag;
-  return "MKT";
+  return "시장";
 }
 
 /**

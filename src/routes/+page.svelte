@@ -68,7 +68,10 @@
   let firstLoadDone = false;
   let freshness: { cls: string; text: string } = { cls: "", text: "…" };
 
-  const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
+  const IV_LABEL: Record<string, string> = { "1": "1분", "5": "5분", "15": "15분", "60": "1시간", "D": "일봉" };
+  // 화면 표기용 한국어 매핑 (템플릿의 {@const} 는 타입 주석을 못 쓰므로 여기 둔다)
+  const CONF_LABEL: Record<string, string> = { high: "확실", medium: "보통", low: "불확실" };
+  const WHEN_LABEL: Record<string, string> = { PRE: "장전", AH: "시간외", LIVE: "실시간" };
 
   // 차트 배지 세션 문구 — marketState() 는 순수 NYSE 시계라서 크로스에셋엔 거짓말을 한다.
   //   BTC 차트(BINANCE:BTCUSDT)는 주말에도 실시간인데 "WEEKEND" 라고 찍혔다.
@@ -77,8 +80,8 @@
   //   · 그 외(지수 추종 ETF: QQQ/SPY/DIA/SOXX/IWM/KORU) → 기존 NYSE 세션 그대로
   function chartSession(sym: string): { label: string; live: boolean } | null {
     const s = (sym || "").toUpperCase();
-    if (/BTC|ETH|CRYPTO|BINANCE|COINBASE|BITSTAMP|USDT|DOGE|:SOL|:XRP/.test(s)) return { label: "24/7", live: true };
-    if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "SPOT", live: false };
+    if (/BTC|ETH|CRYPTO|BINANCE|COINBASE|BITSTAMP|USDT|DOGE|:SOL|:XRP/.test(s)) return { label: "24시간", live: true };
+    if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "현물", live: false };
     return null; // 지수 ETF → 기존 NYSE 세션 사용
   }
   $: chartSess = chartSession(chartSymbol);
@@ -126,13 +129,13 @@
   /** 이벤트까지 남은 시간. 추정 시각이면 분 단위 정밀 카운트다운을 주장하지 않는다. */
   function countdown(t: Date, estimated: boolean, now: number): string {
     const diff = t.getTime() - now;
-    if (diff <= -60000) return "PASSED";
-    if (diff <= 0) return "NOW";
+    if (diff <= -60000) return "종료";
+    if (diff <= 0) return "지금";
     const d = Math.floor(diff / 864e5);
     const h = Math.floor((diff % 864e5) / 36e5);
     const m = Math.floor((diff % 36e5) / 6e4);
-    if (estimated) return d > 0 ? `IN ~${d}d` : `IN ~${h}h`;
-    return d > 0 ? `IN ${d}d ${h}h` : `IN ${h}h ${m}m`;
+    if (estimated) return d > 0 ? `약 ${d}일 후` : `약 ${h}시간 후`;
+    return d > 0 ? `${d}일 ${h}시간 후` : `${h}시간 ${m}분 후`;
   }
 
   /**
@@ -141,7 +144,7 @@
    */
   function computeFreshness(open: boolean): { cls: string; text: string } {
     if (!firstLoadDone) return { cls: "", text: "…" };
-    if (dataAsOf == null) return { cls: "dead", text: "NO DATA" };
+    if (dataAsOf == null) return { cls: "dead", text: "데이터 없음" };
 
     const ageMin = (Date.now() - dataAsOf) / 60000;
     const t = new Intl.DateTimeFormat("en-US", {
@@ -150,12 +153,12 @@
     }).format(new Date(dataAsOf));
 
     if (open) {
-      if (ageMin > 15) return { cls: "dead", text: `STALE ${t} ET` };
-      if (ageMin > 2) return { cls: "stale", text: `LAG ${t} ET` };
+      if (ageMin > 15) return { cls: "dead", text: `지연 ${t} ET` };
+      if (ageMin > 2) return { cls: "stale", text: `${t} ET (지연)` };
       return { cls: "", text: `${t} ET` };
     }
     // 장 밖에서는 전일 종가인 게 정상이다 — 경보가 아니라 사실을 표기한다.
-    return { cls: "prev", text: `PREV CLOSE ${t} ET` };
+    return { cls: "prev", text: `전일종가 ${t} ET` };
   }
 
   async function jget(u: string) {
@@ -299,10 +302,10 @@
   function ago(epochSec: number, now = Date.now()): string {
     if (!epochSec) return "";
     const m = (now / 1000 - epochSec) / 60;
-    if (m < 1) return "just now";
-    if (m < 60) return `${Math.round(m)}m ago`;
-    if (m < 60 * 48) return `${Math.round(m / 60)}h ago`;
-    return `${Math.round(m / 1440)}d ago`;
+    if (m < 1) return "방금";
+    if (m < 60) return `${Math.round(m)}분 전`;
+    if (m < 60 * 48) return `${Math.round(m / 60)}시간 전`;
+    return `${Math.round(m / 1440)}일 전`;
   }
 
   onMount(() => {
@@ -350,7 +353,7 @@
       <!-- 개장/마감 임박 카운트다운 (마지막 1시간에만, 마지막 5분엔 맥동) -->
       {#if bell.kind}
         <div class="bell {bell.kind}" class:soon={bell.ms <= 300000}>
-          <span class="bell-dot"></span>{bell.kind === "open" ? "OPENS IN" : "CLOSES IN"} {bellText(bell.ms)}
+          <span class="bell-dot"></span>{bell.kind === "open" ? "개장까지" : "마감까지"} {bellText(bell.ms)}
         </div>
       {/if}
     </div>
@@ -374,7 +377,7 @@
       <div class="clock">{etNow} <span class="et">ET</span></div>
       <!-- 항상 렌더한다. 예전에는 첫 요청이 실패하면 배지가 DOM 에 아예 생기지 않아
            오프라인 콜드스타트가 "조용한 장"처럼 보였다. -->
-      <div class="upd {freshness.cls}" title="Quote timestamp (last trade from source)">
+      <div class="upd {freshness.cls}" title="시세 기준 시각 (소스가 준 마지막 체결)">
         <span class="upd-dot"></span>{freshness.text}
       </div>
     </div>
@@ -387,11 +390,11 @@
       <!-- TOP STORY: 헤드라인 + confidence 뱃지(HIGH 등)만. 출처·시각·설명은 싣지 않는다. -->
       <div class="driver {sent(digest.driver.sentiment)}" class:nodata={digest.driver.noData}>
         <div class="lbl">
-          TOP STORY
+          지금 시장
           {#if digest.driver.origin === "ai" && digest.driver.confidence}
-            <span class="conf {digest.driver.confidence}">{digest.driver.confidence.toUpperCase()}</span>
+            <span class="conf {digest.driver.confidence}">{CONF_LABEL[digest.driver.confidence] ?? digest.driver.confidence}</span>
           {/if}
-          {#if digestStale}<span class="stale-chip" title="News feed not responding — showing last value">STALE</span>{/if}
+          {#if digestStale}<span class="stale-chip" title="뉴스 피드 응답 없음 — 마지막 값 표시 중">갱신 중단</span>{/if}
         </div>
         <div class="driver-txt">{digest.driver.text}</div>
       </div>
@@ -400,7 +403,7 @@
            예정 이벤트는 시작시각으로 카운트다운/LIVE NOW 를 여기(클라이언트)서 계산한다. -->
       {#if brief.length}
         <div class="panel today">
-          <div class="lbl">TODAY<span class="src-hint">events · impact</span></div>
+          <div class="lbl">오늘의 이슈<span class="src-hint">이벤트 · 영향</span></div>
           <div class="td-list">
             {#each brief as b}
               {@const st = b.startET ? Date.parse(b.startET) : NaN}
@@ -411,9 +414,9 @@
                   <span class="td-arrow">{b.dir === "pos" ? "▲" : b.dir === "neg" ? "▾" : "•"}</span>
                   <span class="td-tit">{b.title}</span>
                   {#if liveNow}
-                    <span class="td-live">● LIVE</span>
+                    <span class="td-live">● 진행중</span>
                   {:else if Number.isFinite(st) && st > nowMs}
-                    <span class="td-when">{b.estimated ? "~" : ""}{etClock(st)}</span>
+                    <span class="td-when">{b.estimated ? "약 " : ""}{etClock(st)}</span>
                   {/if}
                 </div>
                 <div class="td-impact">{b.impact}</div>
@@ -426,8 +429,8 @@
       <div class="panel news">
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
         <div class="lbl">
-          MARKET HEADLINES
-          <span class="src-hint">latest · impact-weighted</span>
+          마켓 헤드라인
+          <span class="src-hint">최신 · 중요도순</span>
         </div>
         <div class="news-list">
           {#each digest.news as n}
@@ -447,7 +450,7 @@
             </a>
           {/each}
           {#if digest.news.length === 0}
-            <div class="empty">No headlines yet…</div>
+            <div class="empty">헤드라인 없음</div>
           {/if}
         </div>
       </div>
@@ -491,11 +494,11 @@
     <!-- RIGHT: key event + watchlist -->
     <section class="col right">
       <div class="keyevent">
-        <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
+        <div class="ke-hdr"><span class="ke-lbl">◇ 예정</span></div>
 
         <!-- 거시/정책 일정 — FOMC·CPI 등. 시장 전체를 움직인다. -->
         {#if macroEvents.length}
-          <div class="ke-grp">MACRO</div>
+          <div class="ke-grp">거시 · 정책</div>
           {#each macroEvents as ev (ev.title)}
             <div class="ke-item">
               <div class="ke-tit">{ev.title}</div>
@@ -506,7 +509,7 @@
 
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
         {#if earningsEvents.length}
-          <div class="ke-grp">EARNINGS</div>
+          <div class="ke-grp">실적 발표</div>
           {#each earningsEvents as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
@@ -524,9 +527,9 @@
       </div>
 
       <div class="panel earn">
-        <div class="lbl">📅 EARNINGS CALENDAR
-          {#if calendarStale}<span class="stale-chip" title="Calendar feed not responding — showing last value">STALE</span>{/if}
-          <span class="src-hint">recently reported</span></div>
+        <div class="lbl">📅 실적 캘린더
+          {#if calendarStale}<span class="stale-chip" title="캘린더 피드 응답 없음 — 마지막 값 표시 중">갱신 중단</span>{/if}
+          <span class="src-hint">최근 발표순</span></div>
         <div class="e-list">
           {#each upcoming as e}
             <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
@@ -535,13 +538,13 @@
                 <div class="e-tk">
                   {e.ticker}
                   {#if e.watch}<span class="e-star">★</span>{/if}
-                  {#if e.result === "beat"}<span class="e-res beat">BEAT</span>
-                  {:else if e.result === "miss"}<span class="e-res miss">MISS</span>
-                  {:else if e.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
+                  {#if e.result === "beat"}<span class="e-res beat">상회</span>
+                  {:else if e.result === "miss"}<span class="e-res miss">하회</span>
+                  {:else if e.result === "inline"}<span class="e-res inline">부합</span>{/if}
                 </div>
                 <div class="e-sub">
                   <span>{e.dateET}</span>
-                  <span>{e.status === "reported" || e.status === "pending" ? "reported" : "· " + e.session}</span>
+                  <span>{e.status === "reported" || e.status === "pending" ? "발표" : "· " + e.session}</span>
                   {#if e.tag}<span>· {e.tag}</span>{/if}
                 </div>
               </div>
@@ -554,29 +557,29 @@
                     {#if e.reactionLive}<span class="live-pip"></span>{/if}{e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
                   </div>
                   {#if e.movePhase === "pre"}
-                    <div class="e-when pre-print">INTO PRINT</div>
+                    <div class="e-when pre-print">발표 앞두고</div>
                   {:else if e.reactionWhen}
-                    <div class="e-when">{e.reactionWhen}</div>
+                    <div class="e-when">{WHEN_LABEL[e.reactionWhen] ?? e.reactionWhen}</div>
                   {/if}
                 {:else if e.status === "reported"}
-                  <div class="e-dd rep">REPORTED</div>
+                  <div class="e-dd rep">발표완료</div>
                   {#if e.epsActual != null}
                     <div class="e-eps"><b>${Number(e.epsActual).toFixed(2)}</b></div>
                   {/if}
                 {:else if e.status === "pending"}
                   <!-- 발표됐지만 결과·반응이 아직 집계 안 됨. 공백을 공백이라 말한다. -->
-                  <div class="e-dd pend">REPORTED</div>
-                  <div class="e-eps pend-t">awaiting</div>
+                  <div class="e-dd pend">발표완료</div>
+                  <div class="e-eps pend-t">집계중</div>
                 {:else}
                   <div class="e-dd" class:soon={e.dday <= 1}>
-                    {e.dday <= 0 ? "TODAY" : "D-" + e.dday}
+                    {e.dday <= 0 ? "오늘" : "D-" + e.dday}
                   </div>
                 {/if}
               </div>
             </div>
           {/each}
           {#if upcoming.length === 0}
-            <div class="empty">No recent earnings</div>
+            <div class="empty">최근 실적 없음</div>
           {/if}
         </div>
       </div>
@@ -588,11 +591,11 @@
     <!-- 고지 밴드: 지연·비매매 고지 + 소스 표기 + TradingView 어트리뷰션.
          흐르는 테이프 안에 넣으면 스크롤로 사라져 "항상 보임" 요건을 못 채우므로 고정 셀로 둔다. -->
     <div class="disc">
-      <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
+      <span>지연 시세 · 정보 제공 목적이며 투자 권유가 아닙니다</span>
       <span class="disc-sep">·</span>
-      <span>Data: Finnhub &amp; Yahoo</span>
+      <span>데이터: Finnhub &amp; Yahoo</span>
       <span class="disc-sep">·</span>
-      <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
+      <span>차트: <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
     </div>
     <!-- 흐르는 테이프는 자체 클리핑 박스 안에 둔다. 안 그러면 translateX 애니메이션이
          고지 밴드 위로 넘어와 글자가 겹친다. -->

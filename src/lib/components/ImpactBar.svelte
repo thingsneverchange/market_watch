@@ -1,11 +1,11 @@
 <script lang="ts">
   export let level = 3; // 1~5
-  const labels = ["LOW", "LOW+", "MID", "HIGH", "MAJOR"];
+  const labels = ["낮음", "낮음+", "보통", "높음", "매우높음"];
   $: L = Math.max(1, Math.min(5, level));
   $: label = labels[L - 1];
 </script>
 
-<div class="wrap" aria-label={`Impact ${L}/5`}>
+<div class="wrap" aria-label={`영향도 ${L}/5`}>
   <div class="bars">
     {#each Array(5) as _, i}
       <div class:fill={i < L} class="bar"></div>

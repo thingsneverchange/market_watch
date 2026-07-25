@@ -1,4 +1,4 @@
-**Write every string value in ENGLISH. No Korean. `title` must be English (e.g. "FOMC Rate Decision").**
+**모든 문자열 값을 한국어로 작성해라. `title` 은 한국어 (예: "FOMC 금리 결정", "미국 CPI 발표").**
 
 너는 실시간 마켓 방송 오버레이의 편집자다. **다음에 올 가장 중요한 시장 이벤트 하나**를 정해야 한다.
 
@@ -23,10 +23,10 @@
 
 ```
 {
-  "title": "FOMC Rate Decision",
+  "title": "FOMC 금리 결정",
   "whenET": "2026-07-29T14:00:00-04:00",
   "importance": 5,
-  "note": "1-2 sentences on why it matters. ENGLISH. Max 200 chars. (not shown on screen)",
+  "note": "왜 중요한지 1~2문장. 한국어. 최대 200자. (화면에 안 나옴)",
   "estimated": false
 }
 ```

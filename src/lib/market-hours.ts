@@ -87,17 +87,17 @@ export function marketState(now: Date = new Date()): MarketState {
   // 휴장일 테이블이 만료됐으면 열려있다고 단정하지 않는다.
   const year = Number(date.slice(0, 4));
   if (!date || !Number.isFinite(year)) {
-    return { ...base, open: false, session: "UNKNOWN", msg: "STATUS UNVERIFIED" };
+    return { ...base, open: false, session: "UNKNOWN", msg: "상태 미확인" };
   }
   if (year > COVERED_THROUGH) {
-    return { ...base, open: false, session: "UNKNOWN", msg: "STATUS UNVERIFIED" };
+    return { ...base, open: false, session: "UNKNOWN", msg: "상태 미확인" };
   }
 
   if (weekday === 0 || weekday === 6) {
-    return { ...base, open: false, session: "WEEKEND", msg: "WEEKEND" };
+    return { ...base, open: false, session: "WEEKEND", msg: "주말 휴장" };
   }
   if (HOLIDAYS.has(date)) {
-    return { ...base, open: false, session: "HOLIDAY", msg: "HOLIDAY · CLOSED" };
+    return { ...base, open: false, session: "HOLIDAY", msg: "휴장일" };
   }
 
   const early = EARLY_CLOSE.has(date);
@@ -105,12 +105,12 @@ export function marketState(now: Date = new Date()): MarketState {
   const b = { ...base, earlyClose: early, closeMin };
 
   if (min >= REG_OPEN && min < closeMin) {
-    return { ...b, open: true, session: "OPEN", msg: early ? "MARKET OPEN · EARLY CLOSE 1PM" : "MARKET OPEN" };
+    return { ...b, open: true, session: "OPEN", msg: early ? "정규장 · 조기폐장 1시" : "정규장" };
   }
   // ET 00:00~04:00 에는 어떤 거래도 없다. 기존 코드는 이 구간을 PRE-MARKET 이라고 표시했다.
-  if (min >= PRE_OPEN && min < REG_OPEN) return { ...b, open: false, session: "PRE", msg: "PRE-MARKET" };
-  if (min >= closeMin && min < AFTER_CLOSE) return { ...b, open: false, session: "AFTER", msg: "AFTER HOURS" };
-  return { ...b, open: false, session: "CLOSED", msg: "CLOSED" };
+  if (min >= PRE_OPEN && min < REG_OPEN) return { ...b, open: false, session: "PRE", msg: "프리마켓" };
+  if (min >= closeMin && min < AFTER_CLOSE) return { ...b, open: false, session: "AFTER", msg: "애프터마켓" };
+  return { ...b, open: false, session: "CLOSED", msg: "장마감" };
 }
 
 /** 정규장 여부 (구 finnhub.ts:isRegularHours 대체) */
