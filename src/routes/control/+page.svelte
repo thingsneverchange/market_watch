@@ -47,7 +47,14 @@
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ briefCadence: v })
       });
-      flash(r.ok ? `Brief updates → ${CADENCES.find(c => c.v === v)?.t}` : "Feed server unreachable");
+      if (r.ok) {
+        flash(`Brief updates → ${CADENCES.find(c => c.v === v)?.t}`);
+      } else {
+        // 서버가 아직 구버전이면 이 엔드포인트가 없다 → 원인을 정확히 알려 준다
+        flash(r.status === 502 || r.status === 404
+          ? "Feed server needs update (deploy /api/settings)"
+          : "Failed to set cadence");
+      }
     } catch { flash("Feed server unreachable"); }
   }
 

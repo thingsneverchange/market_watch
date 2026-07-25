@@ -21,10 +21,11 @@
   //   지수 3종은 Finnhub(장 밖엔 전일 종가), SOXX/BTC/GOLD/OIL 은 Yahoo(밤·주말에도 라이브).
   // 지수 3슬롯은 서버가 정한다: 장중 → 현물(S&P 500…), 장 밖 → 선물(S&P FUT…).
   // 크로스에셋 4종은 항상 고정.
-  const CROSS_LABELS = ["SOXX", "BTC", "GOLD", "OIL"];
-  let indexLabels: string[] = ["S&P 500", "NASDAQ 100", "DOW"];
+  // 라벨은 서버가 정한다 (소스 가용성에 따라 지수/선물, SOXX/VIX 유무가 달라진다)
+  let indexLabels: string[] = ["S&P 500", "NASDAQ", "DOW"];
+  let crossLabels: string[] = ["SOXX", "BTC", "GOLD", "OIL"];
   let showingFutures = false;
-  $: headerLabels = [...indexLabels, ...CROSS_LABELS];
+  $: headerLabels = [...indexLabels, ...crossLabels];
 
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   let digest = {
@@ -202,6 +203,7 @@
     if (b && Array.isArray(b.top)) {
       boards = b;
       if (Array.isArray(b.indexLabels) && b.indexLabels.length) indexLabels = b.indexLabels;
+      if (Array.isArray(b.crossLabels) && b.crossLabels.length) crossLabels = b.crossLabels;
       showingFutures = !!b.futures;
       // ★ 신선도는 소스가 준 체결 시각(dataAsOf)이다.
       //   예전 코드는 "내가 fetch 한 시각"을 찍어서, Finnhub 가 429 여도 옛 캐시만 있으면
@@ -661,7 +663,7 @@
     <div class="disc">
       <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
-      <span>Data: Finnhub &amp; Yahoo</span>
+      <span>Data: FMP &amp; Finnhub</span>
       <span class="disc-sep">·</span>
       <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
     </div>

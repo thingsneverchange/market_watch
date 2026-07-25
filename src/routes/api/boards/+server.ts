@@ -1,76 +1,123 @@
 import type { RequestHandler } from "./$types";
 import { getQuotes, INDEX_TICKERS, TAPE_TICKERS, type Quote } from "$lib/server/finnhub";
-import { getCrossAssets, getIndexFutures, CROSS_ASSETS, INDEX_FUTURES } from "$lib/server/crossasset";
+import { getCrossAssets, getIndexFutures } from "$lib/server/crossasset";
+import { getFmpQuotes } from "$lib/server/fmp";
 import { marketState } from "$lib/market-hours";
 
-// ※ 라벨을 정직하게: QQQ 는 나스닥 종합지수(IXIC)가 아니라 나스닥100(NDX) 추종 ETF다.
-//   예전에는 "NASDAQ" 이라 부르면서 옆 차트에는 IXIC 를 띄웠다 (같은 화면 안 서로 다른 지수).
+// ============================================================
+//  헤더 스트립 + 하단 테이프
+//
+//  소스 우선순위 (실측 근거):
+//   1) FMP — 키 기반이라 안정적이고, 무료 티어에서 **지수 원본**(^GSPC/^IXIC/^DJI)과
+//      ES 선물·금·브렌트유·BTC 를 준다. ETF 프록시(SPY/QQQ/DIA)를 쓸 이유가 없어졌다.
+//   2) Yahoo — FMP 무료가 막는 것(NQ/YM 선물, SOXX)만. 비공식이라 429 가 실재한다.
+//   3) Finnhub — ETF/개별주 (테이프). 확장시간엔 갱신 안 됨(전일 종가).
+//  어느 하나가 죽어도 나머지로 화면이 유지되고, 전부 실패하면 "—" 로 결측을 표시한다.
+// ============================================================
+
 const LABEL: Record<string, string> = {
   SPY: "S&P 500", QQQ: "NASDAQ 100", DIA: "DOW", IWM: "RUSSELL 2000"
 };
 
+// FMP 심볼 (무료 티어에서 열리는 것만)
+const F_SPX = "^GSPC";   // S&P 500 지수 원본
+const F_IXIC = "^IXIC";  // 나스닥 종합 — 계속 요청받던 IXIC
+const F_DJI = "^DJI";    // 다우
+const F_ES = "ESUSD";      // E-mini S&P 선물 (장 밖에도 거의 24시간)
+const F_BTC = "BTCUSD";
+const F_GOLD = "GCUSD";    // 금 선물
+const F_OIL = "BZUSD";     // 브렌트유 (CLUSD=WTI 는 프리미엄)
+const F_VIX = "^VIX";
+
 function fmt(n: number) {
   return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
+type Slot = { k: string; v: string; pct: number };
 
 export const GET: RequestHandler = async () => {
-  // 지수(Finnhub) 와 크로스에셋(Yahoo) 을 병렬로. 둘은 서로 다른 소스라 실패도 독립적이다.
-  //  · 지수 3종 = 신선도 앵커 (장 마감 후엔 전일 종가로 정직하게 '고정')
-  //  · 크로스에셋 4종 = SOXX/BTC/GOLD/OIL (밤·주말에도 살아 움직인다)
-  // ★ 정규장이 닫혀 있으면 현물 지수(전일 종가로 고정)가 아니라 **선물**을 보여 준다.
-  //   주말·야간에 시장이 어디로 향하는지는 선물만 말해 준다 (지정학 이슈가 주말에 터질 때 특히).
   const regularOpen = marketState().open;
-  const ALL = [...new Set([...INDEX_TICKERS, ...TAPE_TICKERS])];
-  const [all, cross, futs] = await Promise.all([
+
+  const fmpSyms = [F_SPX, F_IXIC, F_DJI, F_BTC, F_GOLD, F_OIL, F_VIX, ...(regularOpen ? [] : [F_ES])];
+  const ALL = [...new Set([...INDEX_TICKERS, ...TAPE_TICKERS, "SOXX"])];
+
+  const [fin, fmp, cross, futs] = await Promise.all([
     getQuotes(ALL),
-    getCrossAssets(),
-    regularOpen ? Promise.resolve(new Map()) : getIndexFutures()
+    getFmpQuotes(fmpSyms),
+    getCrossAssets(),                                        // Yahoo — SOXX 보강용
+    regularOpen ? Promise.resolve(new Map()) : getIndexFutures() // Yahoo — NQ/YM 선물
   ]);
-  const by = new Map(all.map((q) => [q.ticker, q]));
+  const by = new Map(fin.map((q) => [q.ticker, q]));
+  const slot = (k: string, price: number, pct: number): Slot => ({ k, v: fmt(price), pct });
 
-  const pick = (list: string[]) => list.map((t) => by.get(t)).filter((q): q is Quote => !!q);
-  const idx = pick(INDEX_TICKERS);
-  const tape = pick(TAPE_TICKERS);
+  // ── 지수 3슬롯 ──────────────────────────────
+  // 장중 → 지수 원본 / 장 밖 → 선물 (FMP 의 ES + Yahoo 의 NQ·YM, 없으면 지수로 폴백)
+  const indexSlots: Slot[] = [];
+  const fS = fmp.get(F_SPX), fN = fmp.get(F_IXIC), fD = fmp.get(F_DJI);
+  const qSPY = by.get("SPY"), qQQQ = by.get("QQQ"), qDIA = by.get("DIA");
 
-  // ── 헤더 상단 스트립 = 지수 3종 + 크로스에셋 4종 ──
-  // 장중 → 현물 지수 / 장 밖 → 선물 (가져오기 실패하면 현물로 자동 폴백)
-  const indexSlots = !regularOpen && futs.size
-    ? INDEX_FUTURES.map((f) => {
-        const q = futs.get(f.key);
-        return q ? { k: f.key, v: fmt(q.price), pct: q.changePct } : null;
-      }).filter((x): x is { k: string; v: string; pct: number } => !!x)
-    : idx.map((q) => ({ k: LABEL[q.ticker] ?? q.ticker, v: fmt(q.price), pct: q.changePct }));
+  if (regularOpen) {
+    if (fS) indexSlots.push(slot("S&P 500", fS.price, fS.changePct));
+    else if (qSPY) indexSlots.push(slot("S&P 500", qSPY.price, qSPY.changePct));
+    if (fN) indexSlots.push(slot("NASDAQ", fN.price, fN.changePct));
+    else if (qQQQ) indexSlots.push(slot("NASDAQ 100", qQQQ.price, qQQQ.changePct));
+    if (fD) indexSlots.push(slot("DOW", fD.price, fD.changePct));
+    else if (qDIA) indexSlots.push(slot("DOW", qDIA.price, qDIA.changePct));
+  } else {
+    const es = fmp.get(F_ES), nq = futs.get("NASDAQ FUT"), ym = futs.get("DOW FUT");
+    if (es) indexSlots.push(slot("S&P FUT", es.price, es.changePct));
+    else if (fS) indexSlots.push(slot("S&P 500", fS.price, fS.changePct));
+    if (nq) indexSlots.push(slot("NASDAQ FUT", nq.price, nq.changePct));
+    else if (fN) indexSlots.push(slot("NASDAQ", fN.price, fN.changePct));
+    if (ym) indexSlots.push(slot("DOW FUT", ym.price, ym.changePct));
+    else if (fD) indexSlots.push(slot("DOW", fD.price, fD.changePct));
+  }
 
-  const top = [
-    ...indexSlots,
-    ...CROSS_ASSETS.map((a) => {
-      const c = cross.get(a.key);
-      return c ? { k: a.key, v: fmt(c.price), pct: c.changePct } : null;
-    }).filter((x): x is { k: string; v: string; pct: number } => !!x)
-  ];
+  // ── 크로스에셋 4슬롯 (SOXX·BTC·GOLD·OIL) ──────
+  const crossSlots: Slot[] = [];
+  const qSOXX = by.get("SOXX"), ySOXX = cross.get("SOXX");
+  if (ySOXX) crossSlots.push(slot("SOXX", ySOXX.price, ySOXX.changePct));
+  else if (qSOXX) crossSlots.push(slot("SOXX", qSOXX.price, qSOXX.changePct));
 
-  // ── 하단 테이프 = 대형주/워치리스트 + 크로스에셋 (다양성) ──
+  const fB = fmp.get(F_BTC) ?? null, yB = cross.get("BTC");
+  if (fB) crossSlots.push(slot("BTC", fB.price, fB.changePct));
+  else if (yB) crossSlots.push(slot("BTC", yB.price, yB.changePct));
+
+  const fG = fmp.get(F_GOLD) ?? null, yG = cross.get("GOLD");
+  if (fG) crossSlots.push(slot("GOLD", fG.price, fG.changePct));
+  else if (yG) crossSlots.push(slot("GOLD", yG.price, yG.changePct));
+
+  const fO = fmp.get(F_OIL) ?? null, yO = cross.get("OIL");
+  if (fO) crossSlots.push(slot("OIL", fO.price, fO.changePct));
+  else if (yO) crossSlots.push(slot("OIL", yO.price, yO.changePct));
+
+  const fV = fmp.get(F_VIX);
+  if (fV) crossSlots.push(slot("VIX", fV.price, fV.changePct)); // 공포지수 — 감사에서 지적된 결측
+
+  const top = [...indexSlots, ...crossSlots];
+
+  // ── 하단 테이프 = 대형주/워치리스트 + 크로스에셋 ──
+  const tape = TAPE_TICKERS.map((t) => by.get(t)).filter((q): q is Quote => !!q);
   const tapeRows = [
     ...tape.map((q) => ({ k: q.ticker, v: fmt(q.price), pct: q.changePct })),
-    ...CROSS_ASSETS.map((a) => {
-      const c = cross.get(a.key);
-      return c ? { k: a.key, v: fmt(c.price), pct: c.changePct } : null;
-    }).filter((x): x is { k: string; v: string; pct: number } => !!x)
+    ...crossSlots
   ];
 
-  // ★ 진짜 신선도 = 주가지수(SPY/QQQ/DIA)가 준 마지막 체결 시각의 최솟값.
-  //   크로스에셋(BTC 등)은 24시간 갱신되므로 여기 섞으면 장 마감 후에도 신선도 배지가
-  //   영영 초록으로 남아 "지수 데이터가 최신"이라 거짓말한다 → 앵커에서 제외한다.
-  const stamps = idx.map((q) => q.asOf).filter((x) => x > 0);
+  // ★ 신선도 앵커 = 주가지수(FMP 우선, 없으면 Finnhub). 24시간 자산(BTC 등)은 제외한다 —
+  //   섞으면 장 마감 후에도 배지가 초록으로 남아 "지수가 최신"이라 거짓말한다.
+  const stamps = [fS?.asOf, fN?.asOf, fD?.asOf, ...(fS ? [] : [qSPY?.asOf, qQQQ?.asOf, qDIA?.asOf])]
+    .filter((x): x is number => typeof x === "number" && x > 0);
   const dataAsOf = stamps.length ? Math.min(...stamps) : null;
 
-  // 응답에서 사라진 지수 슬롯을 명시한다 (자리째 사라져 나머지가 밀리던 문제 방지).
-  const missing = INDEX_TICKERS.filter((t) => !by.has(t)).map((t) => LABEL[t] ?? t);
-
-  // 헤더가 어떤 슬롯을 그릴지 알 수 있게 라벨 목록을 같이 보낸다 (선물/현물 전환 때문)
   const indexLabels = indexSlots.map((x) => x.k);
+  const missing = ["S&P 500", "NASDAQ", "DOW"].slice(indexSlots.length);
 
-  return new Response(JSON.stringify({ top, tape: tapeRows, dataAsOf, missing, indexLabels, futures: !regularOpen && futs.size > 0 }), {
-    headers: { "content-type": "application/json", "cache-control": "no-store" }
-  });
+  return new Response(
+    JSON.stringify({
+      top, tape: tapeRows, dataAsOf, missing,
+      indexLabels,
+      crossLabels: crossSlots.map((x) => x.k),
+      futures: !regularOpen && indexSlots.some((s) => s.k.endsWith("FUT"))
+    }),
+    { headers: { "content-type": "application/json", "cache-control": "no-store" } }
+  );
 };
