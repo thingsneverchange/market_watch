@@ -16,10 +16,40 @@
   let suggestions: { title: string; impact: string; live: boolean; when: string }[] = [];
   // 검증된 라이브 영상 후보 — Claude 가 찾고 서버가 oEmbed 로 실존 확인한 것만 온다
   let videos: { title: string; url: string; source: string; note: string | null; live: boolean; startET: string | null; author: string | null }[] = [];
+  let videoAuto = false;       // 자동 송출 on/off
+  let videoAutoActive = false; // 지금 자동으로 올라가 있는가
 
   // ── 배경음악 ────────────────────────────────
   // 소리는 방송 화면(오버레이)에서 난다. 여기선 조작만 한다.
   let music = { playing: false, volume: 30 };
+
+  // ── 브리핑 갱신 주기 ────────────────────────────
+  // auto = 세션 기반(정규장 10분 / 프리·애프터 30분 / 밤·주말 2시간).
+  // 지정학 이슈처럼 주말도 중요한 국면에선 사람이 강제로 올릴 수 있다.
+  let cadence = "auto";
+  const CADENCES = [
+    { v: "auto", t: "Auto", d: "session-based" },
+    { v: "10m",  t: "10 min", d: "even weekends" },
+    { v: "30m",  t: "30 min", d: "" },
+    { v: "2h",   t: "2 hours", d: "" },
+    { v: "off",  t: "Off", d: "pause" }
+  ];
+  async function loadCadence() {
+    try {
+      const r = await fetch("/api/settings");
+      if (r.ok) cadence = (await r.json()).briefCadence ?? "auto";
+    } catch {}
+  }
+  async function setCadence(v: string) {
+    cadence = v;
+    try {
+      const r = await fetch("/api/settings", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ briefCadence: v })
+      });
+      flash(r.ok ? `Brief updates → ${CADENCES.find(c => c.v === v)?.t}` : "Feed server unreachable");
+    } catch { flash("Feed server unreachable"); }
+  }
 
   // 공개 소스 바로가기 — 미국 정부 저작물은 퍼블릭 도메인이라 재송출이 안전하다.
   // (반면 CNBC·Bloomberg 등 상업 방송 재송출은 저작권 침해 → 채널 스트라이크 위험)
@@ -42,6 +72,8 @@
         interval = j.chartInterval;
         liveVideo = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
         if (j.music) music = { playing: j.music.playing, volume: j.music.volume };
+        videoAuto = !!j.videoAuto;
+        videoAutoActive = !!j.videoAutoActive;
       }
     } catch {}
   }
@@ -98,6 +130,13 @@
     await post({ action: "music", volume: music.volume });
   }
 
+  async function toggleAuto() {
+    videoAuto = !videoAuto;
+    await post({ action: "videoAuto", on: videoAuto });
+    await loadState();
+    flash(videoAuto ? "Auto-air ON — Fed/gov live only" : "Auto-air OFF");
+  }
+
   async function stopVideo() {
     await post({ action: "clearVideo" });
     await loadState();
@@ -144,6 +183,7 @@
     loadState();
     loadSuggestions();
     loadVideos();
+    loadCadence();
     // 추천은 1분마다 갱신 (이벤트가 시작/종료되면 자동 반영)
     // ※ 이 페이지엔 봉 간격 설정용 로컬 setInterval() 이 있어 전역이 가려진다 → window 로 명시.
     const t = window.setInterval(() => { loadSuggestions(); loadVideos(); }, 60000);
@@ -170,7 +210,7 @@
   </section>
 
   <section>
-    <h2>⏱ Interval</h2>
+    <h2>🕯 Candle size <span class="h2sub">— chart timeframe</span></h2>
     <div class="grid iv">
       {#each INTERVALS as i}
         <button class="btn iv-b" class:on={i.v === interval} on:click={() => setInterval(i.v)}>{i.t}</button>
@@ -179,14 +219,33 @@
   </section>
 
   <section>
+    <h2>🔄 Brief updates <span class="h2sub">— how often Claude refreshes TODAY</span></h2>
+    <div class="grid cad">
+      {#each CADENCES as c}
+        <button class="btn cad-b" class:on={c.v === cadence} on:click={() => setCadence(c.v)}>
+          {c.t}{#if c.d}<small>{c.d}</small>{/if}
+        </button>
+      {/each}
+    </div>
+    <div class="mhint">Auto = 10 min during the session, 30 min pre/after, 2 h overnight &amp; weekends.
+      Force a faster cadence when weekends matter (e.g. geopolitical risk).</div>
+  </section>
+
+  <section>
     <h2>🎥 Live Video</h2>
     {#if liveVideo}
       <div class="vid-on">
         <span class="vid-dot"></span>
-        <span class="vid-lbl">ON AIR — {liveVideo.label || liveVideo.id}</span>
-        <button class="btn vstop" on:click={stopVideo}>Clear</button>
+        <span class="vid-lbl">ON AIR{videoAutoActive ? " (auto)" : ""} — {liveVideo.label || liveVideo.id}</span>
+        <button class="btn vstop" on:click={stopVideo}>Stop</button>
       </div>
     {/if}
+
+    <!-- 자동 송출: 연준·정부 라이브만 스스로 올린다. 수동이 항상 우선하고, 내리면 30분 억제. -->
+    <button class="btn autotog" class:on={videoAuto} on:click={toggleAuto}>
+      {videoAuto ? "✓ AUTO-AIR ON" : "AUTO-AIR OFF"}
+      <small>{videoAuto ? "Fed / gov live streams air automatically" : "tap to auto-air Fed & gov live streams"}</small>
+    </button>
 
     <!-- 시스템 추천: '오늘의 이슈' 중 LIVE이거나 곧 시작하는 이벤트. 판단은 사람이 한다. -->
     {#if suggestions.length}
@@ -284,6 +343,11 @@
   .flash{font-size:13px;font-weight:700;color:#39d98a;background:#0d1712;border:1px solid #16281d;padding:6px 10px;border-radius:999px}
   section{margin-bottom:22px}
   h2{font-size:14px;font-weight:800;color:#8a919b;letter-spacing:.04em;margin:0 0 10px}
+  .h2sub{font-weight:600;color:#4b5563;letter-spacing:0}
+  .grid.cad{grid-template-columns:repeat(5,1fr)}
+  .cad-b{padding:12px 2px;font-size:13px;display:flex;flex-direction:column;gap:2px;align-items:center}
+  .cad-b small{font-size:9px;color:#6b7280;font-weight:600}
+  .cad-b.on small{color:#4ade80}
   .grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
   .grid.iv{grid-template-columns:repeat(5,1fr)}
   .btn{border:1px solid #23272f;background:#12151b;color:#e5e7eb;font-size:15px;font-weight:700;
@@ -353,6 +417,11 @@
   .vrow-s{display:flex;gap:7px;align-items:center;font-size:11px;color:#6b7280;margin-top:3px;flex-wrap:wrap}
   .vlive{color:#ff6b6b;font-weight:800}
   .vsrc{color:#7dd3fc;font-weight:800;letter-spacing:.04em}
+  .autotog{width:100%;display:flex;flex-direction:column;gap:3px;align-items:center;
+    padding:14px;margin-bottom:12px;font-size:14px;letter-spacing:.04em}
+  .autotog small{font-size:11px;font-weight:600;color:#6b7280;letter-spacing:0}
+  .autotog.on{background:#0d1712;border-color:#2f6b48;color:#4ade80}
+  .autotog.on small{color:#39d98a}
   .vair{flex:0 0 auto;padding:10px 18px;font-size:14px;background:#12303a;border-color:#1d5570;color:#7dd3fc}
   footer{text-align:center;font-size:12px;color:#4b5563;margin-top:30px;padding-bottom:20px}
 </style>

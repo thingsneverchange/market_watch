@@ -8,7 +8,7 @@
 // ============================================================
 import http from "node:http";
 import crypto from "node:crypto";
-import { openDb, putItem, getAll, getHistory, stats, KINDS } from "./db.mjs";
+import { openDb, putItem, getAll, getHistory, stats, getSetting, setSetting, KINDS } from "./db.mjs";
 import { validate } from "./validate.mjs";
 import { verifyAlert } from "./verify.mjs";
 import { statusPage } from "./statuspage.mjs";
@@ -165,6 +165,28 @@ const server = http.createServer(async (req, res) => {
       const kind = path.split("/").pop();
       if (!KINDS[kind]) return send(res, 404, { error: `알 수 없는 kind: ${kind}` });
       return send(res, 200, { kind, history: getHistory(kind, Number(url.searchParams.get("limit") || 20)) });
+    }
+
+    // ---------- 운영 설정 (브리핑 갱신 주기) ----------
+    // cron 스크립트가 GET 으로 읽고, /control 이 POST 로 바꾼다.
+    // 읽기키로 인증한다 — 데이터가 아니라 운영 노브이고, 앞단 IP 허용목록이 실질 방어선이다.
+    if (path === "/api/settings") {
+      const auth = authorize(req, url, "MARKET_READ_KEY");
+      if (!auth.ok) return send(res, auth.status, { error: auth.message });
+      const ALLOWED = new Set(["auto", "10m", "30m", "2h", "off"]);
+      if (req.method === "GET") {
+        return send(res, 200, { briefCadence: getSetting("brief_cadence", "auto") });
+      }
+      if (req.method === "POST") {
+        let body;
+        try { body = JSON.parse(await readBody(req)); }
+        catch (e) { return send(res, e.status === 413 ? 413 : 400, { error: "JSON 파싱 실패" }); }
+        const v = String(body?.briefCadence ?? "");
+        if (!ALLOWED.has(v)) return send(res, 422, { error: `briefCadence 는 ${[...ALLOWED].join("|")} 중 하나여야 합니다` });
+        setSetting("brief_cadence", v);
+        console.log(`[market-feed] brief_cadence → ${v}`);
+        return send(res, 200, { ok: true, briefCadence: v });
+      }
     }
 
     // ---------- 속보 검증 (사이렌 전에 haiku 로 1회 확인) ----------

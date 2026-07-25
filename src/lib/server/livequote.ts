@@ -14,6 +14,12 @@ type Live = {
   session: "pre" | "post" | "regular";
   asOf: number;    // 체결 시각(ms)
   stale: boolean;  // 마지막 체결이 오래됨 → "라이브"가 아니다 (맥동 pip 억제용)
+  // ★ 세션별 분해 — 실적은 "정규장에서 어떻게 끝났고, 시간외에서 얼마나 더 움직였나"가 핵심이다.
+  //   한 개의 % 로는 그 두 가지를 구분할 수 없어 따로 싣는다. 값이 없으면 null.
+  regularPct: number | null;  // 정규장 종가 vs 전일 종가 ("오늘 어떻게 끝났나")
+  postPct: number | null;     // 시간외 마지막가 vs 정규장 종가 ("발표 후 얼마나")
+  prePct: number | null;      // 장전 마지막가 vs 전일 종가
+  price: number | null;       // 마지막 체결가
 };
 
 // ★ 실측(2026-07): Yahoo 가 429 를 반환하기 시작했다. 원인은 요청 총량 —
@@ -91,6 +97,25 @@ async function fetchOne(ticker: string): Promise<Live | null> {
     }
     if (lastPrice == null || !Number.isFinite(regClose) || regClose <= 0) return null;
 
+    // ── 세션별 분해 ──────────────────────────────
+    // ET 분 기준: 프리 04:00~09:30(240~570), 정규 09:30~16:00(570~960), 애프터 16:00~20:00(960~1200)
+    let lastPre: number | null = null, lastReg: number | null = null, lastPost: number | null = null;
+    for (let i = 0; i < closes.length; i++) {
+      const c = closes[i];
+      if (c == null || !Number.isFinite(c)) continue;
+      const m = etMinutes(Number(ts[i]) * 1000);
+      if (m >= 240 && m < 570) lastPre = Number(c);
+      else if (m >= 570 && m < 960) lastReg = Number(c);
+      else if (m >= 960 && m < 1200) lastPost = Number(c);
+    }
+    const pct = (a: number | null, base: number) =>
+      a != null && Number.isFinite(base) && base > 0 ? Math.round(((a - base) / base) * 10000) / 100 : null;
+    const regClosePrice = lastReg ?? (Number.isFinite(regClose) ? regClose : null);
+    const regularPct = regClosePrice != null && Number.isFinite(prevClose) && prevClose > 0
+      ? Math.round(((regClosePrice - prevClose) / prevClose) * 10000) / 100 : null;
+    const postPct = regClosePrice != null ? pct(lastPost, regClosePrice) : null;
+    const prePct = Number.isFinite(prevClose) ? pct(lastPre, prevClose) : null;
+
     const min = etMinutes(lastTs);
     const inRegular = min >= 570 && min < 960; // 09:30~16:00 ET
 
@@ -108,7 +133,10 @@ async function fetchOne(ticker: string): Promise<Live | null> {
     }
 
     const stale = Date.now() - lastTs > LIVE_STALE_MS;
-    return { changePct: Math.round(changePct * 100) / 100, session, asOf: lastTs, stale };
+    return {
+      changePct: Math.round(changePct * 100) / 100, session, asOf: lastTs, stale,
+      regularPct, postPct, prePct, price: lastPrice
+    };
   } catch {
     return null;
   } finally {

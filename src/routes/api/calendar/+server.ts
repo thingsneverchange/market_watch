@@ -143,6 +143,11 @@ export const GET: RequestHandler = async () => {
             ? (r?.reactionWhen ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null))
             : null),
       reactionLive: liveFresh, // 진짜 라이브(최근 체결)일 때만 맥동 pip
+      // ★ 세션별 분해 — "정규장에서 어떻게 끝났나 + 시간외에서 얼마나 더" 를 나눠 보여 준다
+      regularPct: live?.regularPct ?? null,
+      postPct: live?.postPct ?? null,
+      prePct: live?.prePct ?? null,
+      lastPrice: live?.price ?? null,
       movePhase,              // "reaction"(발표 후) | "pre"(오늘 발표 예정) | null → UI 라벨 분기
       tag: r?.tag ?? null,
       time: new Date(e.ts).toISOString()

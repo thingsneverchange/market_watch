@@ -19,7 +19,12 @@
   // 예전에는 티커가 죽으면 배열에서 조용히 빠져 자리째 사라지고 나머지가 왼쪽으로 밀렸다.
   // ★ 개별 대형주(NVDA/AAPL/MSFT) 대신 크로스에셋으로 다양화 — 지수(주식) + 반도체 + 크립토 + 원자재.
   //   지수 3종은 Finnhub(장 밖엔 전일 종가), SOXX/BTC/GOLD/OIL 은 Yahoo(밤·주말에도 라이브).
-  const INDEX_LABELS = ["S&P 500", "NASDAQ 100", "DOW", "SOXX", "BTC", "GOLD", "OIL"];
+  // 지수 3슬롯은 서버가 정한다: 장중 → 현물(S&P 500…), 장 밖 → 선물(S&P FUT…).
+  // 크로스에셋 4종은 항상 고정.
+  const CROSS_LABELS = ["SOXX", "BTC", "GOLD", "OIL"];
+  let indexLabels: string[] = ["S&P 500", "NASDAQ 100", "DOW"];
+  let showingFutures = false;
+  $: headerLabels = [...indexLabels, ...CROSS_LABELS];
 
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   let digest = {
@@ -196,6 +201,8 @@
 
     if (b && Array.isArray(b.top)) {
       boards = b;
+      if (Array.isArray(b.indexLabels) && b.indexLabels.length) indexLabels = b.indexLabels;
+      showingFutures = !!b.futures;
       // ★ 신선도는 소스가 준 체결 시각(dataAsOf)이다.
       //   예전 코드는 "내가 fetch 한 시각"을 찍어서, Finnhub 가 429 여도 옛 캐시만 있으면
       //   초록 UPD 가 계속 갱신됐다 (16시간 묵은 전일 종가를 "방금 갱신"으로 위장).
@@ -391,7 +398,7 @@
     </div>
     <!-- 고정 슬롯 렌더: 티커가 죽어도 자리가 남고 "—" 로 결측을 드러낸다 -->
     <div class="top-strip">
-      {#each INDEX_LABELS as k}
+      {#each headerLabels as k}
         {@const t = boards.top.find((x) => x.k === k)}
         <div class="idx">
           <span class="k">{k}</span>
@@ -610,6 +617,18 @@
                   {:else if e.reactionWhen}
                     <div class="e-when">{WHEN_LABEL[e.reactionWhen] ?? e.reactionWhen}</div>
                   {/if}
+                  <!-- 세션 분해: 정규장에서 어떻게 끝났고, 시간외에서 얼마나 더 움직였나 -->
+                  <div class="e-seg">
+                    {#if e.regularPct != null}
+                      <span>close <b class:u={e.regularPct >= 0} class:d={e.regularPct < 0}>{e.regularPct > 0 ? "+" : ""}{e.regularPct.toFixed(1)}%</b></span>
+                    {/if}
+                    {#if e.postPct != null}
+                      <span>AH <b class:u={e.postPct >= 0} class:d={e.postPct < 0}>{e.postPct > 0 ? "+" : ""}{e.postPct.toFixed(1)}%</b></span>
+                    {/if}
+                    {#if e.prePct != null}
+                      <span>pre <b class:u={e.prePct >= 0} class:d={e.prePct < 0}>{e.prePct > 0 ? "+" : ""}{e.prePct.toFixed(1)}%</b></span>
+                    {/if}
+                  </div>
                 {:else if e.status === "reported"}
                   <div class="e-dd rep">REPORTED</div>
                   {#if e.epsActual != null}
@@ -791,6 +810,10 @@
   .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
   /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
   .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
+  /* 세션 분해 (close / AH / pre) — 반응 %보다 작게, 보조 정보로 */
+  .e-seg { display: flex; gap: 8px; justify-content: flex-end; margin-top: 3px;
+    font-size: 10.5px; color: #6b7280; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .e-seg b { font-weight: 800; }
   /* 라이브 시세임을 알리는 맥동 점 */
   .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
     box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }

@@ -31,6 +31,19 @@ export const CROSS_ASSETS: CrossAsset[] = [
   { key: "OIL",  yahoo: "CL=F",    tv: "TVC:USOIL",       cls: "commodity" }   // WTI 원유 (매크로)
 ];
 
+/**
+ * ★ 지수 **선물** — 정규장이 닫혀 있을 때 시장을 대표하는 숫자.
+ *   현물 ETF(QQQ/SPY/DIA)는 장 밖에 전일 종가로 얼어붙지만, 선물은 거의 24시간 돌아간다
+ *   (일요일 18:00 ET ~ 금요일 17:00 ET). 지정학 이슈처럼 주말에 터지는 사건이
+ *   월요일 개장 전에 어디로 향하는지는 오직 선물이 말해 준다.
+ *   Yahoo 의 `=F` 연속물 심볼은 GC=F/CL=F 로 이미 검증된 방식이다.
+ */
+export const INDEX_FUTURES: CrossAsset[] = [
+  { key: "S&P FUT",    yahoo: "ES=F", tv: "CME_MINI:ES1!", cls: "index" },
+  { key: "NASDAQ FUT", yahoo: "NQ=F", tv: "CME_MINI:NQ1!", cls: "index" },
+  { key: "DOW FUT",    yahoo: "YM=F", tv: "CBOT_MINI:YM1!", cls: "index" }
+];
+
 export type CrossQuote = {
   key: string;
   price: number;
@@ -134,14 +147,24 @@ async function getOne(a: CrossAsset): Promise<CrossQuote | null> {
   return p;
 }
 
-/** 크로스에셋 전부. 실패한 심볼은 Map 에서 빠진다 (호출부가 "—" 처리). */
-export async function getCrossAssets(): Promise<Map<string, CrossQuote>> {
+/** 주어진 자산 목록의 시세. 실패한 심볼은 Map 에서 빠진다 (호출부가 "—" 처리). */
+export async function getAssets(list: CrossAsset[]): Promise<Map<string, CrossQuote>> {
   const out = new Map<string, CrossQuote>();
   await Promise.all(
-    CROSS_ASSETS.map(async (a) => {
+    list.map(async (a) => {
       const q = await getOne(a);
       if (q) out.set(a.key, q);
     })
   );
   return out;
+}
+
+/** 크로스에셋(SOXX·BTC·GOLD·OIL) */
+export async function getCrossAssets(): Promise<Map<string, CrossQuote>> {
+  return getAssets(CROSS_ASSETS);
+}
+
+/** 지수 선물(ES/NQ/YM) — 장 밖에서 현물 대신 보여 준다 */
+export async function getIndexFutures(): Promise<Map<string, CrossQuote>> {
+  return getAssets(INDEX_FUTURES);
 }

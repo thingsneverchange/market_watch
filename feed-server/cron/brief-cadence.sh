@@ -39,8 +39,38 @@ fi
 
 DOW="$(TZ=America/New_York date +%u)"   # 1=월 … 7=일
 HM="$(TZ=America/New_York date +%H%M)"
+MIN=$((10#${HM:2:2}))
+HOUR=$((10#${HM:0:2}))
 
-if [[ "$(decide "$DOW" "$HM")" == "yes" ]]; then
+# ── /control 오버라이드 확인 ─────────────────────────
+# 지정학 이슈처럼 "주말에도 계속 봐야 하는" 상황을 위해 사람이 주기를 강제할 수 있다.
+# auto = 위 세션 규칙, off = 완전 정지. 서버가 안 뜨면 조용히 auto 로 동작한다.
+CONF="${MARKET_FEED_ENV:-$ROOT/.env}"
+RK=""; URL="http://127.0.0.1:6210"
+if [[ -f "$CONF" ]]; then
+  RK="$(grep -m1 '^MARKET_READ_KEY=' "$CONF" | cut -d= -f2-)"
+  _u="$(grep -m1 '^MARKET_FEED_URL=' "$CONF" | cut -d= -f2-)"; [[ -n "$_u" ]] && URL="$_u"
+fi
+MODE="auto"
+if [[ -n "$RK" ]]; then
+  _r="$(curl -s --max-time 4 -H "authorization: Bearer $RK" "$URL/api/settings" 2>/dev/null)"
+  case "$_r" in
+    *'"briefCadence":"10m"'*) MODE="10m" ;;
+    *'"briefCadence":"30m"'*) MODE="30m" ;;
+    *'"briefCadence":"2h"'*)  MODE="2h"  ;;
+    *'"briefCadence":"off"'*) MODE="off" ;;
+  esac
+fi
+
+case "$MODE" in
+  off) exit 0 ;;
+  10m) RUN="yes" ;;                                              # 10분마다 (crontab 주기 그대로)
+  30m) [[ $MIN -eq 0 || $MIN -eq 30 ]] && RUN="yes" || RUN="no" ;;
+  2h)  [[ $MIN -eq 0 && $((HOUR % 2)) -eq 0 ]] && RUN="yes" || RUN="no" ;;
+  *)   RUN="$(decide "$DOW" "$HM")" ;;                            # auto = 세션 기반
+esac
+
+if [[ "$RUN" == "yes" ]]; then
   exec "$HERE/update-feed.sh" market_brief
 fi
 exit 0

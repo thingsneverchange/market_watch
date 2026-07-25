@@ -22,8 +22,8 @@ export const CHART_PRESETS: ChartPreset[] = [
   { key: "ndx",  label: "NASDAQ 100", tvSymbol: "NASDAQ:QQQ" },
   { key: "spx",  label: "S&P 500",    tvSymbol: "AMEX:SPY" },
   { key: "dow",  label: "DOW",        tvSymbol: "AMEX:DIA" },
-  { key: "soxx", label: "반도체",      tvSymbol: "NASDAQ:SOXX" },
-  { key: "iwm",  label: "러셀2000",    tvSymbol: "AMEX:IWM" },
+  { key: "soxx", label: "SEMIS",      tvSymbol: "NASDAQ:SOXX" },
+  { key: "iwm",  label: "RUSSELL",    tvSymbol: "AMEX:IWM" },
   { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" },
   { key: "btc",  label: "BTC",        tvSymbol: "BINANCE:BTCUSDT" },
   { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" }
@@ -44,6 +44,10 @@ export type ControlState = {
   // 배경음악 — 오디오는 방송 화면(오버레이)에서 나야 OBS 가 잡는다.
   // 그래서 플레이어는 오버레이에 **숨겨서** 두고, 조작만 여기서 한다.
   music: { playing: boolean; volume: number; cmdSeq: number; cmd: "none" | "next" | "prev" };
+  // 자동 송출: 켜면 "지금 라이브인 공적 소스"(연준·정부)를 스스로 띄운다.
+  // 사람이 내리면 일정 시간 자동 재송출을 억제한다 — 안 그러면 내려도 바로 다시 올라온다.
+  videoAuto: boolean;
+  autoSuppressUntil: number;
   updatedAt: number;
 };
 
@@ -72,6 +76,8 @@ const state: ControlState = {
   breaking: null,
   video: null,
   music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
+  videoAuto: false,
+  autoSuppressUntil: 0,
   updatedAt: Date.now()
 };
 
@@ -138,10 +144,25 @@ export function setMusic(patch: { playing?: boolean; volume?: number; cmd?: "nex
   return state;
 }
 
-/** 영상 내리기 → 오버레이는 차트로 복귀 */
+/** 영상 내리기 → 오버레이는 차트로 복귀. 자동 모드면 30분간 자동 재송출을 억제한다. */
 export function clearVideo() {
   state.video = null;
+  if (state.videoAuto) state.autoSuppressUntil = Date.now() + 30 * 60_000;
   state.version++;
   state.updatedAt = Date.now();
   return state;
+}
+
+/** 자동 송출 on/off */
+export function setVideoAuto(on: boolean) {
+  state.videoAuto = !!on;
+  if (on) state.autoSuppressUntil = 0; // 다시 켜면 억제 해제
+  state.version++;
+  state.updatedAt = Date.now();
+  return state;
+}
+
+/** 자동 송출이 지금 허용되는가 (수동 영상 없음 + 억제 시간 지남) */
+export function autoAllowed(): boolean {
+  return state.videoAuto && !state.video && Date.now() >= state.autoSuppressUntil;
 }
