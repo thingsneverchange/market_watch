@@ -102,8 +102,10 @@ export const GET: RequestHandler = async () => {
   const missing = ["SPY", "QQQ", "DIA"].filter((t) => !by.has(t)).map((t) => LABEL[t] ?? t);
 
   // ── 미니차트용 추이 ──────────────────────────
-  //  TradingView 무료 임베드는 선물을 못 그린다 → Finviz 의 300포인트로 자체 렌더한다.
+  //  TradingView 무료 임베드는 선물을 못 그린다 → Finviz 의 5분봉 300개로 자체 렌더한다.
+  //  = 약 25시간. 야간 세션이 통째로 들어와서 24시간 스트림에 맞는다.
   //  포인트가 많으면 전송량만 늘고 화면에선 구분이 안 되므로 균등 샘플링으로 줄인다.
+  //  (마지막 포인트는 반드시 보존한다 — "지금 값"이 잘리면 안 된다)
   const sample = (arr: number[], n = 80) => {
     if (arr.length <= n) return arr;
     const step = (arr.length - 1) / (n - 1);
@@ -116,8 +118,13 @@ export const GET: RequestHandler = async () => {
   ].map(({ key, label }) => {
     const f = F(key);
     return f
-      ? { key, label, pct: f.changePct, price: fmt(f.price), spark: sample(f.spark) }
-      : { key, label, pct: 0, price: "—", spark: [] as number[] };
+      ? {
+          key, label, pct: f.changePct, price: fmt(f.price),
+          spark: sample(f.spark),
+          // 전일 정산가 = 차트의 "보합선". 이게 있어야 25시간 곡선과 등락률이 같은 얘기를 한다
+          base: f.prevClose
+        }
+      : { key, label, pct: 0, price: "—", spark: [] as number[], base: null };
   });
 
   return new Response(

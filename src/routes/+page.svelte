@@ -5,7 +5,9 @@
   import MusicPlayer from "$lib/components/MusicPlayer.svelte";
   import LiveVideo from "$lib/components/LiveVideo.svelte";
   import Sparkline from "$lib/components/Sparkline.svelte";
-  import { marketState, marketBell, marketStatus, type MarketBell, type MarketStatus } from "$lib/market-hours";
+  import { marketState, marketBell, marketStatus, futuresSession,
+    type MarketBell, type MarketStatus, type FuturesSession } from "$lib/market-hours";
+  import FuturesChart from "$lib/components/FuturesChart.svelte";
   import { onMount } from "svelte";
 
   // ---- 상태 ----
@@ -14,6 +16,8 @@
   let isMarketOpen = false;
   let marketSession = "CLOSED";
   let bell: MarketBell = { kind: null, ms: 0 }; // 개장/마감 임박 카운트다운
+  // 선물(Globex) 세션 — 메인 차트가 선물일 때 LIVE 판정에 쓴다
+  let futSess: FuturesSession = { open: false, label: "…" };
   // 시장 상태 — 열림/닫힘 + **왜 닫혔는지** + 언제 열리는지 (직관적으로 한 번에)
   let mkt: MarketStatus = { open: false, session: "CLOSED", label: "LOADING", reason: "", msToOpen: null };
 
@@ -68,7 +72,10 @@
   //  TradingView 무료 임베드는 선물을 아예 못 그린다(실측) → 24시간 스트림에서 정작 중요한
   //  나스닥 선물 움직임을 못 보여준다. Finviz 추이로 직접 그려 그 제약을 없앴다.
   //  덤: iframe 3개가 사라져 24시간 방송의 메모리·CPU 부담도 크게 줄었다.
-  let minis: { key: string; label: string; pct: number; price: string; spark: number[] }[] = [];
+  let minis: {
+    key: string; label: string; pct: number; price: string;
+    spark: number[]; base: number | null;
+  }[] = [];
 
   // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"
   let dataAsOf: number | null = null;
@@ -93,10 +100,21 @@
   }
   $: chartSess = chartSession(chartSymbol);
 
+  // ── 메인 차트 소스 분기 ────────────────────
+  $: isFut = /^FUT:/i.test(chartSymbol);
+  $: futKey = isFut ? chartSymbol.slice(4).toUpperCase() : "NQ";
+  //  컨트롤의 봉 설정을 Finviz 타임프레임으로 매핑 (1/5분 → 5분봉, 60 → 1시간봉, D → 일봉)
+  $: futTf = (chartInterval === "D" ? "d1" : chartInterval === "60" ? "h1" : "m5") as
+    "m5" | "h1" | "d1";
+  const FUT_TF_LABEL = { m5: "24H · 5m", h1: "12D · 1h", d1: "14M · 1D" } as const;
+
   // 방송 컨트롤 (컨트롤러가 조종 → 오버레이가 폴링 반영)
-  let chartSymbol = "NASDAQ:QQQ";
+  //  기본값을 **NQ 선물 자체 렌더**로 둔다. TradingView 무료 임베드는 주말에
+  //  O∅H∅L∅C∅ 를 주고 화면이 통째로 빈다(실측) — 24시간 방송에선 치명적이다.
+  //  "FUT:<키>" 면 자체 차트, 그 외 문자열이면 기존처럼 TradingView 로 간다.
+  let chartSymbol = "FUT:NQ";
   let chartInterval = "1";
-  let chartLabel = "NASDAQ 100";
+  let chartLabel = "NASDAQ FUTURES";
   let ctlVersion = 0;
   // 라이브 영상 (연준 회견 등). null 이면 차트를 그대로 보여준다.
   let video: { id: string; label: string } | null = null;
@@ -120,6 +138,9 @@
     marketSession = s.session;
     bell = marketBell(now); // 개장/마감 임박 (실측 시장시계 파생 — 하드코딩·DST·조기폐장 모두 반영)
     mkt = marketStatus(now);
+    // 선물 세션은 현물과 완전히 다르다 (일 18:00 → 금 17:00 ET, 매일 17–18시 중단).
+    // 현물 세션을 재사용하면 밤새 열려 있는 차트에 "CLOSED" 를 박게 된다.
+    futSess = futuresSession(now);
 
     freshness = computeFreshness(s.open);
     // 이벤트 카운트다운은 템플릿에서 countdown(ev.time, …, nowMs) 로 매초 재계산된다.
@@ -505,12 +526,23 @@
           <span class="ch-name">{chartLabel}</span>
           <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
                주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
-          <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
-            {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
-          </span>
+          {#if isFut}
+            <!-- 선물은 현물 세션과 다르다: 밤새 열려 있고 매일 17–18시 ET 만 쉰다 -->
+            <span class="ch-meta" class:live={futSess.open}>
+              {FUT_TF_LABEL[futTf]} · {futSess.label}
+            </span>
+          {:else}
+            <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
+              {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
+            </span>
+          {/if}
         </div>
         <div class="chart-body">
-          <TVChart symbol={chartSymbol} interval={chartInterval} />
+          {#if isFut}
+            <FuturesChart symbol={futKey} tf={futTf} />
+          {:else}
+            <TVChart symbol={chartSymbol} interval={chartInterval} />
+          {/if}
         </div>
       </div>
 
@@ -519,13 +551,17 @@
           <div class="ss-card">
             <div class="ss-top">
               <span class="ss-name">{m.label}</span>
+              <!-- 어느 구간의 차트인지 명시 — 등락률과 창이 다르면 시청자가 오해한다 -->
+              <span class="ss-tf">24H</span>
               <span class="ss-px">{m.price}</span>
               <span class="ss-pct" class:u={m.pct >= 0} class:d={m.pct < 0}>
                 {m.pct > 0 ? "+" : ""}{Number(m.pct).toFixed(2)}%
               </span>
             </div>
             <!-- 자체 SVG — 선물도 그릴 수 있고 iframe 이 아니라 가볍다 -->
-            <div class="ss-chart"><Sparkline points={m.spark} up={m.pct >= 0} /></div>
+            <div class="ss-chart">
+              <Sparkline points={m.spark} up={m.pct >= 0} base={m.base} />
+            </div>
           </div>
         {/each}
       </div>
@@ -650,8 +686,12 @@
       <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
       <span>Data: Finnhub · Finviz · CoinGecko</span>
-      <span class="disc-sep">·</span>
-      <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
+      <!-- TradingView 어트리뷰션은 **실제로 그 위젯을 띄웠을 때만** 표기한다.
+           기본 차트는 자체 렌더라 항상 붙여두면 사실과 다르다. -->
+      {#if !isFut}
+        <span class="disc-sep">·</span>
+        <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
+      {/if}
     </div>
     <!-- 흐르는 테이프는 자체 클리핑 박스 안에 둔다. 안 그러면 translateX 애니메이션이
          고지 밴드 위로 넘어와 글자가 겹친다. -->
@@ -862,6 +902,8 @@
     display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
   .ss-top { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
   .ss-name { font-size: 12px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
+  .ss-tf { margin-left: 6px; font-size: 9px; font-weight: 800; color: #6b7280;
+    border: 1px solid #2b3240; border-radius: 3px; padding: 0 3px; letter-spacing: 0.04em; }
   .ss-px { margin-left: auto; margin-right: 8px; font-size: 12px; font-weight: 700; color: #c7cdd6;
     font-variant-numeric: tabular-nums; }
   .ss-pct { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }

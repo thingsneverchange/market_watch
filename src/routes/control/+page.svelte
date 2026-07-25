@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  let presets: { key: string; label: string }[] = [];
+  let presets: { key: string; label: string; tvSymbol?: string }[] = [];
   let activeKey = "";
   let interval = "1";
   let headline = "";
@@ -65,9 +65,23 @@
     { label: "White House", url: "https://www.youtube.com/@WhiteHouse/live" }
   ];
 
-  const INTERVALS = [
+  type Range = { v: string; t: string; d?: string };
+  // TradingView 위젯용 봉 간격
+  const INTERVALS: Range[] = [
     { v: "1", t: "1m" }, { v: "5", t: "5m" }, { v: "15", t: "15m" }, { v: "60", t: "1H" }, { v: "D", t: "1D" }
   ];
+  // 자체 선물 차트는 Finviz 가 주는 3가지 시계열만 존재한다.
+  // 여기에 1m/5m/15m 을 그대로 노출하면 눌러도 화면이 안 바뀌어(전부 5분봉으로 매핑)
+  // 컨트롤이 고장난 것처럼 보인다 → 실제 있는 것만 보여준다.
+  const FUT_RANGES: Range[] = [
+    { v: "1",  t: "24H", d: "5m bars" },
+    { v: "60", t: "12D", d: "1h bars" },
+    { v: "D",  t: "14M", d: "1d bars" }
+  ];
+  // 선물 프리셋인지 = tvSymbol 이 "FUT:" 로 시작
+  $: activePreset = presets.find((p) => p.key === activeKey);
+  $: isFutPreset = /^FUT:/i.test((activePreset)?.tvSymbol ?? "");
+  $: ranges = isFutPreset ? FUT_RANGES : INTERVALS;
 
   async function loadState() {
     try {
@@ -157,7 +171,7 @@
   }
   async function setInterval(v: string) {
     interval = v;
-    flash(`Interval → ${INTERVALS.find(i=>i.v===v)?.t}`);
+    flash(`${isFutPreset ? "Range" : "Interval"} → ${ranges.find(i=>i.v===v)?.t}`);
     await post({ action: "chart", key: activeKey, interval: v });
   }
   async function sendBreaking() {
@@ -217,10 +231,13 @@
   </section>
 
   <section>
-    <h2>🕯 Candle size <span class="h2sub">— chart timeframe</span></h2>
+    <h2>🕯 {isFutPreset ? "Chart range" : "Candle size"}
+      <span class="h2sub">— {isFutPreset ? "how far back the futures chart goes" : "chart timeframe"}</span></h2>
     <div class="grid iv">
-      {#each INTERVALS as i}
-        <button class="btn iv-b" class:on={i.v === interval} on:click={() => setInterval(i.v)}>{i.t}</button>
+      {#each ranges as i}
+        <button class="btn iv-b" class:on={i.v === interval} on:click={() => setInterval(i.v)}>
+          {i.t}{#if i.d}<small>{i.d}</small>{/if}
+        </button>
       {/each}
     </div>
   </section>
@@ -361,7 +378,9 @@
     padding:16px 8px;border-radius:12px;cursor:pointer;transition:.12s;-webkit-tap-highlight-color:transparent;}
   .btn:active{transform:scale(.96)}
   .btn.on{background:#1d2b22;border-color:#2f6b48;color:#4ade80}
-  .iv-b{padding:12px 4px;font-size:14px}
+  .iv-b{padding:12px 4px;font-size:14px;display:flex;flex-direction:column;gap:2px;align-items:center}
+  .iv-b small{font-size:9px;color:#6b7280;font-weight:600}
+  .iv-b.on small{color:#4ade80}
   textarea{width:100%;box-sizing:border-box;background:#12151b;border:1px solid #23272f;border-radius:12px;
     color:#fff;font-size:17px;padding:14px;resize:none;font-family:inherit;}
   .lv{display:flex;align-items:center;gap:8px;margin:10px 0}

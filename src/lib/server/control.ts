@@ -18,15 +18,27 @@ export type ChartPreset = {
 //   확인된 렌더 가능 목록: ETF(QQQ/SPY/DIA/IWM/SOXX/KORU), 암호화폐, FX/금속.
 //   그래서 지수는 전부 **추종 ETF**로 대체했다. 헤더의 등락률(SPY/QQQ/DIA 기준)과
 //   차트가 마침내 같은 상품을 가리킨다.
+// ★ 선물 프리셋("FUT:")이 먼저다 — 24시간 스트림의 기본값.
+//   TradingView 무료 임베드는 (a) 선물을 아예 못 그리고 (b) 주말엔 O∅H∅L∅C∅ 를 줘서
+//   화면 한가운데가 통째로 빈다(실측). 선물 프리셋은 Finviz 시계열로 자체 렌더하므로
+//   야간·주말에도 마지막 세션이 그대로 남아 절대 비지 않는다.
 export const CHART_PRESETS: ChartPreset[] = [
+  // 선물 — 자체 렌더. 24시간 스트림의 주력
+  { key: "nq",   label: "NASDAQ FUTURES", tvSymbol: "FUT:NQ" },
+  { key: "es",   label: "S&P FUTURES",    tvSymbol: "FUT:ES" },
+  { key: "ym",   label: "DOW FUTURES",    tvSymbol: "FUT:YM" },
+  { key: "rty",  label: "RUSSELL FUT",    tvSymbol: "FUT:ER2" },
+  { key: "cl",   label: "CRUDE OIL",      tvSymbol: "FUT:CL" },
+  { key: "gc",   label: "GOLD",           tvSymbol: "FUT:GC" },
+  { key: "vx",   label: "VIX",            tvSymbol: "FUT:VX" },
+  { key: "btc",  label: "BITCOIN",        tvSymbol: "FUT:BTC" },
+  // TradingView — Finviz 선물에 없는 현물 ETF 만 남긴다.
+  //  (예전 GOLD=OANDA:XAUUSD, BTC=BINANCE 프리셋은 위 선물과 이름이 겹쳐 지웠다)
   { key: "ndx",  label: "NASDAQ 100", tvSymbol: "NASDAQ:QQQ" },
   { key: "spx",  label: "S&P 500",    tvSymbol: "AMEX:SPY" },
   { key: "dow",  label: "DOW",        tvSymbol: "AMEX:DIA" },
   { key: "soxx", label: "SEMIS",      tvSymbol: "NASDAQ:SOXX" },
-  { key: "iwm",  label: "RUSSELL",    tvSymbol: "AMEX:IWM" },
-  { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" },
-  { key: "btc",  label: "BTC",        tvSymbol: "BINANCE:BTCUSDT" },
-  { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" }
+  { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" }
 ];
 
 /** 컨트롤러가 보낼 수 있는 봉 간격 화이트리스트 */
@@ -71,7 +83,7 @@ export function parseYouTubeId(input: string): string | null {
 // 모듈 레벨 = dev/프로덕션에서 단일 프로세스 동안 유지됨
 const state: ControlState = {
   version: 1,
-  chartKey: "ndx",
+  chartKey: "nq",   // 24시간 방송의 기본 = 나스닥 선물
   chartInterval: "1",
   breaking: null,
   video: null,

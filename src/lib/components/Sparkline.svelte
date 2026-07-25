@@ -8,14 +8,21 @@
   export let points: number[] = [];
   export let up = true;          // 상승/하락 → 색
   export let height = 90;
+  /** 전일 정산가 = 보합선. 이 선 위/아래로 오늘 오르내림이 한눈에 보인다. */
+  export let base: number | null = null;
 
   const W = 300;                 // viewBox 기준 폭 (실제 크기는 CSS 가 결정)
 
   // 소수점 급등락도 보이도록 min/max 로 정규화한다 (0 기준으로 그리면 선이 평평해진다)
   $: pts = points.filter((n) => Number.isFinite(n));
-  $: min = pts.length ? Math.min(...pts) : 0;
-  $: max = pts.length ? Math.max(...pts) : 1;
+  // 보합선도 스케일에 포함해야 한다. 안 그러면 가격이 종일 정산가 위에 있을 때
+  // 선이 차트 밖으로 밀려나 안 보인다.
+  $: baseOk = typeof base === "number" && Number.isFinite(base) && base > 0;
+  $: scale = baseOk ? [...pts, base as number] : pts;
+  $: min = scale.length ? Math.min(...scale) : 0;
+  $: max = scale.length ? Math.max(...scale) : 1;
   $: span = max - min || 1;
+  $: baseY = baseOk ? height - (((base as number) - min) / span) * height : null;
   $: coords = pts.map((v, i) => {
     const x = pts.length > 1 ? (i / (pts.length - 1)) * W : 0;
     const y = height - ((v - min) / span) * height;
@@ -39,6 +46,11 @@
       </linearGradient>
     </defs>
     <path d={area} fill={`url(#${fillId})`} />
+    <!-- 보합선(전일 정산가) — 곡선이 이 위에 있으면 오늘 상승이다 -->
+    {#if baseY !== null}
+      <line x1="0" y1={baseY} x2={W} y2={baseY} stroke="#6b7280" stroke-width="1"
+            stroke-dasharray="4 4" vector-effect="non-scaling-stroke" opacity="0.75" />
+    {/if}
     <path d={line} fill="none" stroke={stroke} stroke-width="1.8"
           stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke" />
     <!-- 마지막 점 강조 — "지금 어디인지"가 한눈에 -->

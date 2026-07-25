@@ -218,3 +218,25 @@ export function marketBell(now: Date = new Date()): MarketBell {
   }
   return { kind: null, ms: 0 };
 }
+
+// ── 선물 세션 (CME Globex 주가지수 선물: ES/NQ/YM) ─────────────
+//  일 18:00 ET 개장 → 금 17:00 ET 마감, 매일 17:00–18:00 ET 정비 중단.
+//  현물 정규장(9:30–16:00)과 완전히 다르므로 절대 재사용하면 안 된다.
+//  24시간 스트림에서 "지금 이 차트가 살아 있나"를 정직하게 말하려면 이게 필요하다.
+export type FuturesSession = { open: boolean; label: string };
+
+export function futuresSession(now: Date = new Date()): FuturesSession {
+  const { hour, minute, weekday } = etParts(now);
+  const mins = hour * 60 + minute;
+  const OPEN = 18 * 60;   // 일요일 재개장
+  const CLOSE = 17 * 60;  // 일일 정비 시작 / 금요일 주간 마감
+
+  if (weekday === 6) return { open: false, label: "WEEKEND" };            // 토요일 종일 휴장
+  if (weekday === 0) return mins >= OPEN                                  // 일요일
+    ? { open: true, label: "GLOBEX" }
+    : { open: false, label: "WEEKEND" };
+  if (weekday === 5 && mins >= CLOSE) return { open: false, label: "WEEKEND" }; // 금 17:00 이후
+  // 월~금 일일 정비 시간
+  if (mins >= CLOSE && mins < OPEN) return { open: false, label: "DAILY BREAK" };
+  return { open: true, label: "GLOBEX" };
+}
