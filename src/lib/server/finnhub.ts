@@ -79,6 +79,9 @@ function pathHash(path: string): number {
 }
 
 // ※ TTL 은 반드시 폴링 주기(12s)보다 커야 한다. 작으면 캐시 히트율이 구조적으로 0 이다.
+/** 경로별 마지막 실패 사유 (진단·부분실패 표시용) */
+export const lastError = new Map<string, string>();
+
 async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
   if (!FINNHUB_API_KEY) return null;
   const now = Date.now();
@@ -104,17 +107,20 @@ async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
           : r.status === 429 ? 45_000 + Math.floor(jit * 45_000)
           : 30_000;
         failUntil.set(path, now + backoff);
-        console.warn(`[finnhub] ${r.status} ${path.split("?")[0]}`);
+        lastError.set(path, `HTTP ${r.status}`);
+        console.warn(`[finnhub] ${r.status} ${path}`);
         return stale();
       }
       const j = await r.json();
       cache.set(path, { at: now, data: j });
       failUntil.delete(path);
+      lastError.delete(path);
       if (cache.size > 400) cache.delete(cache.keys().next().value as string);
       return j;
-    } catch (e) {
+    } catch (e: any) {
       failUntil.set(path, now + 10_000);
-      console.warn(`[finnhub] network fail ${path.split("?")[0]}`);
+      lastError.set(path, `net ${e?.name ?? e}`);
+      console.warn(`[finnhub] network fail ${path} (${e?.name ?? e})`);
       return stale();
     } finally {
       inflight.delete(path); // finally 필수 — 없으면 영구 무한 TTL 이 된다
@@ -474,6 +480,9 @@ export async function getCompanyNews(ticker: string, days = 2): Promise<NewsItem
 }
 
 // ---- 실적 캘린더 -------------------------------------------
+/** 마지막 getEarnings 호출에서 창 일부가 실패했는가 (목록이 불완전하다는 뜻) */
+export let earningsPartial = false;
+
 export type EarnItem = {
   ticker: string;
   date: string;
@@ -494,18 +503,49 @@ export async function getEarnings(days = 21, lookbackDays = 0): Promise<EarnItem
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const now = Date.now();
   const windows: Promise<any>[] = [];
+  const ranges: [string, string][] = [];   // 재시도용 (창 하나 실패 = 날짜대 통째 손실)
   // 과거 창(최근 발표 리캡용). 기본 0 = 미래만.
   for (let s = -lookbackDays; s < 0; s += 5) {
     const from = new Date(now + s * 864e5);
     const to = new Date(now + Math.min(s + 5, 0) * 864e5);
+    ranges.push([fmt(from), fmt(to)]);
     windows.push(fhFetch(`/calendar/earnings?from=${fmt(from)}&to=${fmt(to)}`, 900_000));
   }
   for (let s = 0; s < days; s += 5) {
     const from = new Date(now + s * 864e5);
     const to = new Date(now + Math.min(s + 5, days) * 864e5);
+    ranges.push([fmt(from), fmt(to)]);
     windows.push(fhFetch(`/calendar/earnings?from=${fmt(from)}&to=${fmt(to)}`, 900_000));
   }
   const parts = await Promise.all(windows);
+
+  // ★ 창 하나가 실패하면 **그 날짜 구간이 통째로 사라진다**. 실측으로 Jul 23~24 창이
+  //   빠지면서 INTC·AXP 가 목록에서 사라졌는데 화면엔 아무 표시도 없었다.
+  //   → 실패한 창만 한 번 더 시도하고, 그래도 안 되면 partial 로 알린다.
+  for (let i = 0; i < parts.length; i++) {
+    if (Array.isArray(parts[i]?.earningsCalendar)) continue;
+    const [from, to] = ranges[i];
+    // 재시도는 캐시/백오프를 우회한다 (백오프 때문에 영구히 빈 채로 남는 걸 막는다)
+    try {
+      const r = await fetch(
+        `${BASE}/calendar/earnings?from=${from}&to=${to}&token=${FINNHUB_API_KEY}`,
+        { cache: "no-store" }
+      );
+      if (r.ok) {
+        const j = await r.json();
+        if (Array.isArray(j?.earningsCalendar)) {
+          parts[i] = j;
+          cache.set(`/calendar/earnings?from=${from}&to=${to}`, { at: Date.now(), data: j });
+          failUntil.delete(`/calendar/earnings?from=${from}&to=${to}`);
+          console.warn(`[finnhub] earnings ${from}~${to} 재시도 성공`);
+        }
+      }
+    } catch { /* 재시도도 실패하면 아래에서 partial 로 잡힌다 */ }
+  }
+
+  earningsPartial = parts.some((j) => !Array.isArray(j?.earningsCalendar));
+  if (earningsPartial) console.warn("[finnhub] 실적 캘린더 일부 창 실패 — 목록이 불완전하다");
+
   const seen = new Set<string>();
   const out: EarnItem[] = [];
   for (const j of parts) {

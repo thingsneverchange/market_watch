@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  type Preset = { key: string; label: string; fut?: string; tv?: string; note?: string };
+  type Preset = { key: string; label: string; fut?: string; tv?: string; nv?: string; note?: string };
   let presets: Preset[] = [];
   // 화면에 띄울 차트들 (최대 4). 순서가 곧 배치 순서다.
   let activeKeys: string[] = [];
@@ -26,6 +26,7 @@
   // 검증된 라이브 영상 후보 — Claude 가 찾고 서버가 oEmbed 로 실존 확인한 것만 온다
   let videos: { title: string; url: string; source: string; note: string | null; live: boolean; startET: string | null; author: string | null }[] = [];
   let videoAuto = false;       // 자동 송출 on/off
+  let videoPlaying = false;    // 재생 여부 (올리는 것과 트는 것은 별개)
   let videoAutoActive = false; // 지금 자동으로 올라가 있는가
 
   // ── 배경음악 ────────────────────────────────
@@ -95,7 +96,7 @@
   //  "fv:" 임시 키(추천 목록에서 올린 종목)도 자체 렌더 선물이다.
   //  이걸 빼먹으면 임시 차트만 선택했을 때 1m/5m/15m 버튼이 뜨는데,
   //  전부 5분봉으로 매핑돼서 눌러도 화면이 안 바뀐다(컨트롤이 고장난 것처럼 보인다).
-  $: isFutPreset = activePresets.some((p) => !!p.fut)
+  $: isFutPreset = activePresets.some((p) => !!p.fut || !!p.nv)
     || activeKeys.some((k) => k.startsWith("fv:"));
   $: ranges = isFutPreset ? FUT_RANGES : INTERVALS;
   $: full = activeKeys.length >= MAX_SLOTS;
@@ -114,6 +115,7 @@
         liveVideo = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
         if (j.music) music = { playing: j.music.playing, volume: j.music.volume };
         videoAuto = !!j.videoAuto;
+        videoPlaying = !!j.videoPlaying;
         videoAutoActive = !!j.videoAutoActive;
       }
     } catch {}
@@ -178,6 +180,14 @@
     flash(videoAuto ? "Auto-air ON — Fed/gov live only" : "Auto-air OFF");
   }
 
+  /** 영상 재생/정지 — 올리는 것과 트는 것을 분리했다.
+   *  올리자마자 소리가 나가면 방송 사고라 항상 정지 상태로 올라간다. */
+  async function toggleVideoPlay() {
+    videoPlaying = !videoPlaying;
+    await post({ action: "videoPlay", on: videoPlaying });
+    flash(videoPlaying ? "Video playing" : "Video paused");
+  }
+
   async function stopVideo() {
     await post({ action: "clearVideo" });
     await loadState();
@@ -214,16 +224,36 @@
       if (r.ok) movers = (await r.json()).movers ?? [];
     } catch {}
   }
-  /** 추천 목록에서 바로 차트에 올린다 (프리셋에 없는 종목은 fv: 키로) */
+  /** 추천 종목 → 차트 키 (프리셋에 있으면 그걸, 없으면 fv: 임시 키) */
+  function moverKey(key: string) {
+    return presets.find((p) => p.fut === key)?.key ?? `fv:${key}`;
+  }
+  /**
+   * 추천 목록 토글. 예전엔 누르면 올라가기만 하고 **다시 눌러도 안 내려갔다**
+   * ("Already on air" 만 뜨고 끝) — 취소할 방법이 아예 없었다.
+   */
   async function airMover(key: string) {
-    const preset = presets.find((p) => p.fut === key);
-    const k = preset ? preset.key : `fv:${key}`;
-    if (activeKeys.includes(k)) { flash("Already on air"); return; }
-    activeKeys = activeKeys.length >= MAX_SLOTS
-      ? [...activeKeys.slice(0, -1), k]   // 꽉 찼으면 마지막 슬롯 교체
-      : [...activeKeys, k];
+    const k = moverKey(key);
+    if (activeKeys.includes(k)) { await removeChart(k); return; }
+    if (activeKeys.length >= MAX_SLOTS) { flash(`Max ${MAX_SLOTS} — remove one first`); return; }
+    activeKeys = [...activeKeys, k];
     flash(`Added ${movers.find(m => m.key === key)?.label ?? key}`);
     await post({ action: "chart", keys: activeKeys, interval });
+  }
+  /** 슬롯 칩의 × 버튼 — 어떤 차트든 여기서 뺄 수 있다 */
+  async function removeChart(k: string) {
+    if (activeKeys.length === 1) { flash("Need at least one chart"); return; }
+    activeKeys = activeKeys.filter((x) => x !== k);
+    flash(`${activeKeys.length} chart${activeKeys.length > 1 ? "s" : ""} on air`);
+    await post({ action: "chart", keys: activeKeys, interval });
+  }
+  /** 슬롯 칩에 보여줄 이름 (fv: 임시 키는 추천 목록의 이름을 쓴다) */
+  function slotLabel(k: string) {
+    if (k.startsWith("fv:")) {
+      const sym = k.slice(3);
+      return movers.find((m) => m.key === sym)?.label ?? sym;
+    }
+    return presets.find((p) => p.key === k)?.label ?? k;
   }
   async function toggleSniper() {
     chartSniper = !chartSniper;
@@ -296,7 +326,12 @@
     <!-- 지금 배치 미리보기 — 몇 분할인지 한눈에 -->
     <div class="slots">
       {#each activeKeys as k, i}
-        <span class="slot">{i + 1}. {presets.find(p => p.key === k)?.label ?? k}</span>
+        <span class="slot">
+          {i + 1}. {slotLabel(k)}
+          {#if activeKeys.length > 1}
+            <button class="slot-x" title="Remove" on:click={() => removeChart(k)}>×</button>
+          {/if}
+        </span>
       {/each}
     </div>
 
@@ -309,7 +344,11 @@
             {p.label}
             {#if on}<span class="pos">{activeKeys.indexOf(p.key) + 1}</span>{/if}
             <!-- 지수 원본이 아니라 대체물이면 컨트롤에서도 밝힌다 -->
+            <!-- 소스를 정확히 표기한다. 네이버 지수 프리셋에까지 "TradingView only" 라고
+                 찍혀 있었다(실제로는 지수 원본 + 거래소 OHLC 라 정반대다). -->
             {#if p.note}<small>{p.note}</small>
+            {:else if p.nv && p.fut}<small>index + futures</small>
+            {:else if p.nv}<small>real index · exchange OHLC</small>
             {:else if !p.fut}<small>TradingView only</small>
             {:else if !p.tv}<small>24/7 self-rendered</small>{/if}
           </button>
@@ -339,8 +378,10 @@
       <div class="movers">
         {#each movers as m}
           <button class="mv" class:up={m.dir > 0} class:dn={m.dir < 0}
+                  class:on={activeKeys.includes(moverKey(m.key))}
                   on:click={() => airMover(m.key)}>
             <span class="mv-l">{m.label}</span>
+            {#if activeKeys.includes(moverKey(m.key))}<span class="mv-on">ON AIR ×</span>{/if}
             <span class="mv-z">{m.z}x</span>
             <span class="mv-p">{m.recentPct > 0 ? "+" : ""}{m.recentPct}%<small>30m</small></span>
           </button>
@@ -407,6 +448,10 @@
       <div class="vid-on">
         <span class="vid-dot"></span>
         <span class="vid-lbl">ON AIR{videoAutoActive ? " (auto)" : ""} — {liveVideo.label || liveVideo.id}</span>
+        <!-- 올리는 것과 트는 것은 별개다. 새 영상은 항상 정지 상태로 올라간다. -->
+        <button class="btn vplay" class:on={videoPlaying} on:click={toggleVideoPlay}>
+          {videoPlaying ? "❚❚ Pause" : "▶ Play"}
+        </button>
         <button class="btn vstop" on:click={stopVideo}>Stop</button>
       </div>
     {/if}
@@ -526,7 +571,10 @@
   .btn.on{background:#1d2b22;border-color:#2f6b48;color:#4ade80}
   .slots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
   .slot{font-size:11px;font-weight:800;color:#4ade80;background:#0d1712;border:1px solid #16281d;
-    border-radius:999px;padding:4px 10px}
+    border-radius:999px;padding:4px 6px 4px 10px;display:inline-flex;align-items:center;gap:5px}
+  .slot-x{background:none;border:none;color:#4ade80;font-size:15px;line-height:1;cursor:pointer;
+    padding:0 4px;opacity:.65}
+  .slot-x:hover{opacity:1;color:#ff5c5c}
   .symwrap{position:relative;display:flex}
   .symwrap .btn{flex:1}
   .sym{padding-top:16px}
@@ -539,11 +587,15 @@
   .only{position:absolute;top:4px;right:5px;font-size:9px;font-weight:800;color:#6b7280;
     background:#12151b;border:1px solid #23272f;border-radius:4px;padding:2px 5px;cursor:pointer}
   .only:hover{color:#c7cdd6;border-color:#3a4150}
+  .vplay{padding:7px 12px;font-size:12px;font-weight:800;white-space:nowrap}
+  .vplay.on{border-color:#2f4a38;background:#0e1512;color:#4ade80}
   .movers{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
   .mv{display:flex;align-items:baseline;gap:8px;background:#12151b;border:1px solid #23272f;
     border-radius:8px;padding:10px 12px;cursor:pointer;text-align:left;color:#c7cdd6}
   .mv:hover{border-color:#3a4150}
-  .mv-l{font-size:13px;font-weight:800;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mv.on{border-color:#2f4a38;background:#0e1512}
+  .mv-on{font-size:8px;font-weight:800;color:#4ade80;letter-spacing:.06em;white-space:nowrap}
+  .mv-l{font-size:13px;font-weight:800;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .mv-z{font-size:11px;font-weight:800;color:#f0b429}
   .mv-p{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
   .mv-p small{font-size:8px;color:#6b7280;margin-left:3px;font-weight:700}

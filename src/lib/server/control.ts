@@ -94,6 +94,9 @@ export type ControlState = {
   // 자동 송출: 켜면 "지금 라이브인 공적 소스"(연준·정부)를 스스로 띄운다.
   // 사람이 내리면 일정 시간 자동 재송출을 억제한다 — 안 그러면 내려도 바로 다시 올라온다.
   videoAuto: boolean;
+  // 영상 재생 여부 — 올리는 것과 트는 것을 분리한다.
+  // 올리자마자 소리가 나가면 방송 사고라, 기본은 정지 상태로 올라간다.
+  videoPlaying: boolean;
   autoSuppressUntil: number;
   updatedAt: number;
 };
@@ -127,6 +130,7 @@ const state: ControlState = {
   video: null,
   music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
   videoAuto: false,
+  videoPlaying: false,
   autoSuppressUntil: 0,
   updatedAt: Date.now()
 };
@@ -191,6 +195,7 @@ export function setVideo(input: string, label = "") {
   const id = parseYouTubeId(input);
   if (!id) return state; // 잘못된 입력은 무시 (방송 중 깨진 iframe 방지)
   state.video = { id, label: String(label || "").slice(0, 60), at: Date.now() };
+  state.videoPlaying = false;   // 새 영상은 항상 **정지 상태로** 올라간다
   state.version++;
   state.updatedAt = Date.now();
   return state;
@@ -215,7 +220,16 @@ export function setMusic(patch: { playing?: boolean; volume?: number; cmd?: "nex
 /** 영상 내리기 → 오버레이는 차트로 복귀. 자동 모드면 30분간 자동 재송출을 억제한다. */
 export function clearVideo() {
   state.video = null;
+  state.videoPlaying = false;
   if (state.videoAuto) state.autoSuppressUntil = Date.now() + 30 * 60_000;
+  state.version++;
+  state.updatedAt = Date.now();
+  return state;
+}
+
+/** 영상 재생/정지 (송출과 별개) */
+export function setVideoPlaying(on: boolean) {
+  state.videoPlaying = !!on;
   state.version++;
   state.updatedAt = Date.now();
   return state;

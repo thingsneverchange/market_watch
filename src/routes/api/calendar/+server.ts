@@ -1,8 +1,9 @@
 import type { RequestHandler } from "./$types";
-import { getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
+import { earningsPartial, getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 import { getLiveReactions } from "$lib/server/livequote";
+import { recordMacro, recentMacro } from "$lib/server/macrolog";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
 // 필터가 없으면 우측 패널이 아무도 모르는 마이크로캡(ALEX·AMBZ·BCOW…)으로 채워진다.
@@ -12,7 +13,7 @@ const UNIVERSE = new Set([...WATCHLIST, ...TAPE_TICKERS, ...INDEX_TICKERS, ...MA
 
 // 다음 KEY EVENT = 워치리스트 종목의 가장 가까운 실적 (없으면 시장 전체 최근접)
 export const GET: RequestHandler = async () => {
-  const [earn, feed] = await Promise.all([getEarnings(21, 3), getFeed()]);
+  const [earn, feed] = await Promise.all([getEarnings(21, 8), getFeed()]);
   const now = Date.now();
 
   const future = earn
@@ -189,6 +190,14 @@ export const GET: RequestHandler = async () => {
   // 다가오는 실적을 **시간순으로 병합**해 가장 가까운 2개를 보여 준다.
   const upcomingOnly = future.filter((e) => e.pendingFrom > now).sort((a, b) => a.ts - b.ts);
   const aiEvent = fresh(feed, "key_event");
+  // 볼 때마다 기록해 둔다 — 지난 거시 이벤트를 주는 무료 소스가 없어서 직접 쌓는다
+  if (aiEvent?.payload) recordMacro(aiEvent.payload);
+  const briefItems = fresh(feed, "market_brief")?.payload?.items;
+  if (Array.isArray(briefItems)) {
+    for (const b of briefItems) {
+      if (b?.startET) recordMacro({ title: b.title, whenET: b.startET, importance: 3, note: b.impact });
+    }
+  }
   const aiTs = aiEvent ? Date.parse(aiEvent.payload.whenET) : NaN;
 
   // ★ 성격이 다른 두 종류를 섞지 않는다 — 화면에서 따로 그룹으로 보여 준다.
@@ -231,6 +240,18 @@ export const GET: RequestHandler = async () => {
   //    그래서 TSLA(-14.5%)·GOOGL(-4.2%) 처럼 며칠 전에 발표해 창을 벗어난 종목은
   //    반응 데이터를 갖고 있으면서도 **어디에도 표시되지 않았다**.
   //    → 리캡 전체를 독립 패널로 내보낸다. 시청자가 제일 궁금해하는 "얼마나 빠졌나"다.
+  //  발표 시각으로 정렬하려면 티커별 발표 시각이 필요하다. 리캡 payload 엔 시각이 없어서
+  //  Finnhub 실적 캘린더(과거 8일 창)와 조인한다.
+  //  future 는 48시간 창으로 잘려 있어 사흘 전 발표(TSLA·GOOGL)가 없다 → 원본 earn 에서 뽑는다.
+  const tsOf = new Map<string, number>();
+  for (const e of earn) {
+    const t = earnEpoch(e.date, e.hour);
+    if (!Number.isFinite(t)) continue;
+    const prev = tsOf.get(e.ticker);
+    if (prev == null || t > prev) tsOf.set(e.ticker, t);
+  }
+  const WEEK_MS = 7 * 864e5;
+
   const reactions = [...recapMap.entries()]
     .map(([ticker, r]) => {
       const liveNow = liveReactions.get(ticker);
@@ -241,13 +262,27 @@ export const GET: RequestHandler = async () => {
         pct: liveNow ? liveNow.changePct : (r.reactionPct ?? null),
         live: !!liveNow && !liveNow.stale,
         when: normWhen(r.reactionWhen),
-        tag: r.tag ?? null
+        tag: r.tag ?? null,
+        ts: tsOf.get(ticker) ?? 0
       };
     })
     .filter((x) => x.pct != null)
-    .sort((a, b) => Math.abs(b.pct as number) - Math.abs(a.pct as number));
+    // 1주일 지난 건 뺀다 (시각을 모르는 건 남긴다 — 지어내서 버리지 않는다)
+    .filter((x) => x.ts === 0 || now - x.ts < WEEK_MS)
+    // ★ **최근 발표 순**. 예전엔 낙폭 큰 순이라 어제 발표한 종목이 사흘 전 폭락 밑으로 밀렸다.
+    //   시각을 모르는 항목은 뒤로 보낸다.
+    .sort((a, b) => b.ts - a.ts);
 
-  return new Response(JSON.stringify({ next, nextEvents, macroEvents, earningsEvents, upcoming, reactions }), {
+  // 이미 지난 거시 이벤트 (최근 5개, 1주일 이내)
+  const pastMacro = recentMacro(5).map((m) => ({
+    title: m.title, whenET: m.whenET, imp: m.importance, note: m.note
+  }));
+
+  return new Response(JSON.stringify({
+    next, nextEvents, macroEvents, earningsEvents, upcoming, reactions, pastMacro,
+    // 실적 캘린더 창이 일부 실패하면 목록이 불완전하다 — 화면이 그 사실을 표시할 수 있게
+    earningsPartial
+  }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

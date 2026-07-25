@@ -57,6 +57,8 @@
   //  실적 목록(EARNINGS)은 Finnhub 캘린더 시간창 안의 종목만 담아서, 며칠 전에 발표한
   //  TSLA(-14.5%)·GOOGL(-4.2%) 같은 종목은 반응 데이터가 있어도 화면 어디에도 안 나왔다.
   let reactions: any[] = [];
+  // 이미 지난 거시 이벤트 (최근 5개, 1주일 이내). 무료 경제 캘린더가 없어 직접 쌓는다.
+  let pastMacro: any[] = [];
 
   // ---- 속보 토스트 (단일 소유자) ----
   // 예전에는 전역 변수 1개 + writer 2개(자동/수동) + 추적되지 않는 setTimeout N개 구조라
@@ -121,6 +123,7 @@
   $: anyTv = slots.some((x) => x.mode === "tv");
   // 라이브 영상 (연준 회견 등). null 이면 차트를 그대로 보여준다.
   let video: { id: string; label: string } | null = null;
+  let videoPlaying = false;   // 재생은 /control 이 결정한다 (자동재생 없음)
   // 배경음악 — 조작은 /control 에서, 소리는 여기(오버레이)서 난다. UI 는 그리지 않는다.
   let music = { playing: false, volume: 30, cmdSeq: 0, cmd: "none" as "none" | "next" | "prev" };
 
@@ -160,6 +163,17 @@
   function stars(n: number): string {
     const k = Math.max(1, Math.min(5, Math.round(n || 3)));
     return "\u2605".repeat(k) + "\u2606".repeat(5 - k);
+  }
+
+  /** 지난 거시 이벤트의 경과 ("2d ago") */
+  function macroAgo(iso: string, now: number): string {
+    const t = Date.parse(iso);
+    if (!Number.isFinite(t)) return "";
+    const m = Math.max(0, Math.round((now - t) / 60000));
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
   }
 
   /** 재개장까지 — 길면 일/시간, 짧으면 시간/분 */
@@ -260,6 +274,7 @@
       }
       if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
       if (Array.isArray(c.reactions)) reactions = c.reactions;
+      if (Array.isArray(c.pastMacro)) pastMacro = c.pastMacro;
       calendarStale = false;
     } else {
       calendarStale = firstLoadDone;
@@ -321,6 +336,7 @@
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
       const v = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
       if (v?.id !== video?.id) video = v;
+      videoPlaying = !!j.videoPlaying;
       if (j.music) music = j.music; // 배경음악 상태 (재생/볼륨/곡이동)
     }
 
@@ -519,7 +535,7 @@
            예전엔 헤드라인 패널을 통째로 가려서, 영상을 켜면 뉴스가 사라졌다. -->
       {#if video}
         {#key video.id}
-          <LiveVideo videoId={video.id} label={video.label} />
+          <LiveVideo videoId={video.id} label={video.label} playing={videoPlaying} />
         {/key}
       {/if}
     </section>
@@ -717,8 +733,23 @@
       <div class="panel react">
         <div class="lbl">⚡ MARKET REACTION<span class="src-hint">what moved &amp; why</span></div>
 
+        <div class="rx-grp">MACRO<span class="rx-sub">last 7 days · upcoming</span></div>
+
+        <!-- 이미 지난 거시 이벤트. 지난 일정을 주는 무료 소스가 없어 피드에서 볼 때마다
+             직접 쌓는다 → 처음엔 비어 있고 시간이 지나며 찬다. 그 사실을 그대로 말한다. -->
+        {#each pastMacro as ev}
+          <div class="rx-row past">
+            <div class="rx-l">
+              <div class="rx-tk">{ev.title}</div>
+              <div class="rx-tag">{stars(ev.imp)}</div>
+            </div>
+            <div class="rx-r">
+              <div class="rx-when done">{macroAgo(ev.whenET, nowMs)}</div>
+            </div>
+          </div>
+        {/each}
+
         {#if macroEvents.length}
-          <div class="rx-grp">MACRO</div>
           {#each macroEvents.slice(0, 2) as ev}
             <div class="rx-row">
               <div class="rx-l">
@@ -737,8 +768,11 @@
             </div>
           {/each}
         {/if}
+        {#if pastMacro.length === 0 && macroEvents.length === 0}
+          <div class="rx-note">Collecting macro events — this fills in as they occur.</div>
+        {/if}
 
-        <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings</span></div>
+        <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings · recent first</span></div>
         {#each reactions.slice(0, 4) as r}
           <div class="rx-row">
             <div class="rx-l">
@@ -944,6 +978,9 @@
   .rx-pct.d { color: #ff5c5c; }
   .rx-when { font-size: 9px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
   .rx-when.await { color: #d8a860; }
+  .rx-when.done { color: #5b6472; }
+  .rx-row.past { opacity: 0.72; }
+  .rx-note { font-size: 10px; color: #4b5563; font-weight: 600; padding: 2px 2px 6px; }
 
   .e-when.snap { color: #5b6472; letter-spacing: 0.02em; font-size: 10px; white-space: nowrap; }
   /* 세션 분해 (close / AH / pre) — 반응 %보다 작게, 보조 정보로 */

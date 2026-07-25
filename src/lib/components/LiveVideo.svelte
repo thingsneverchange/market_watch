@@ -9,12 +9,21 @@
   //     방송 중에 원인 모를 검은 화면이 떠 있는 게 최악이다.
   export let videoId = "";
   export let label = "";
+  /** /control 의 재생 상태. **자동재생하지 않고** 이 값에 따른다. */
+  export let playing = false;
 
   let host: HTMLDivElement;
   let player: any = null;
+  let ready = false;
   let state: "loading" | "ok" | "error" = "loading";
   let errMsg = "";
   let token = 0; // 세대 토큰 — 영상이 바뀌면 이전 콜백을 무효화
+
+  // /control 의 재생 토글을 따라간다 (플레이어가 준비된 뒤에만).
+  // 자동재생을 끄고 이 경로로만 재생한다 — 올리자마자 소리가 나가면 방송 사고다.
+  $: if (ready && player) {
+    try { playing ? player.playVideo() : player.pauseVideo(); } catch {}
+  }
 
   // YouTube 에러 코드 → 사람이 읽을 수 있는 원인
   const ERR: Record<number, string> = {
@@ -56,11 +65,18 @@
       height: "100%",
       videoId: id,
       playerVars: {
-        autoplay: 1, mute: 0, rel: 0, modestbranding: 1, playsinline: 1,
+        // ★ 자동재생하지 않는다 — 송출 여부는 /control 에서 사람이 결정한다.
+        //   (영상을 올리자마자 소리가 나가면 방송 사고가 된다)
+        autoplay: 0, mute: 0, rel: 0, modestbranding: 1, playsinline: 1,
         cc_load_policy: 1, cc_lang_pref: "en", iv_load_policy: 3
       },
       events: {
-        onReady: (e: any) => { if (my === token) { try { e.target.playVideo(); } catch {} } },
+        onReady: (e: any) => {
+          if (my !== token) return;
+          ready = true;
+          // 컨트롤에서 이미 "재생"으로 눌러 둔 상태면 그때만 튼다
+          if (playing) { try { e.target.playVideo(); } catch {} }
+        },
         onStateChange: (e: any) => { if (my === token && e.data === 1) state = "ok"; },
         onError: (e: any) => {
           if (my !== token) return;

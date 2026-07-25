@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getState, setCharts, pushBreaking, clearBreaking, setVideo, clearVideo, setMusic, setVideoAuto, autoAllowed, CHART_PRESETS, MAX_SLOTS, type ControlState } from "$lib/server/control";
+import { getState, setCharts, pushBreaking, clearBreaking, setVideo, clearVideo, setMusic, setVideoAuto, setVideoPlaying, autoAllowed, CHART_PRESETS, MAX_SLOTS, type ControlState } from "$lib/server/control";
 import { isRegularHours } from "$lib/market-hours";
 import { getSniperTarget } from "$lib/server/movers";
 import { getVerifiedVideos, pickAutoVideo } from "$lib/server/livevideos";
@@ -126,6 +126,9 @@ export const POST: RequestHandler = async ({ request }) => {
       break;
     case "clearVideo":
       clearVideo();
+      break;
+    case "videoPlay":
+      setVideoPlaying(body.on === true);
       break;
     case "videoAuto":
       setVideoAuto(body.on === true);
