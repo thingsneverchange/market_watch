@@ -259,3 +259,38 @@ export function futuresSession(now: Date = new Date()): FuturesSession {
   if (mins >= CLOSE && mins < OPEN) return { open: false, label: "DAILY BREAK" };
   return { open: true, label: "GLOBEX" };
 }
+
+// ── 거래일 계산 ────────────────────────────────
+//  실적 반응을 실제 시세로 검증할 때 쓴다.
+//  Finnhub 무료 /quote 는 **마지막 세션의 등락만** 준다 (과거 특정일 조회 불가, /candle 은 403).
+//  그래서 "마지막 세션 == 그 종목의 반응 세션" 일 때만 검증에 쓸 수 있다.
+//  이 조건을 안 걸면 이틀 전 발표 종목에 엉뚱한 날의 등락을 붙이게 된다.
+export function isTradingDay(dateStr: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
+  if (HOLIDAYS.has(dateStr)) return false;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return wd !== 0 && wd !== 6;
+}
+
+/** dateStr 다음 거래일 (dateStr 자신은 제외) */
+export function nextTradingDay(dateStr: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const [y, m, d] = dateStr.split("-").map(Number);
+  let t = Date.UTC(y, m - 1, d);
+  for (let i = 0; i < 10; i++) {
+    t += 864e5;
+    const s = new Date(t).toISOString().slice(0, 10);
+    if (isTradingDay(s)) return s;
+  }
+  return dateStr;
+}
+
+/**
+ * 실적 반응이 나타나는 세션의 날짜.
+ *  · bmo(장전 발표) → 그날 정규장
+ *  · amc(장후 발표) → **다음 거래일** 정규장
+ */
+export function reactionSessionDate(dateStr: string, hour: string): string {
+  return hour === "amc" ? nextTradingDay(dateStr) : dateStr;
+}

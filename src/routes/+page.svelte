@@ -837,8 +837,12 @@
               {#if r.tag}<div class="rx-tag">{r.tag}</div>{/if}
             </div>
             <div class="rx-r">
-              <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0}>
-                {#if r.live}<span class="live-pip"></span>{/if}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
+              <!-- ★ 검증 여부를 숨기지 않는다.
+                   리캡(LLM)이 준 숫자가 실제와 정반대였던 사고가 있었다
+                   (INTC: 리캡 "+3.4%" vs 실제 −7.89%). 실시세로 확인된 값만
+                   평상 표기하고, 확인 못 한 값은 "~" 와 흐린 색으로 구분한다. -->
+              <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0} class:unv={!r.verified}>
+                {#if r.live}<span class="live-pip"></span>{/if}{r.verified ? "" : "~"}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
               </div>
               <!-- ★ 등락률만으로는 "시장을 움직인 종목"을 못 가린다.
                    GOOGL −6% 가 TSLA −14.5% 보다 시장에 더 큰 사건이다(시총이 3배).
@@ -850,7 +854,9 @@
                     : Math.abs(r.impactB) + "B"}
                 </div>
               {/if}
-              <div class="rx-when">{r.live ? "LIVE" : "ON REPORT" + (r.when && r.when !== "REG" ? " · " + r.when : "")}</div>
+              <div class="rx-when" class:unv={!r.verified}>
+                {r.live ? "LIVE" : r.verified ? "VERIFIED" : "UNVERIFIED"}
+              </div>
             </div>
           </div>
         {/each}
@@ -1054,6 +1060,9 @@
   /* 시총 변화액 — 등락률과 규모를 분리해서 보여준다 */
   .rx-imp { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .rx-imp.u { color: #2f9c68; } .rx-imp.d { color: #c14a4a; }
+  /* 미검증 — 실시세로 확인 못 한 값. 사실처럼 보이면 안 된다. */
+  .rx-pct.unv { color: #7c8494 !important; }
+  .rx-when.unv { color: #7a6a3a; }
   .rx-row.past { opacity: 0.85; }
   .mx-a { color: #c7cdd6; font-weight: 800; }
   .mx-c { color: #6b7280; font-weight: 600; margin-left: 3px; }

@@ -1,7 +1,8 @@
 import type { RequestHandler } from "./$types";
-import { earningsPartial, getEarnings, getMarketCaps, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
+import { earningsPartial, getEarnings, getMarketCaps, getQuotes, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
+import { etDateStr, reactionSessionDate } from "$lib/market-hours";
 import { getLiveReactions } from "$lib/server/livequote";
 import { recordMacro, recentMacro } from "$lib/server/macrolog";
 
@@ -255,14 +256,55 @@ export const GET: RequestHandler = async () => {
   // 시가총액 — "누가 실제로 시장을 움직였나"를 가리는 데 쓴다 (등락률만으로는 안 된다)
   const caps = await getMarketCaps([...recapMap.keys()]);
 
+  // ★★ 리캡의 반응% 를 **실제 시세로 검증한다**.
+  //   그동안 검증이 전혀 안 되고 있었다: 검증용 livequote 는 Yahoo 를 쓰는데
+  //   Yahoo 는 데이터센터 IP 를 영구 차단해서 항상 빈 값이 돌아왔고,
+  //   그 결과 **LLM 이 지어낸 숫자가 그대로 방송에 나갔다.**
+  //     실측 사고: 리캡이 "INTC beat +3.4%" 라고 했는데
+  //               실제로는 100.23 → 92.32, **−7.89%** 였다.
+  //   Finnhub /quote 는 서버에서 정상 동작하므로 이걸 진실의 원천으로 삼는다.
+  //   리캡에서 계속 쓰는 것은 **정성 정보(beat/miss, 한 줄 사유)뿐**이다.
+  //  ※ Finnhub 무료 /quote 는 **마지막 세션의 등락만** 준다 (과거 특정일 조회 불가).
+  //    그래서 "마지막 세션 == 그 종목의 반응 세션" 일 때만 검증에 쓸 수 있다.
+  //    이 조건을 안 걸면 이틀 전 발표 종목(TSLA)에 엉뚱한 날 등락을 붙이게 된다
+  //    — 틀린 숫자를 다른 틀린 숫자로 바꾸는 셈이다.
+  const recapTickers = [...recapMap.keys()];
+  const verifyQuotes = new Map<string, { pct: number; day: string }>();
+  try {
+    for (const q of await getQuotes(recapTickers)) {
+      if (Number.isFinite(q.changePct) && q.asOf) {
+        verifyQuotes.set(q.ticker, { pct: q.changePct, day: etDateStr(new Date(q.asOf)) });
+      }
+    }
+  } catch { /* 조회 실패 시엔 아래에서 unverified 로 표시된다 */ }
+  //  티커별 '반응이 나타나는 세션' 날짜 (bmo=당일 / amc=다음 거래일)
+  const reactDay = new Map<string, string>();
+  for (const e of earn) {
+    const d = reactionSessionDate(e.date, e.hour);
+    const prev = reactDay.get(e.ticker);
+    if (!prev || d > prev) reactDay.set(e.ticker, d);
+  }
+
   const reactions = [...recapMap.entries()]
     .map(([ticker, r]) => {
       const liveNow = liveReactions.get(ticker);
+      // ★ 시세의 세션 날짜가 그 종목의 **반응 세션과 일치할 때만** 검증에 쓴다
+      const vq = verifyQuotes.get(ticker);
+      const rd = reactDay.get(ticker);
+      const real = vq && rd && vq.day === rd ? vq.pct : undefined;
+      const claimed = r.reactionPct ?? null;
+      const pct = liveNow ? liveNow.changePct : (real ?? claimed);
+      // 검증됐는가 = 실제 시세에서 나온 숫자인가
+      const verified = liveNow != null || real != null;
+      // 리캡 주장과 실제가 크게 어긋나면 남겨둔다 (프롬프트 품질 추적용)
+      const claimGap = real != null && claimed != null && Math.abs(real - claimed) > 2
+        ? Math.round((claimed - real) * 10) / 10 : null;
       return {
         ticker,
         result: r.result ?? null,
-        // 라이브 시세가 있으면 그것을, 없으면 발표 당시 스냅샷을
-        pct: liveNow ? liveNow.changePct : (r.reactionPct ?? null),
+        pct,
+        verified,
+        claimGap,
         live: !!liveNow && !liveNow.stale,
         when: normWhen(r.reactionWhen),
         tag: r.tag ?? null,
@@ -271,8 +313,7 @@ export const GET: RequestHandler = async () => {
         capB: caps.get(ticker) ?? null,
         impactB: (() => {
           const c = caps.get(ticker);
-          const p = liveNow ? liveNow.changePct : r.reactionPct;
-          return c != null && p != null ? Math.round(c * p / 100) : null;
+          return c != null && pct != null ? Math.round(c * pct / 100) : null;
         })()
       };
     })
