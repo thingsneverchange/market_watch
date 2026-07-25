@@ -24,6 +24,8 @@
     driver: { text: "—", sentiment: "neu", source: "", url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
     news: [] as any[]
   };
+  // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
+  let brief: any[] = [];
   // UPCOMING = 다가오는 주요 이벤트 2개 (거시 일정 + 실적, 시간순). 각자 카운트다운.
   type UpEvent = { title: string; time: Date; estimated: boolean; imp: number; origin: string };
   let upcomingEvents: UpEvent[] = [];
@@ -106,6 +108,13 @@
     // 이벤트 카운트다운은 템플릿에서 countdown(ev.time, …, nowMs) 로 매초 재계산된다.
   }
 
+  /** ET 시:분 표기 ("10:00 ET") — TODAY 브리핑의 예정 이벤트용 */
+  function etClock(ms: number): string {
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false
+    }).format(new Date(ms)) + " ET";
+  }
+
   /** 개장/마감 임박 카운트다운 mm:ss */
   function bellText(ms: number): string {
     const t = Math.max(0, Math.floor(ms / 1000));
@@ -170,6 +179,7 @@
     // 성공(응답 파싱됨)하면 stale 해제 + 값 갱신. 실패(null)면 옛 값을 유지하되 STALE 로 표시.
     if (d) {
       if (d.driver) digest = d;
+      brief = Array.isArray(d.brief) ? d.brief : [];
       digestStale = false;
     } else {
       digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
@@ -377,6 +387,33 @@
         </div>
         <div class="driver-txt">{digest.driver.text}</div>
       </div>
+
+      <!-- TODAY: 오늘 시장의 핵심 이벤트·뉴스 + 각각의 영향 한 줄.
+           예정 이벤트는 시작시각으로 카운트다운/LIVE NOW 를 여기(클라이언트)서 계산한다. -->
+      {#if brief.length}
+        <div class="panel today">
+          <div class="lbl">TODAY<span class="src-hint">events · impact</span></div>
+          <div class="td-list">
+            {#each brief as b}
+              {@const st = b.startET ? Date.parse(b.startET) : NaN}
+              {@const durMs = (b.durationMin ?? 90) * 60000}
+              {@const liveNow = Number.isFinite(st) && nowMs >= st && nowMs < st + durMs}
+              <div class="td-item {b.dir}">
+                <div class="td-top">
+                  <span class="td-arrow">{b.dir === "pos" ? "▲" : b.dir === "neg" ? "▾" : "•"}</span>
+                  <span class="td-tit">{b.title}</span>
+                  {#if liveNow}
+                    <span class="td-live">● LIVE</span>
+                  {:else if Number.isFinite(st) && st > nowMs}
+                    <span class="td-when">{b.estimated ? "~" : ""}{etClock(st)}</span>
+                  {/if}
+                </div>
+                <div class="td-impact">{b.impact}</div>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
 
       <div class="panel news">
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
@@ -662,6 +699,20 @@
   /* 라이브 시세임을 알리는 맥동 점 */
   .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
     box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }
+
+  /* TODAY — 오늘의 핵심 이벤트·뉴스 + 영향 한 줄 */
+  .today { flex: 0 0 auto; }
+  .td-list { padding: 0 14px 12px; display: flex; flex-direction: column; gap: 9px; }
+  .td-item { border-left: 3px solid var(--accent, #6b7280); padding: 1px 0 2px 11px; }
+  .td-item.pos { --accent: #39d98a; } .td-item.neg { --accent: #ff5c5c; } .td-item.neu { --accent: #6b7280; }
+  .td-top { display: flex; align-items: baseline; gap: 8px; }
+  .td-arrow { font-size: 11px; color: var(--accent); flex-shrink: 0; }
+  .td-tit { font-size: 18px; font-weight: 700; letter-spacing: -0.01em; min-width: 0; }
+  .td-when { margin-left: auto; font-size: 13px; font-weight: 800; color: #d8a860;
+    font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
+  .td-live { margin-left: auto; font-size: 12px; font-weight: 900; color: #ff5c5c;
+    letter-spacing: 0.06em; animation: pulse 1.2s infinite; white-space: nowrap; flex-shrink: 0; }
+  .td-impact { font-size: 13.5px; color: #9aa3ad; font-weight: 600; line-height: 1.35; margin-top: 2px; }
 
   /* news — 트레이더 스캔용: 주체 먼저 · 한 줄 · 오래된 건 흐리게 */
   .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }

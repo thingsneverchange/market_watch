@@ -44,6 +44,18 @@ export type EarningsRecap = {
   }[];
 };
 
+/** 오늘 시장의 핵심 이벤트·뉴스 2~4개 + 각각의 영향 한 줄. LIVE 여부는 화면이 시각으로 계산. */
+export type MarketBrief = {
+  items: {
+    title: string;
+    impact: string;
+    dir: "pos" | "neg" | "neu";
+    startET: string | null;     // ISO. 예정 이벤트만. null = 시각 없는 스토리
+    durationMin: number | null; // null → 화면이 90분 가정
+    estimated: boolean;
+  }[];
+};
+
 export type Feed = {
   serverNow: number;
   items: {
@@ -51,6 +63,7 @@ export type Feed = {
     key_event?: FeedItem<KeyEvent>;
     earnings_note?: FeedItem<EarningsNote>;
     earnings_recap?: FeedItem<EarningsRecap>;
+    market_brief?: FeedItem<MarketBrief>;
   };
 };
 

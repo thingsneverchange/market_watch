@@ -98,11 +98,17 @@ export const GET: RequestHandler = async () => {
   //   그래서 '적게·크게·짧게'. 4건만, 각 행을 크게 뽑아 축소해도 읽히게 한다.
   const pool = ranked.filter((n) => !top || n.id !== top.id);
   const signal = pool.filter((n) => n.matched || n.level >= 3);
+
+  // ── TODAY 브리핑 (오늘의 핵심 이벤트+영향, Claude 생성) ──
+  // 있으면 좌측 컬럼 공간을 나눠 쓰므로 헤드라인을 3건으로 줄인다. LIVE 판정은 클라이언트가 시각으로.
+  const briefItem = fresh(feed, "market_brief");
+  const brief = briefItem?.payload.items ?? null;
+
   const list = (signal.length >= 4 ? signal : pool)
-    .slice(0, 4)
+    .slice(0, brief && brief.length ? 3 : 4)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
-  return new Response(JSON.stringify({ driver, news: list, serverNow: Math.floor(nowSec) }), {
+  return new Response(JSON.stringify({ driver, news: list, brief, serverNow: Math.floor(nowSec) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

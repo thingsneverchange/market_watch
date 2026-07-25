@@ -58,8 +58,15 @@ export const GET: RequestHandler = async () => {
   // 라이브 확장시간 반응(Yahoo, 20초 캐시)을 가져올 대상 =
   //   Claude 리캡 종목 + **최근 발표된(발표시각 지난) 모든 대형주**.
   //   ★ 예전엔 리캡 목록만 대상이라, INTEL 처럼 방금 실적 낸 종목이 반응 %도 없이 묻혔다.
+  // ★ 반응 윈도우: 발표 후 24시간(발표 직후 시간외 + 다음 정규장)만 "실적 반응"이다.
+  //   그 이후의 등락은 그냥 그날 시세지 실적 반응이 아니다 — 이틀 지난 GOOGL 에
+  //   당일 시간외 %가 '실적 반응'인 척 계속 붙어 있던 문제(데이터 정직성)를 여기서 끊는다.
+  const REACTION_WINDOW_MS = 24 * 3600e3;
+  const inReactionWindow = (e: { pendingFrom: number }) =>
+    e.pendingFrom <= now && now - e.pendingFrom < REACTION_WINDOW_MS;
+
   const reportedTickers = future
-    .filter((e) => earnPendingFrom(e.date, e.hour) <= now)
+    .filter((e) => inReactionWindow(e))
     .sort((a, b) => b.ts - a.ts)
     .map((e) => e.ticker);
   const reactionTargets = [...new Set([...recapMap.keys(), ...reportedTickers])].slice(0, 12);
@@ -86,7 +93,8 @@ export const GET: RequestHandler = async () => {
         ? ((e.epsActual - e.epsEst) / Math.abs(e.epsEst)) * 100
         : null;
     const r = recapMap.get(e.ticker);
-    const live = liveReactions.get(e.ticker);
+    // 반응 윈도우 밖이면 라이브 %를 아예 붙이지 않는다 → 일괄 REPORTED + EPS 로 표시 (규칙 단일화).
+    const live = inReactionWindow(e) ? liveReactions.get(e.ticker) : undefined;
     // 라이브지만 마지막 체결이 오래됐으면(주말·야간·거래정지) "라이브"가 아니다 → pip 을 끈다.
     const liveFresh = !!live && !live.stale;
     // 리캡의 result 를 Finnhub epsActual 보다 우선한다 (무료 소스는 발표 직후 null 이라 늦다)

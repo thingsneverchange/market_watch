@@ -14,7 +14,10 @@ export const KINDS = {
   key_event: { maxAgeMs: 18 * 3600_000, label: "NEXT KEY EVENT" },
   // 최근 발표된 종목의 결과(예상 상회/하회) + 시장반응(주가 %). 발표 직후엔 색인이 없어
   // 조금 시차가 있지만, 발표 뒤 몇 시간 유효하면 되므로 8시간.
-  earnings_recap: { maxAgeMs: 8 * 3600_000, label: "EARNINGS RECAP" }
+  earnings_recap: { maxAgeMs: 8 * 3600_000, label: "EARNINGS RECAP" },
+  // 오늘 시장의 핵심 이벤트·뉴스 2~4개 + 각각의 영향 한 줄. 연설/증언/실적콜 같은
+  // 예정 이벤트는 시작시각을 실어 화면이 카운트다운·LIVE NOW 뱃지를 계산한다.
+  market_brief: { maxAgeMs: 4 * 3600_000, label: "TODAY BRIEF" }
 };
 
 let db;
