@@ -413,6 +413,41 @@ const TOPIC_RULES: [RegExp, string][] = [
   [/\b(acquir\w*|merger|takeover|buyout|\bm&a\b)\b/i, "M&A"],
   [/\b(earnings|revenue|guidance|profit|results)\b/i, "EARNINGS"]
 ];
+// ── 시가총액 ────────────────────────────────────────
+//  왜 필요한가: 등락률만으로는 "시장을 움직인 종목"을 못 가린다.
+//    GOOGL −6.0%  → 시총 $3,893B → **−$234B**
+//    TSLA −14.5%  → 시총 $1,176B → −$170B
+//    MMM  +9.8%   → 시총   $89B  → +$9B   (등락률 2위인데 영향은 사실상 없다)
+//  즉 등락률 순으로 줄 세우면 작은 회사의 큰 움직임이 대형주의 지수 영향력을 가린다.
+//  ※ 거래량은 무료 티어로 못 얻는다(/quote 에 volume 없음, /stock/candle 은 403).
+//    그래서 "얼마나 거래됐나"가 아니라 "시가총액이 얼마나 증발/증가했나"로 크기를 잰다.
+//    지수 기여도의 정확한 대용은 아니지만, 방향과 규모는 정직하게 전달한다.
+const capCache = new Map<string, { at: number; capB: number | null }>();
+const CAP_TTL = 24 * 3600_000;   // 시총은 하루 단위로 충분하다 (요청 절약)
+
+/** 티커 → 시가총액(십억 달러). 못 얻으면 null. */
+export async function getMarketCaps(tickers: string[]): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const now = Date.now();
+  const todo: string[] = [];
+  for (const t of tickers) {
+    const hit = capCache.get(t);
+    if (hit && now - hit.at < CAP_TTL) out.set(t, hit.capB);
+    else todo.push(t);
+  }
+  // 한 번에 6개까지만 (분당 60 제한 안에서 여유 있게)
+  await Promise.all(todo.slice(0, 6).map(async (t) => {
+    const j = await fhFetch(`/stock/profile2?symbol=${encodeURIComponent(t)}`, CAP_TTL);
+    // Finnhub 의 marketCapitalization 단위는 **백만 달러**다
+    const m = Number(j?.marketCapitalization);
+    const capB = Number.isFinite(m) && m > 0 ? Math.round(m / 1000) : null;
+    capCache.set(t, { at: now, capB });
+    out.set(t, capB);
+  }));
+  for (const t of tickers) if (!out.has(t)) out.set(t, null);
+  return out;
+}
+
 export function newsTopic(headline: string, ticker?: string): string {
   if (ticker) return ticker.toUpperCase();
   for (const [re, tag] of TOPIC_RULES) if (re.test(headline || "")) return tag;

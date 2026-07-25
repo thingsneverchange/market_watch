@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { earningsPartial, getEarnings, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
+import { earningsPartial, getEarnings, getMarketCaps, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 import { getLiveReactions } from "$lib/server/livequote";
@@ -252,6 +252,9 @@ export const GET: RequestHandler = async () => {
   }
   const WEEK_MS = 7 * 864e5;
 
+  // 시가총액 — "누가 실제로 시장을 움직였나"를 가리는 데 쓴다 (등락률만으로는 안 된다)
+  const caps = await getMarketCaps([...recapMap.keys()]);
+
   const reactions = [...recapMap.entries()]
     .map(([ticker, r]) => {
       const liveNow = liveReactions.get(ticker);
@@ -263,7 +266,14 @@ export const GET: RequestHandler = async () => {
         live: !!liveNow && !liveNow.stale,
         when: normWhen(r.reactionWhen),
         tag: r.tag ?? null,
-        ts: tsOf.get(ticker) ?? 0
+        ts: tsOf.get(ticker) ?? 0,
+        // 시총(십억$)과 그 변화액 — 등락률이 같아도 규모가 다르면 시장 영향이 완전히 다르다
+        capB: caps.get(ticker) ?? null,
+        impactB: (() => {
+          const c = caps.get(ticker);
+          const p = liveNow ? liveNow.changePct : r.reactionPct;
+          return c != null && p != null ? Math.round(c * p / 100) : null;
+        })()
       };
     })
     .filter((x) => x.pct != null)

@@ -88,6 +88,11 @@
   let firstLoadDone = false;
   let freshness: { cls: string; text: string } = { cls: "", text: "…" };
 
+  // 현물 세션 → 화면 표기. 장 밖에 선물을 띄울 때 "이 숫자가 어느 구간인지" 알려준다.
+  const SESSION_LABEL: Record<string, string> = {
+    PRE: "PRE-MARKET", OPEN: "REGULAR", AFTER: "AFTER-HOURS",
+    CLOSED: "OVERNIGHT", WEEKEND: "WEEKEND", HOLIDAY: "HOLIDAY", UNKNOWN: "—"
+  };
   const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
   // 화면 표기용 한국어 매핑 (템플릿의 {@const} 는 타입 주석을 못 쓰므로 여기 둔다)
   const CONF_LABEL: Record<string, string> = { high: "HIGH", medium: "MED", low: "LOW" };
@@ -165,6 +170,24 @@
     const k = Math.max(1, Math.min(5, Math.round(n || 3)));
     return `${k}\u2605`;
   }
+
+  /**
+   * TOP STORY 가 시장과 어떻게 연결되는지 한 줄.
+   *  · AI 판단이면 Claude 가 쓴 why 를 그대로 쓴다 (인과를 실제로 따진 문장이다).
+   *  · 규칙 기반이면 **인과를 지어내지 않는다.** 대신 확실히 아는 것만 말한다:
+   *    무엇에 관한 기사이고(topic), 어느 방향인지(sentiment), 지금 지수는 어떤지.
+   *    "왜"를 모르면서 아는 척하는 것보다 낫다.
+   */
+  $: marketLink = (() => {
+    const d = digest.driver;
+    if (d.noData) return "";
+    if (d.origin === "ai" && d.why) return d.why;
+    // 규칙 기반 — 관측 가능한 사실만 조합한다
+    const dir = d.sentiment === "pos" ? "risk-on" : d.sentiment === "neg" ? "risk-off" : "mixed";
+    const lead = boards.top[0];
+    const idx = lead ? `${lead.k} ${lead.pct >= 0 ? "+" : "−"}${Math.abs(lead.pct).toFixed(2)}%` : "";
+    return `Headline reads ${dir}${idx ? ` · ${idx} right now` : ""}. No AI causal read this cycle.`;
+  })();
 
   /** 지난 거시 이벤트의 경과 ("2d ago") */
   function macroAgo(iso: string, now: number): string {
@@ -442,6 +465,13 @@
     </div>
     <!-- 고정 슬롯 렌더: 티커가 죽어도 자리가 남고 "—" 로 결측을 드러낸다 -->
     <div class="top-strip">
+      <!-- ★ 지금 이 숫자가 **어느 세션의 값인지** 명시한다.
+           장 밖엔 선물(24시간)을 띄우므로 "프리마켓"이라고 부르면 거짓이 된다 →
+           현물 세션과 지금 보고 있는 상품을 나눠서 말한다. -->
+      <div class="sesh" class:live={isMarketOpen}>
+        <span class="sesh-k">{SESSION_LABEL[marketSession] ?? marketSession}</span>
+        <span class="sesh-s">{showingFutures ? "futures" : "cash"}</span>
+      </div>
       {#each headerLabels as k}
         {@const t = boards.top.find((x) => x.k === k)}
         <div class="idx">
@@ -480,6 +510,13 @@
           {#if digestStale}<span class="stale-chip" title="News feed not responding">STALE</span>{/if}
         </div>
         <div class="driver-txt">{digest.driver.text}</div>
+        <!-- 언제 나온 뉴스인지 — 24시간 방송이라 "몇 시간 전 이야기인지"가 핵심 맥락이다 -->
+        {#if digest.driver.epoch}
+          <div class="driver-meta">
+            <span class="dm-age">{ago(digest.driver.epoch, nowMs)} ago</span>
+            {#if digest.driver.source}<span class="dm-src">· {digest.driver.source}</span>{/if}
+          </div>
+        {/if}
       </div>
 
       <!-- TODAY: 오늘 시장의 핵심 이벤트·뉴스 + 각각의 영향 한 줄.
@@ -532,12 +569,18 @@
         </div>
       </div>
 
-      <!-- 라이브 영상은 **헤드라인 아래 빈 공간**을 쓴다.
-           예전엔 헤드라인 패널을 통째로 가려서, 영상을 켜면 뉴스가 사라졌다. -->
+      <!-- 헤드라인 아래 빈 공간:
+           · 평소  → TOP STORY 가 **시장과 어떻게 연결되는지** 한 줄
+           · 영상 송출 중 → 영상이 그 자리를 대신한다 (둘이 겹치지 않는다) -->
       {#if video}
         {#key video.id}
           <LiveVideo videoId={video.id} label={video.label} playing={videoPlaying} />
         {/key}
+      {:else if marketLink}
+        <div class="panel mlink">
+          <div class="lbl">WHY IT MATTERS<span class="src-hint">{digest.driver.origin === "ai" ? "AI read" : "derived"}</span></div>
+          <div class="ml-txt">{marketLink}</div>
+        </div>
       {/if}
     </section>
 
@@ -797,6 +840,16 @@
               <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0}>
                 {#if r.live}<span class="live-pip"></span>{/if}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
               </div>
+              <!-- ★ 등락률만으로는 "시장을 움직인 종목"을 못 가린다.
+                   GOOGL −6% 가 TSLA −14.5% 보다 시장에 더 큰 사건이다(시총이 3배).
+                   시총 변화액을 같이 띄워 규모를 분리한다. -->
+              {#if r.impactB != null}
+                <div class="rx-imp" class:u={r.impactB >= 0} class:d={r.impactB < 0}>
+                  {r.impactB >= 0 ? "+" : "−"}${Math.abs(r.impactB) >= 1000
+                    ? (Math.abs(r.impactB) / 1000).toFixed(1) + "T"
+                    : Math.abs(r.impactB) + "B"}
+                </div>
+              {/if}
               <div class="rx-when">{r.live ? "LIVE" : "ON REPORT" + (r.when && r.when !== "REG" ? " · " + r.when : "")}</div>
             </div>
           </div>
@@ -892,6 +945,12 @@
   .bell.soon { animation: pulse 1.4s infinite; }
 
   /* 7슬롯(지수3 + 크로스에셋4)으로 늘어 gap 을 조금 좁힌다. 좁은 폭에선 가로 스크롤 없이 줄인다. */
+  /* 세션 배지 — 헤더 시세가 어느 구간의 값인지 */
+  .sesh { display: flex; flex-direction: column; align-items: flex-start; line-height: 1.15;
+    padding: 3px 11px 3px 0; margin-right: 4px; border-right: 1px solid #23272f; flex-shrink: 0; }
+  .sesh-k { font-size: 12px; font-weight: 800; letter-spacing: 0.06em; color: #8a919b; white-space: nowrap; }
+  .sesh.live .sesh-k { color: #39d98a; }
+  .sesh-s { font-size: 9px; font-weight: 700; letter-spacing: 0.08em; color: #5b6472; text-transform: uppercase; }
   .top-strip { display: flex; gap: 20px; flex-wrap: nowrap; }
   .idx { display: flex; gap: 7px; font-size: 15px; font-weight: 600; align-items: baseline; white-space: nowrap; }
   .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
@@ -935,6 +994,10 @@
     min-height: 132px; display: flex; flex-direction: column;
   }
   .driver.nodata { border-left-color: #ff5c5c; }
+  .driver-meta { margin-top: 6px; display: flex; gap: 6px; align-items: baseline;
+    font-size: 12px; font-weight: 700; }
+  .dm-age { color: #8a919b; }
+  .dm-src { color: #5b6472; font-weight: 600; }
   .driver-txt { padding: 4px 18px 20px; font-size: 27px; font-weight: 800; line-height: 1.2; }
   .drv-src { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.04em;
     background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
@@ -988,6 +1051,9 @@
   .rx-when { font-size: 11px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
   .rx-when.await { color: #d8a860; }
   .rx-when.done { color: #5b6472; }
+  /* 시총 변화액 — 등락률과 규모를 분리해서 보여준다 */
+  .rx-imp { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rx-imp.u { color: #2f9c68; } .rx-imp.d { color: #c14a4a; }
   .rx-row.past { opacity: 0.85; }
   .mx-a { color: #c7cdd6; font-weight: 800; }
   .mx-c { color: #6b7280; font-weight: 600; margin-left: 3px; }
@@ -1072,6 +1138,10 @@
   .chart-grid[data-n="1"] .chart-body { min-height: 320px; }
   /* 영상은 헤드라인 아래 남는 공간에 들어간다. 헤드라인은 내용만큼만 차지한다. */
   .col.left > .news { flex: 0 0 auto; }
+  /* TOP STORY ↔ 시장 연결 한 줄 (영상 없을 때만) */
+  .mlink { flex: 0 0 auto; }
+  .ml-txt { padding: 0 16px 14px; font-size: 15px; line-height: 1.45; color: #c7cdd6;
+    font-weight: 600; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
