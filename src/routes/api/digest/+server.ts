@@ -86,7 +86,7 @@ export const GET: RequestHandler = async () => {
     };
   } else {
     driver = {
-      text: "뉴스 피드 없음", sentiment: "neu", source: "", url: "", why: "",
+      text: "NO NEWS FEED", sentiment: "neu", source: "", url: "", why: "",
       confidence: "", epoch: 0, origin: "none" as const, supersededBy: null, aiHeld: false, noData: true
     };
   }

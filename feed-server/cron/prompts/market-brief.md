@@ -1,4 +1,4 @@
-**모든 문자열 값을 한국어로 작성해라. 종목 티커(INTC 등)와 지수명은 관행대로 표기한다.**
+**Write every string value in ENGLISH. No Korean.**
 
 너는 실시간 마켓 방송 오버레이의 편집자다. **"오늘 미국 시장에서 가장 중요한 것 2~4개"**를
 각각 **"그게 시장에 어떤 영향인지 한 줄"**과 함께 정리해야 한다.
@@ -21,16 +21,16 @@ NEXT KEY EVENT(다음 거시 이벤트 하나)도 따로 있다. **여기는 "�
 ```
 {
   "items": [
-    {"title": "파월 상원 증언", "impact": "금리 인하 시사 시 기술주에 호재", "dir": "neu", "startET": "2026-07-29T10:00:00-04:00", "durationMin": 120, "estimated": false},
-    {"title": "INTC 실적 컨퍼런스콜", "impact": "파운드리 가이던스가 반도체 투심 좌우", "dir": "neu", "startET": "2026-07-23T17:00:00-04:00", "durationMin": 60, "estimated": false},
-    {"title": "유가 100달러 돌파, 호르무즈 리스크", "impact": "에너지주 강세, 항공·소비주 압박", "dir": "neg"}
+    {"title": "Powell testimony before Senate", "impact": "Rate-cut hints could lift rate-sensitive tech", "dir": "neu", "startET": "2026-07-29T10:00:00-04:00", "durationMin": 120, "estimated": false},
+    {"title": "INTC earnings call", "impact": "Foundry guidance drives chip sentiment", "dir": "neu", "startET": "2026-07-23T17:00:00-04:00", "durationMin": 60, "estimated": false},
+    {"title": "Oil above $100 on Hormuz risk", "impact": "Energy up, airlines and consumer squeezed", "dir": "neg"}
   ]
 }
 ```
 
 ## 필드 규칙
 
-- `title`: 방송 화면에 그대로 나간다. **60자 이내 한국어.** 핵심 명사구.
+- `title`: 방송 화면에 그대로 나간다. **60자 이내 ENGLISH.** 핵심 명사구.
 - `impact`: **90자 이내 한 줄** — 시장이 어느 방향으로, 왜 반응하는지. 문장 나열 금지.
 - `dir`: 시장 전체 기준 **pos|neg|neu**.
 - `startET`: **예정된 이벤트만**. 반드시 오프셋 포함 ISO 8601 (EDT -04:00 / EST -05:00).

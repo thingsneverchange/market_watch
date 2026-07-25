@@ -34,13 +34,11 @@ export const GET: RequestHandler = async () => {
     return a.ts - b.ts;
   });
 
-  const hourLabel = (h: string) => h === "bmo" ? "장전" : h === "amc" ? "장마감후" : "장중";
-  // 한국어 방송 표기: "7/24" (미 동부 날짜 기준)
+  const hourLabel = (h: string) => h === "bmo" ? "PRE-MKT" : h === "amc" ? "AFTER-MKT" : "INTRADAY";
   const dateLabel = (ts: number) =>
-    new Intl.DateTimeFormat("ko-KR", { timeZone: "America/New_York", month: "numeric", day: "numeric" })
-      .format(new Date(ts)).replace(/\.\s*$/, "").replace(/\.\s*/g, "/");
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", month: "short", day: "numeric" }).format(new Date(ts));
   const timeLabel = (ts: number) =>
-    new Intl.DateTimeFormat("ko-KR", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(ts));
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true }).format(new Date(ts));
 
   // ※ 예전 코드는 `new Date(ts).toDateString()` 을 썼는데, 이건 **서버 로컬 타임존**으로 날짜를 자른다.
   //   한국(KST = ET+13/14)에서 돌리면 amc(16:30 ET) 실적이 KST 로는 다음날 새벽이라

@@ -3,16 +3,17 @@
   import BreakingToast from "$lib/components/BreakingToast.svelte";
   import TVChart from "$lib/components/TVChart.svelte";
   import MusicPlayer from "$lib/components/MusicPlayer.svelte";
-  import { marketState, marketBell, type MarketBell } from "$lib/market-hours";
+  import { marketState, marketBell, marketStatus, type MarketBell, type MarketStatus } from "$lib/market-hours";
   import { onMount } from "svelte";
 
   // ---- 상태 ----
   let etNow = "";
-  let kstNow = "";
-  let marketMsg = "불러오는 중";
+  let marketMsg = "LOADING";
   let isMarketOpen = false;
   let marketSession = "CLOSED";
   let bell: MarketBell = { kind: null, ms: 0 }; // 개장/마감 임박 카운트다운
+  // 시장 상태 — 열림/닫힘 + **왜 닫혔는지** + 언제 열리는지 (직관적으로 한 번에)
+  let mkt: MarketStatus = { open: false, session: "CLOSED", label: "LOADING", reason: "", msToOpen: null };
 
   // 헤더 상단 스트립은 응답 배열이 아니라 **고정 라벨 목록** 기준으로 그린다.
   // 예전에는 티커가 죽으면 배열에서 조용히 빠져 자리째 사라지고 나머지가 왼쪽으로 밀렸다.
@@ -69,10 +70,10 @@
   let firstLoadDone = false;
   let freshness: { cls: string; text: string } = { cls: "", text: "…" };
 
-  const IV_LABEL: Record<string, string> = { "1": "1분", "5": "5분", "15": "15분", "60": "1시간", "D": "일봉" };
+  const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
   // 화면 표기용 한국어 매핑 (템플릿의 {@const} 는 타입 주석을 못 쓰므로 여기 둔다)
-  const CONF_LABEL: Record<string, string> = { high: "확실", medium: "보통", low: "불확실" };
-  const WHEN_LABEL: Record<string, string> = { PRE: "장전", AH: "시간외", LIVE: "실시간" };
+  const CONF_LABEL: Record<string, string> = { high: "HIGH", medium: "MED", low: "LOW" };
+  const WHEN_LABEL: Record<string, string> = { PRE: "PRE", AH: "AH", LIVE: "LIVE" };
 
   // 차트 배지 세션 문구 — marketState() 는 순수 NYSE 시계라서 크로스에셋엔 거짓말을 한다.
   //   BTC 차트(BINANCE:BTCUSDT)는 주말에도 실시간인데 "WEEKEND" 라고 찍혔다.
@@ -81,8 +82,8 @@
   //   · 그 외(지수 추종 ETF: QQQ/SPY/DIA/SOXX/IWM/KORU) → 기존 NYSE 세션 그대로
   function chartSession(sym: string): { label: string; live: boolean } | null {
     const s = (sym || "").toUpperCase();
-    if (/BTC|ETH|CRYPTO|BINANCE|COINBASE|BITSTAMP|USDT|DOGE|:SOL|:XRP/.test(s)) return { label: "24시간", live: true };
-    if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "현물", live: false };
+    if (/BTC|ETH|CRYPTO|BINANCE|COINBASE|BITSTAMP|USDT|DOGE|:SOL|:XRP/.test(s)) return { label: "24/7", live: true };
+    if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "SPOT", live: false };
     return null; // 지수 ETF → 기존 NYSE 세션 사용
   }
   $: chartSess = chartSession(chartSymbol);
@@ -94,19 +95,16 @@
   let ctlVersion = 0;
   // 라이브 영상 (연준 회견 등). null 이면 차트를 그대로 보여준다.
   let video: { id: string; label: string } | null = null;
+  // 배경음악 — 조작은 /control 에서, 소리는 여기(오버레이)서 난다. UI 는 그리지 않는다.
+  let music = { playing: false, volume: 30, cmdSeq: 0, cmd: "none" as "none" | "next" | "prev" };
 
   let scale = 1;
 
   function updateTimers() {
     const now = new Date();
     nowMs = now.getTime(); // 뉴스 나이 재계산용 (정지된 헤드라인도 매초 늙는다)
-    // 현지(미 동부) — 24시간제. 한국 시청자에게 오전/오후 혼동이 없다.
-    etNow = new Intl.DateTimeFormat("ko-KR", {
-      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
-    }).format(now);
-    // 한국시간 — 미국장은 한국 밤에 열리므로 "지금 한국은 몇 시"가 실사용에 중요하다
-    kstNow = new Intl.DateTimeFormat("ko-KR", {
-      timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false
+    etNow = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
     }).format(now);
 
     // 휴장일·조기폐장까지 아는 공용 시장시계. 예전에는 이 로직이 서버/클라에 복붙돼 있었고
@@ -116,6 +114,7 @@
     marketMsg = s.msg;
     marketSession = s.session;
     bell = marketBell(now); // 개장/마감 임박 (실측 시장시계 파생 — 하드코딩·DST·조기폐장 모두 반영)
+    mkt = marketStatus(now);
 
     freshness = computeFreshness(s.open);
     // 이벤트 카운트다운은 템플릿에서 countdown(ev.time, …, nowMs) 로 매초 재계산된다.
@@ -128,6 +127,21 @@
     }).format(new Date(ms)) + " ET";
   }
 
+  /** 중요도 1~5 → 별. 태그(텍스트)보다 한눈에 들어온다. */
+  function stars(n: number): string {
+    const k = Math.max(1, Math.min(5, Math.round(n || 3)));
+    return "\u2605".repeat(k) + "\u2606".repeat(5 - k);
+  }
+
+  /** 재개장까지 — 길면 일/시간, 짧으면 시간/분 */
+  function reopenText(ms: number): string {
+    const m = Math.max(0, Math.round(ms / 60000));
+    const d = Math.floor(m / 1440), h = Math.floor((m % 1440) / 60), mm = m % 60;
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${mm}m`;
+    return `${mm}m`;
+  }
+
   /** 개장/마감 임박 카운트다운 mm:ss */
   function bellText(ms: number): string {
     const t = Math.max(0, Math.floor(ms / 1000));
@@ -137,13 +151,13 @@
   /** 이벤트까지 남은 시간. 추정 시각이면 분 단위 정밀 카운트다운을 주장하지 않는다. */
   function countdown(t: Date, estimated: boolean, now: number): string {
     const diff = t.getTime() - now;
-    if (diff <= -60000) return "종료";
-    if (diff <= 0) return "지금";
+    if (diff <= -60000) return "PASSED";
+    if (diff <= 0) return "NOW";
     const d = Math.floor(diff / 864e5);
     const h = Math.floor((diff % 864e5) / 36e5);
     const m = Math.floor((diff % 36e5) / 6e4);
-    if (estimated) return d > 0 ? `약 ${d}일 후` : `약 ${h}시간 후`;
-    return d > 0 ? `${d}일 ${h}시간 후` : `${h}시간 ${m}분 후`;
+    if (estimated) return d > 0 ? `~${d}d` : `~${h}h`;
+    return d > 0 ? `${d}d ${h}h` : `${h}h ${m}m`;
   }
 
   /**
@@ -152,7 +166,7 @@
    */
   function computeFreshness(open: boolean): { cls: string; text: string } {
     if (!firstLoadDone) return { cls: "", text: "…" };
-    if (dataAsOf == null) return { cls: "dead", text: "데이터 없음" };
+    if (dataAsOf == null) return { cls: "dead", text: "NO DATA" };
 
     const ageMin = (Date.now() - dataAsOf) / 60000;
     const t = new Intl.DateTimeFormat("en-US", {
@@ -161,12 +175,12 @@
     }).format(new Date(dataAsOf));
 
     if (open) {
-      if (ageMin > 15) return { cls: "dead", text: `지연 ${t} ET` };
-      if (ageMin > 2) return { cls: "stale", text: `${t} ET (지연)` };
+      if (ageMin > 15) return { cls: "dead", text: `STALE ${t} ET` };
+      if (ageMin > 2) return { cls: "stale", text: `LAG ${t} ET` };
       return { cls: "", text: `${t} ET` };
     }
     // 장 밖에서는 전일 종가인 게 정상이다 — 경보가 아니라 사실을 표기한다.
-    return { cls: "prev", text: `전일종가 ${t} ET` };
+    return { cls: "prev", text: `PREV CLOSE ${t} ET` };
   }
 
   async function jget(u: string) {
@@ -273,6 +287,7 @@
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
       const v = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
       if (v?.id !== video?.id) video = v;
+      if (j.music) music = j.music; // 배경음악 상태 (재생/볼륨/곡이동)
     }
 
     if (!manualBooted) {
@@ -313,10 +328,10 @@
   function ago(epochSec: number, now = Date.now()): string {
     if (!epochSec) return "";
     const m = (now / 1000 - epochSec) / 60;
-    if (m < 1) return "방금";
-    if (m < 60) return `${Math.round(m)}분 전`;
-    if (m < 60 * 48) return `${Math.round(m / 60)}시간 전`;
-    return `${Math.round(m / 1440)}일 전`;
+    if (m < 1) return "just now";
+    if (m < 60) return `${Math.round(m)}m`;
+    if (m < 60 * 48) return `${Math.round(m / 60)}h`;
+    return `${Math.round(m / 1440)}d`;
   }
 
   onMount(() => {
@@ -358,13 +373,19 @@
   <header class="hd">
     <div class="hd-l">
       <div class="logo">MARKET<span>WATCH</span></div>
-      <div class="badge" class:active={isMarketOpen}>
-        <span class="dot"></span>{marketMsg}
+      <!-- 상태 + 닫힌 이유 + 다시 열리는 시각. "왜 꺼졌는지"를 화면이 직접 말한다. -->
+      <div class="badge" class:active={mkt.open} class:closed={!mkt.open}>
+        <span class="dot"></span>
+        <span class="b-main">{mkt.label}</span>
+        {#if mkt.reason}<span class="b-why">{mkt.reason}</span>{/if}
+        {#if !mkt.open && mkt.msToOpen != null}
+          <span class="b-next">opens in {reopenText(mkt.msToOpen)}</span>
+        {/if}
       </div>
       <!-- 개장/마감 임박 카운트다운 (마지막 1시간에만, 마지막 5분엔 맥동) -->
       {#if bell.kind}
         <div class="bell {bell.kind}" class:soon={bell.ms <= 300000}>
-          <span class="bell-dot"></span>{bell.kind === "open" ? "개장까지" : "마감까지"} {bellText(bell.ms)}
+          <span class="bell-dot"></span>{bell.kind === "open" ? "OPENS IN" : "CLOSES IN"} {bellText(bell.ms)}
         </div>
       {/if}
     </div>
@@ -385,14 +406,10 @@
       {/each}
     </div>
     <div class="hd-r">
-      <!-- 한국시간 + 현지(ET). 미국장은 한국 밤에 열리므로 둘 다 필요하다. -->
-      <div class="clocks">
-        <div class="clock kst">{kstNow} <span class="tz">한국</span></div>
-        <div class="clock">{etNow} <span class="tz">현지 ET</span></div>
-      </div>
+      <div class="clock">{etNow} <span class="tz">ET</span></div>
       <!-- 항상 렌더한다. 예전에는 첫 요청이 실패하면 배지가 DOM 에 아예 생기지 않아
            오프라인 콜드스타트가 "조용한 장"처럼 보였다. -->
-      <div class="upd {freshness.cls}" title="시세 기준 시각 (소스가 준 마지막 체결)">
+      <div class="upd {freshness.cls}" title="Quote timestamp (last trade from source)">
         <span class="upd-dot"></span>{freshness.text}
       </div>
     </div>
@@ -405,11 +422,11 @@
       <!-- TOP STORY: 헤드라인 + confidence 뱃지(HIGH 등)만. 출처·시각·설명은 싣지 않는다. -->
       <div class="driver {sent(digest.driver.sentiment)}" class:nodata={digest.driver.noData}>
         <div class="lbl">
-          지금 시장
+          TOP STORY
           {#if digest.driver.origin === "ai" && digest.driver.confidence}
             <span class="conf {digest.driver.confidence}">{CONF_LABEL[digest.driver.confidence] ?? digest.driver.confidence}</span>
           {/if}
-          {#if digestStale}<span class="stale-chip" title="뉴스 피드 응답 없음 — 마지막 값 표시 중">갱신 중단</span>{/if}
+          {#if digestStale}<span class="stale-chip" title="News feed not responding">STALE</span>{/if}
         </div>
         <div class="driver-txt">{digest.driver.text}</div>
       </div>
@@ -418,7 +435,7 @@
            예정 이벤트는 시작시각으로 카운트다운/LIVE NOW 를 여기(클라이언트)서 계산한다. -->
       {#if brief.length}
         <div class="panel today">
-          <div class="lbl">오늘의 이슈<span class="src-hint">이벤트 · 영향</span></div>
+          <div class="lbl">TODAY<span class="src-hint">events · impact</span></div>
           <div class="td-list">
             {#each brief as b}
               {@const st = b.startET ? Date.parse(b.startET) : NaN}
@@ -429,9 +446,9 @@
                   <span class="td-arrow">{b.dir === "pos" ? "▲" : b.dir === "neg" ? "▾" : "•"}</span>
                   <span class="td-tit">{b.title}</span>
                   {#if liveNow}
-                    <span class="td-live">● 진행중</span>
+                    <span class="td-live">● LIVE</span>
                   {:else if Number.isFinite(st) && st > nowMs}
-                    <span class="td-when">{b.estimated ? "약 " : ""}{etClock(st)}</span>
+                    <span class="td-when">{b.estimated ? "~" : ""}{etClock(st)}</span>
                   {/if}
                 </div>
                 <div class="td-impact">{b.impact}</div>
@@ -444,8 +461,8 @@
       <div class="panel news">
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
         <div class="lbl">
-          마켓 헤드라인
-          <span class="src-hint">최신 · 중요도순</span>
+          MARKET HEADLINES
+          <span class="src-hint">by impact</span>
         </div>
         <div class="news-list">
           {#each digest.news as n}
@@ -453,19 +470,13 @@
             {@const s = sent(n.sentiment)}
             <!-- 트레이더 스캔: [임팩트레일] [주체칩 ▲/▾] 한 줄 헤드라인 … [출처·나이]. 90분↑은 흐리게. -->
             <a class="news-item {s}" class:old={ageM > 90} href={n.url} target="_blank" rel="noreferrer" title={n.title}>
-              <span class="n-rail" class:l5={n.level >= 5} class:l4={n.level === 4}></span>
-              <span class="n-topic {s}">
-                <span class="n-arrow">{s === "pos" ? "▲" : s === "neg" ? "▾" : "•"}</span>{n.topic ?? "MKT"}
-              </span>
+              <span class="n-stars {s}">{stars(n.level)}</span>
               <span class="n-tit">{n.short ?? n.title}</span>
-              <span class="n-right">
-                {#if n.source}<span class="n-src">{n.source}</span>{/if}
-                {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
-              </span>
+              {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
             </a>
           {/each}
           {#if digest.news.length === 0}
-            <div class="empty">헤드라인 없음</div>
+            <div class="empty">No headlines</div>
           {/if}
         </div>
       </div>
@@ -475,11 +486,11 @@
     <section class="col center">
       <div class="chart-card">
         <div class="chart-head">
-          <span class="ch-name">{video ? (video.label || "라이브 영상") : chartLabel}</span>
+          <span class="ch-name">{video ? (video.label || "LIVE") : chartLabel}</span>
           <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
                주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
           {#if video}
-            <span class="ch-meta live">● 영상 송출 중</span>
+            <span class="ch-meta live">● ON AIR</span>
           {:else}
             <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
               {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
@@ -496,7 +507,7 @@
               <iframe
                 class="live-video"
                 src={`https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&mute=0&rel=0&modestbranding=1&playsinline=1&cc_load_policy=1&cc_lang_pref=ko&hl=ko`}
-                title={video.label || "라이브 영상"}
+                title={video.label || "Live video"}
                 allow="autoplay; encrypted-media; picture-in-picture"
                 referrerpolicy="strict-origin-when-cross-origin"
                 allowfullscreen
@@ -528,14 +539,17 @@
     <!-- RIGHT: key event + watchlist -->
     <section class="col right">
       <div class="keyevent">
-        <div class="ke-hdr"><span class="ke-lbl">◇ 예정</span></div>
+        <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
 
         <!-- 거시/정책 일정 — FOMC·CPI 등. 시장 전체를 움직인다. -->
         {#if macroEvents.length}
-          <div class="ke-grp">거시 · 정책</div>
+          <div class="ke-grp">MACRO</div>
           {#each macroEvents as ev (ev.title)}
             <div class="ke-item">
-              <div class="ke-tit">{ev.title}</div>
+              <div class="ke-el">
+                <span class="ke-stars">{stars(ev.imp)}</span>
+                <span class="ke-tit">{ev.title}</span>
+              </div>
               <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
             </div>
           {/each}
@@ -543,11 +557,12 @@
 
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
         {#if earningsEvents.length}
-          <div class="ke-grp">실적 발표</div>
+          <div class="ke-grp">EARNINGS</div>
           {#each earningsEvents as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
-                <span class="ke-tk">{ev.ticker}{#if ev.watch}<span class="ke-star">★</span>{/if}</span>
+                <span class="ke-stars">{stars(ev.imp)}</span>
+                <span class="ke-tk">{ev.ticker}</span>
                 <span class="ke-sess">{ev.session}</span>
               </div>
               <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
@@ -561,9 +576,9 @@
       </div>
 
       <div class="panel earn">
-        <div class="lbl">📅 실적 캘린더
-          {#if calendarStale}<span class="stale-chip" title="캘린더 피드 응답 없음 — 마지막 값 표시 중">갱신 중단</span>{/if}
-          <span class="src-hint">최근 발표순</span></div>
+        <div class="lbl">📅 EARNINGS
+          {#if calendarStale}<span class="stale-chip" title="Calendar feed not responding">STALE</span>{/if}
+          <span class="src-hint">recent first</span></div>
         <div class="e-list">
           {#each upcoming as e}
             <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
@@ -572,13 +587,13 @@
                 <div class="e-tk">
                   {e.ticker}
                   {#if e.watch}<span class="e-star">★</span>{/if}
-                  {#if e.result === "beat"}<span class="e-res beat">상회</span>
-                  {:else if e.result === "miss"}<span class="e-res miss">하회</span>
-                  {:else if e.result === "inline"}<span class="e-res inline">부합</span>{/if}
+                  {#if e.result === "beat"}<span class="e-res beat">BEAT</span>
+                  {:else if e.result === "miss"}<span class="e-res miss">MISS</span>
+                  {:else if e.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
                 </div>
                 <div class="e-sub">
                   <span>{e.dateET}</span>
-                  <span>{e.status === "reported" || e.status === "pending" ? "발표" : "· " + e.session}</span>
+                  <span>{e.status === "reported" || e.status === "pending" ? "reported" : "· " + e.session}</span>
                   {#if e.tag}<span>· {e.tag}</span>{/if}
                 </div>
               </div>
@@ -591,29 +606,29 @@
                     {#if e.reactionLive}<span class="live-pip"></span>{/if}{e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
                   </div>
                   {#if e.movePhase === "pre"}
-                    <div class="e-when pre-print">발표 앞두고</div>
+                    <div class="e-when pre-print">INTO PRINT</div>
                   {:else if e.reactionWhen}
                     <div class="e-when">{WHEN_LABEL[e.reactionWhen] ?? e.reactionWhen}</div>
                   {/if}
                 {:else if e.status === "reported"}
-                  <div class="e-dd rep">발표완료</div>
+                  <div class="e-dd rep">REPORTED</div>
                   {#if e.epsActual != null}
                     <div class="e-eps"><b>${Number(e.epsActual).toFixed(2)}</b></div>
                   {/if}
                 {:else if e.status === "pending"}
                   <!-- 발표됐지만 결과·반응이 아직 집계 안 됨. 공백을 공백이라 말한다. -->
-                  <div class="e-dd pend">발표완료</div>
-                  <div class="e-eps pend-t">집계중</div>
+                  <div class="e-dd pend">REPORTED</div>
+                  <div class="e-eps pend-t">awaiting</div>
                 {:else}
                   <div class="e-dd" class:soon={e.dday <= 1}>
-                    {e.dday <= 0 ? "오늘" : "D-" + e.dday}
+                    {e.dday <= 0 ? "TODAY" : "D-" + e.dday}
                   </div>
                 {/if}
               </div>
             </div>
           {/each}
           {#if upcoming.length === 0}
-            <div class="empty">최근 실적 없음</div>
+            <div class="empty">No recent earnings</div>
           {/if}
         </div>
       </div>
@@ -625,11 +640,11 @@
     <!-- 고지 밴드: 지연·비매매 고지 + 소스 표기 + TradingView 어트리뷰션.
          흐르는 테이프 안에 넣으면 스크롤로 사라져 "항상 보임" 요건을 못 채우므로 고정 셀로 둔다. -->
     <div class="disc">
-      <span>지연 시세 · 정보 제공 목적이며 투자 권유가 아닙니다</span>
+      <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
-      <span>데이터: Finnhub &amp; Yahoo</span>
+      <span>Data: Finnhub &amp; Yahoo</span>
       <span class="disc-sep">·</span>
-      <span>차트: <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
+      <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
     </div>
     <!-- 흐르는 테이프는 자체 클리핑 박스 안에 둔다. 안 그러면 translateX 애니메이션이
          고지 밴드 위로 넘어와 글자가 겹친다. -->
@@ -649,8 +664,8 @@
     </div>
   </footer>
 
-  <!-- 배경음악 (YouTube 재생목록). 좌하단 컴팩트 플레이어. -->
-  <MusicPlayer />
+  <!-- 배경음악: 화면엔 안 보이고 소리만 난다. 조작은 /control 에서. -->
+  <MusicPlayer playing={music.playing} volume={music.volume} cmdSeq={music.cmdSeq} cmd={music.cmd} />
 </div>
 
 <style>
@@ -678,8 +693,14 @@
     border: 1px solid #20242b;
   }
   .badge .dot { width: 7px; height: 7px; border-radius: 50%; background: #4b5563; }
-  .badge.active { color: #fff; background: #1a0f10; border-color: #3a1416; }
-  .badge.active .dot { background: #ff3b30; box-shadow: 0 0 8px #ff3b30; animation: pulse 1.6s infinite; }
+  .badge.active { color: #fff; background: #0d1712; border-color: #1d3a28; }
+  .badge.active .dot { background: #39d98a; box-shadow: 0 0 8px #39d98a; animation: pulse 1.6s infinite; }
+  /* 닫힘 상태: 이유(WEEKEND/HOLIDAY…)와 재개장 시각을 같이 보여 준다 */
+  .badge.closed { color: #9aa3ad; }
+  .badge .b-main { font-weight: 800; }
+  .badge .b-why { color: #d8a860; font-weight: 800; }
+  .badge .b-why::before { content: "· "; color: #4b5563; }
+  .badge .b-next { color: #6b7280; font-weight: 600; letter-spacing: 0; font-variant-numeric: tabular-nums; }
   @keyframes pulse { 50% { opacity: 0.35; } }
 
   /* 개장/마감 임박 카운트다운 칩 */
@@ -699,12 +720,8 @@
   .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
 
   .hd-r { display: flex; align-items: center; gap: 14px; }
-  .clocks { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
   .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  /* 한국시간을 위에 크게 (주 시청자 기준), 현지시간은 아래 작게 */
-  .clock.kst { font-size: 22px; }
-  .clocks .clock:not(.kst) { font-size: 15px; color: #9aa3ad; }
-  .clock .tz { color: #6b7280; font-size: 12px; font-weight: 600; }
+  .clock .tz { color: #6b7280; font-size: 13px; font-weight: 600; }
   .upd {
     display: flex; align-items: center; gap: 6px;
     font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #5b8a72;
@@ -792,32 +809,21 @@
     letter-spacing: 0.06em; animation: pulse 1.2s infinite; white-space: nowrap; flex-shrink: 0; }
   .td-impact { font-size: 13.5px; color: #9aa3ad; font-weight: 600; line-height: 1.35; margin-top: 2px; }
 
-  /* news — 트레이더 스캔용: 주체 먼저 · 한 줄 · 오래된 건 흐리게 */
-  .news { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  /* ★ YouTube 폰 축소(4~5배)에서도 읽히도록 텍스트를 키운다. 4건만 크게. */
-  .news-list { flex: 1; overflow: hidden; padding: 6px 10px 10px; display: flex; flex-direction: column; gap: 7px; }
+  /* news — 별점 스캔용: 태그 대신 ★, 한 줄, 공간 절약 */
+  .news-list { flex: 1; overflow: hidden; padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 4px; }
   .news-item {
-    display: flex; align-items: flex-start; gap: 11px; padding: 12px 13px; border-radius: 10px;
+    display: flex; align-items: baseline; gap: 10px; padding: 7px 11px; border-radius: 8px;
     text-decoration: none; color: inherit; background: #101318; border: 1px solid #191c22;
   }
-  .news-item.old { opacity: 0.5; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
-  .n-rail { width: 4px; align-self: stretch; border-radius: 3px; background: var(--accent, #6b7280); flex-shrink: 0; }
-  .n-rail.l5 { background: #ff3b30; box-shadow: 0 0 8px rgba(255,59,48,.6); }
-  .n-rail.l4 { background: #f5a623; }
-  /* 주체 칩 — 티커/토픽 + 방향 화살표. 눈이 가장 먼저 닿는 곳. */
-  .n-topic { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; min-width: 66px;
-    font-size: 15px; font-weight: 800; letter-spacing: 0.02em; padding: 4px 9px; border-radius: 7px;
-    background: #14171d; border: 1px solid #23272f; color: #c7cdd6; }
-  .n-topic.pos { color: #39d98a; border-color: #16281d; background: #0d1712; }
-  .n-topic.neg { color: #ff6b6b; border-color: #3a1616; background: #1a0d0d; }
-  .n-arrow { font-size: 11px; opacity: 0.95; }
-  /* 잘라내지 않는다 — 헤드라인 전체를 줄바꿈으로 보여 준다 ("…" 금지). 4건이라 자리는 충분. */
-  .n-tit { flex: 1; min-width: 0; font-size: 19px; font-weight: 600; line-height: 1.28; color: #eef1f4;
-    white-space: normal; overflow: visible; padding-top: 1px; }
-  .n-right { flex-shrink: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 0; line-height: 1.15; }
-  .n-src { font-size: 10px; font-weight: 700; color: #5b6472; text-transform: uppercase; letter-spacing: 0.03em; }
+  .news-item.old { opacity: 0.45; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
+  /* ★ 중요도 — 텍스트 태그보다 훨씬 빨리 읽힌다 */
+  .n-stars { flex-shrink: 0; font-size: 13px; letter-spacing: -1px; color: #4b5563; line-height: 1; }
+  .n-stars.pos { color: #39d98a; }
+  .n-stars.neg { color: #ff5c5c; }
+  .n-tit { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; line-height: 1.25; color: #eef1f4;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .src-hint { margin-left: auto; font-size: 10px; font-weight: 600; color: #4b5563; letter-spacing: 0; }
-  .n-age { font-size: 14px; font-weight: 800; color: #99a1ab; font-variant-numeric: tabular-nums; }
+  .n-age { flex-shrink: 0; font-size: 12px; font-weight: 700; color: #6b7280; font-variant-numeric: tabular-nums; }
 
   /* center: 큰 차트가 주인공 */
   .center { min-width: 0; }
@@ -863,7 +869,8 @@
   .ke-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; }
   .ke-el { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .ke-tk { font-size: 19px; font-weight: 800; letter-spacing: 0.01em; }
-  .ke-star { color: #39d98a; font-size: 12px; margin-left: 3px; }
+  /* ★ 이벤트 중요도 — 한눈에 우선순위가 보인다 */
+  .ke-stars { font-size: 11px; letter-spacing: -1px; color: #f5c518; line-height: 1; flex-shrink: 0; }
   .ke-sess { font-size: 11px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
   .ke-tit { font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
   .ke-timer { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }

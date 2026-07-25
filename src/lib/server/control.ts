@@ -41,6 +41,9 @@ export type ControlState = {
   chartInterval: string;        // 봉 간격 ("1" = 1분)
   breaking: { id: number; headline: string; level: number; at: number } | null; // 수동 속보
   video: VideoState;            // 송출 중인 영상 (null = 차트 표시)
+  // 배경음악 — 오디오는 방송 화면(오버레이)에서 나야 OBS 가 잡는다.
+  // 그래서 플레이어는 오버레이에 **숨겨서** 두고, 조작만 여기서 한다.
+  music: { playing: boolean; volume: number; cmdSeq: number; cmd: "none" | "next" | "prev" };
   updatedAt: number;
 };
 
@@ -68,6 +71,7 @@ const state: ControlState = {
   chartInterval: "1",
   breaking: null,
   video: null,
+  music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
   updatedAt: Date.now()
 };
 
@@ -113,6 +117,22 @@ export function setVideo(input: string, label = "") {
   const id = parseYouTubeId(input);
   if (!id) return state; // 잘못된 입력은 무시 (방송 중 깨진 iframe 방지)
   state.video = { id, label: String(label || "").slice(0, 60), at: Date.now() };
+  state.version++;
+  state.updatedAt = Date.now();
+  return state;
+}
+
+/** 배경음악 조작 — 오버레이의 숨은 플레이어가 이 상태를 폴링해 반영한다 */
+export function setMusic(patch: { playing?: boolean; volume?: number; cmd?: "next" | "prev" }) {
+  if (typeof patch.playing === "boolean") state.music.playing = patch.playing;
+  if (typeof patch.volume === "number" && Number.isFinite(patch.volume)) {
+    state.music.volume = Math.max(0, Math.min(100, Math.round(patch.volume)));
+  }
+  if (patch.cmd === "next" || patch.cmd === "prev") {
+    state.music.cmd = patch.cmd;
+    state.music.cmdSeq++;      // seq 가 바뀌면 오버레이가 1회만 실행한다
+    state.music.playing = true;
+  }
   state.version++;
   state.updatedAt = Date.now();
   return state;

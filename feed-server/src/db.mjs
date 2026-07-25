@@ -17,7 +17,9 @@ export const KINDS = {
   earnings_recap: { maxAgeMs: 8 * 3600_000, label: "EARNINGS RECAP" },
   // 오늘 시장의 핵심 이벤트·뉴스 2~4개 + 각각의 영향 한 줄. 연설/증언/실적콜 같은
   // 예정 이벤트는 시작시각을 실어 화면이 카운트다운·LIVE NOW 뱃지를 계산한다.
-  market_brief: { maxAgeMs: 4 * 3600_000, label: "TODAY BRIEF" }
+  market_brief: { maxAgeMs: 4 * 3600_000, label: "TODAY BRIEF" },
+  // 라이브/예정 방송 후보 (연준 회견·정부 이벤트·실적콜). 사람이 /control 에서 골라 송출한다.
+  live_videos: { maxAgeMs: 3 * 3600_000, label: "LIVE VIDEOS" }
 };
 
 let db;

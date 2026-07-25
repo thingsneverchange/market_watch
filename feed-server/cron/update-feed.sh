@@ -47,8 +47,8 @@ log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${KIND:-?}" "$*" >
 die() { log "ERROR: $*"; echo "ERROR: $*" >&2; exit 1; }
 
 case "$KIND" in
-  top_story|key_event|earnings_recap|market_brief) ;;
-  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief" ;;
+  top_story|key_event|earnings_recap|market_brief|live_videos) ;;
+  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief|live_videos" ;;
 esac
 
 PROMPT_FILE="$HERE/prompts/$(echo "$KIND" | tr '_' '-').md"

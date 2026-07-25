@@ -14,16 +14,22 @@
   let videoUrl = "";
   let liveVideo: { id: string; label: string } | null = null;
   let suggestions: { title: string; impact: string; live: boolean; when: string }[] = [];
+  // 검증된 라이브 영상 후보 — Claude 가 찾고 서버가 oEmbed 로 실존 확인한 것만 온다
+  let videos: { title: string; url: string; source: string; note: string | null; live: boolean; startET: string | null; author: string | null }[] = [];
+
+  // ── 배경음악 ────────────────────────────────
+  // 소리는 방송 화면(오버레이)에서 난다. 여기선 조작만 한다.
+  let music = { playing: false, volume: 30 };
 
   // 공개 소스 바로가기 — 미국 정부 저작물은 퍼블릭 도메인이라 재송출이 안전하다.
   // (반면 CNBC·Bloomberg 등 상업 방송 재송출은 저작권 침해 → 채널 스트라이크 위험)
   const SAFE_SOURCES = [
-    { label: "연준 (Federal Reserve)", url: "https://www.youtube.com/@federalreserve/live" },
-    { label: "백악관 (White House)", url: "https://www.youtube.com/@WhiteHouse/live" }
+    { label: "Federal Reserve", url: "https://www.youtube.com/@federalreserve/live" },
+    { label: "White House", url: "https://www.youtube.com/@WhiteHouse/live" }
   ];
 
   const INTERVALS = [
-    { v: "1", t: "1분" }, { v: "5", t: "5분" }, { v: "15", t: "15분" }, { v: "60", t: "1시간" }, { v: "D", t: "일봉" }
+    { v: "1", t: "1m" }, { v: "5", t: "5m" }, { v: "15", t: "15m" }, { v: "60", t: "1H" }, { v: "D", t: "1D" }
   ];
 
   async function loadState() {
@@ -35,11 +41,20 @@
         activeKey = j.chartKey;
         interval = j.chartInterval;
         liveVideo = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
+        if (j.music) music = { playing: j.music.playing, volume: j.music.volume };
       }
     } catch {}
   }
 
-  /** 오늘의 이슈에서 "지금 진행 중이거나 곧 시작하는" 이벤트를 추천으로 뽑는다 */
+  /** 검증된 영상 후보 목록 (버튼 한 번으로 송출) */
+  async function loadVideos() {
+    try {
+      const r = await fetch("/api/videos");
+      if (r.ok) videos = (await r.json()).videos ?? [];
+    } catch {}
+  }
+
+  /** 오늘의 이슈에서 "지금 LIVE이거나 곧 시작하는" 이벤트를 추천으로 뽑는다 */
   async function loadSuggestions() {
     try {
       const r = await fetch("/api/digest");
@@ -55,10 +70,10 @@
           const mins = Math.round((st - now) / 60000);
           return {
             title: b.title, impact: b.impact, live,
-            when: live ? "진행 중" : mins > 0 ? `${mins}분 후` : "종료"
+            when: live ? "LIVE" : mins > 0 ? `${mins}m` : "ended"
           };
         })
-        .filter((s: any) => s.live || s.when.endsWith("분 후"));
+        .filter((s: any) => s.live || s.when.endsWith("m"));
     } catch {}
   }
 
@@ -66,22 +81,37 @@
     if (!url.trim()) return;
     await post({ action: "video", url, label });
     await loadState();
-    flash(liveVideo ? "영상 송출 시작 ✓" : "URL 형식을 확인하세요");
+    flash(liveVideo ? "Video on air ✓" : "Check the URL format");
   }
+  async function musicToggle() {
+    music.playing = !music.playing;
+    await post({ action: "music", playing: music.playing });
+    flash(music.playing ? "Music playing" : "Music paused");
+  }
+  async function musicSkip(cmd: "next" | "prev") {
+    music.playing = true;
+    await post({ action: "music", cmd });
+    flash(cmd === "next" ? "Next track" : "Previous track");
+  }
+  async function musicVolume(e: Event) {
+    music.volume = Number((e.target as HTMLInputElement).value);
+    await post({ action: "music", volume: music.volume });
+  }
+
   async function stopVideo() {
     await post({ action: "clearVideo" });
     await loadState();
-    flash("영상 내림");
+    flash("Video stopped");
   }
 
   async function setChart(key: string) {
     activeKey = key;
-    flash(`차트 → ${presets.find(p=>p.key===key)?.label ?? key}`);
+    flash(`Chart → ${presets.find(p=>p.key===key)?.label ?? key}`);
     await post({ action: "chart", key, interval });
   }
   async function setInterval(v: string) {
     interval = v;
-    flash(`봉 → ${INTERVALS.find(i=>i.v===v)?.t}`);
+    flash(`Interval → ${INTERVALS.find(i=>i.v===v)?.t}`);
     await post({ action: "chart", key: activeKey, interval: v });
   }
   async function sendBreaking() {
@@ -90,17 +120,17 @@
     await post({ action: "breaking", headline: h, level });
     lastBreaking = h;
     headline = "";
-    flash("속보 송출됨 ✓");
+    flash("Alert sent ✓");
   }
   async function clearBreaking() {
     await post({ action: "clearBreaking" });
-    flash("속보 내림");
+    flash("Alert cleared");
   }
 
   async function post(body: any) {
     try {
       await fetch("/api/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
-    } catch { flash("전송 실패 — 서버 연결 확인"); }
+    } catch { flash("Send failed — check server"); }
   }
 
   let flashTimer: any;
@@ -113,24 +143,25 @@
   onMount(() => {
     loadState();
     loadSuggestions();
+    loadVideos();
     // 추천은 1분마다 갱신 (이벤트가 시작/종료되면 자동 반영)
     // ※ 이 페이지엔 봉 간격 설정용 로컬 setInterval() 이 있어 전역이 가려진다 → window 로 명시.
-    const t = window.setInterval(loadSuggestions, 60000);
+    const t = window.setInterval(() => { loadSuggestions(); loadVideos(); }, 60000);
     return () => window.clearInterval(t);
   });
 </script>
 
-<svelte:head><title>MARKETWATCH · 컨트롤러</title>
+<svelte:head><title>MARKETWATCH · CONTROL</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" /></svelte:head>
 
 <div class="ctl">
   <header>
-    <div class="ttl">MARKET<span>WATCH</span> · 컨트롤러</div>
+    <div class="ttl">MARKET<span>WATCH</span> · CONTROL</div>
     {#if status}<div class="flash">{status}</div>{/if}
   </header>
 
   <section>
-    <h2>📊 차트 심볼</h2>
+    <h2>📊 Chart</h2>
     <div class="grid">
       {#each presets as p}
         <button class="btn sym" class:on={p.key === activeKey} on:click={() => setChart(p.key)}>{p.label}</button>
@@ -139,7 +170,7 @@
   </section>
 
   <section>
-    <h2>⏱ 봉 간격</h2>
+    <h2>⏱ Interval</h2>
     <div class="grid iv">
       {#each INTERVALS as i}
         <button class="btn iv-b" class:on={i.v === interval} on:click={() => setInterval(i.v)}>{i.t}</button>
@@ -148,65 +179,100 @@
   </section>
 
   <section>
-    <h2>🎥 라이브 영상</h2>
+    <h2>🎥 Live Video</h2>
     {#if liveVideo}
       <div class="vid-on">
         <span class="vid-dot"></span>
-        <span class="vid-lbl">송출 중 — {liveVideo.label || liveVideo.id}</span>
-        <button class="btn vstop" on:click={stopVideo}>내리기</button>
+        <span class="vid-lbl">ON AIR — {liveVideo.label || liveVideo.id}</span>
+        <button class="btn vstop" on:click={stopVideo}>Clear</button>
       </div>
     {/if}
 
-    <!-- 시스템 추천: '오늘의 이슈' 중 진행 중이거나 곧 시작하는 이벤트. 판단은 사람이 한다. -->
+    <!-- 시스템 추천: '오늘의 이슈' 중 LIVE이거나 곧 시작하는 이벤트. 판단은 사람이 한다. -->
     {#if suggestions.length}
-      <div class="sug-lbl">추천 — 지금 볼 만한 이벤트</div>
+      <div class="sug-lbl">SUGGESTED — worth showing now</div>
       {#each suggestions as s}
         <div class="sug" class:live={s.live}>
           <div class="sug-l">
             <div class="sug-t">{s.title}</div>
             <div class="sug-i">{s.impact}</div>
           </div>
-          <div class="sug-w" class:on={s.live}>{s.live ? "● 진행 중" : s.when}</div>
+          <div class="sug-w" class:on={s.live}>{s.live ? "● LIVE" : s.when}</div>
         </div>
       {/each}
-      <div class="sug-hint">→ 아래에서 해당 방송 URL 을 넣고 송출하세요</div>
+      <div class="sug-hint">→ paste the stream URL below to air it</div>
+    {/if}
+
+    {#if videos.length}
+      <div class="sug-lbl">VERIFIED STREAMS — one tap to air</div>
+      {#each videos as v}
+        <div class="vrow" class:live={v.live}>
+          <div class="vrow-l">
+            <div class="vrow-t">{v.title}</div>
+            <div class="vrow-s">
+              {#if v.live}<span class="vlive">● LIVE</span>{/if}
+              <span class="vsrc">{v.source.toUpperCase()}</span>
+              {#if v.author}<span>{v.author}</span>{/if}
+              {#if v.note}<span>· {v.note}</span>{/if}
+            </div>
+          </div>
+          <button class="btn vair" on:click={() => sendVideo(v.url, v.title)}>Air</button>
+        </div>
+      {/each}
     {/if}
 
     <div class="src-row">
       {#each SAFE_SOURCES as s}
-        <a class="btn src" href={s.url} target="_blank" rel="noreferrer">{s.label} 열기 ↗</a>
+        <a class="btn src" href={s.url} target="_blank" rel="noreferrer">{s.label} ↗</a>
       {/each}
     </div>
 
-    <input class="vurl" bind:value={videoUrl} placeholder="유튜브 URL 붙여넣기 (youtu.be/… 또는 /watch?v=…)" />
+    <input class="vurl" bind:value={videoUrl} placeholder="Paste YouTube URL (youtu.be/… or /watch?v=…)" />
     <div class="row">
-      <button class="btn send vsend" on:click={() => sendVideo(videoUrl, "")}>영상 송출</button>
-      <button class="btn clear" on:click={() => { videoUrl = ""; }}>지우기</button>
+      <button class="btn send vsend" on:click={() => sendVideo(videoUrl, "")}>Air Video</button>
+      <button class="btn clear" on:click={() => { videoUrl = ""; }}>Clear</button>
     </div>
     <div class="warn">
-      ⚠️ 연준·백악관 등 <b>미국 정부 영상은 재송출 가능</b>(퍼블릭 도메인).
-      CNBC·Bloomberg 등 <b>상업 방송 재송출은 저작권 위반</b>이라 채널 스트라이크 위험이 큽니다.
+      ⚠️ US government streams (Fed, White House) are <b>public domain — safe to rebroadcast</b>.
+      Commercial networks (CNBC, Bloomberg) are <b>not</b> — rebroadcasting them risks a channel strike.
     </div>
   </section>
 
   <section>
-    <h2>🚨 수동 속보</h2>
-    <textarea bind:value={headline} placeholder="속보 문구 입력…" rows="2"
+    <h2>🎵 Music</h2>
+    <div class="mrow">
+      <button class="btn mbtn play" class:on={music.playing} on:click={musicToggle}>
+        {music.playing ? "❚❚ Pause" : "► Play"}
+      </button>
+      <button class="btn mbtn" on:click={() => musicSkip("prev")}>⏮</button>
+      <button class="btn mbtn" on:click={() => musicSkip("next")}>⏭</button>
+    </div>
+    <div class="vol">
+      <span>Volume</span>
+      <input type="range" min="0" max="100" value={music.volume} on:change={musicVolume} />
+      <b>{music.volume}</b>
+    </div>
+    <div class="mhint">Audio plays on the broadcast screen (captured by OBS), not here.</div>
+  </section>
+
+  <section>
+    <h2>🚨 Manual Alert</h2>
+    <textarea bind:value={headline} placeholder="Alert headline…" rows="2"
       on:keydown={(e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) sendBreaking(); }}></textarea>
     <div class="lv">
-      <span>강도</span>
+      <span>Level</span>
       {#each [3,4,5] as l}
         <button class="btn lv-b" class:on={l === level} on:click={() => level = l}>{l}</button>
       {/each}
     </div>
     <div class="row">
-      <button class="btn send" on:click={sendBreaking}>속보 송출</button>
-      <button class="btn clear" on:click={clearBreaking}>내리기</button>
+      <button class="btn send" on:click={sendBreaking}>Send Alert</button>
+      <button class="btn clear" on:click={clearBreaking}>Clear</button>
     </div>
-    {#if lastBreaking}<div class="last">최근: {lastBreaking}</div>{/if}
+    {#if lastBreaking}<div class="last">Last: {lastBreaking}</div>{/if}
   </section>
 
-  <footer>오버레이 화면은 1.5초 내 자동 반영됩니다</footer>
+  <footer>Overlay updates within 1.5s</footer>
 </div>
 
 <style>
@@ -266,5 +332,27 @@
   .warn{margin-top:10px;font-size:12px;color:#8a919b;line-height:1.5;
     background:#1a140a;border:1px solid #2e2410;border-radius:10px;padding:10px 12px}
   .warn b{color:#d8a860}
+
+  /* 음악 조작 */
+  .mrow{display:flex;gap:8px}
+  .mbtn{flex:0 0 auto;padding:14px 0;width:64px;font-size:16px}
+  .mbtn.play{flex:1;font-size:15px}
+  .mbtn.play.on{background:#0d1712;border-color:#16281d;color:#39d98a}
+  .vol{display:flex;align-items:center;gap:12px;margin-top:12px}
+  .vol span{font-size:13px;color:#8a919b;font-weight:700;flex:0 0 auto}
+  .vol input{flex:1;accent-color:#39d98a}
+  .vol b{font-size:14px;color:#e5e7eb;width:32px;text-align:right;font-variant-numeric:tabular-nums}
+  .mhint{margin-top:10px;font-size:12px;color:#6b7280;line-height:1.5}
+
+  /* 검증된 영상 후보 — 버튼 한 번으로 송출 */
+  .vrow{display:flex;align-items:center;gap:10px;background:#12151b;border:1px solid #23272f;
+    border-radius:10px;padding:11px 12px;margin-bottom:7px}
+  .vrow.live{border-color:#3a1616;background:#160f10}
+  .vrow-l{flex:1;min-width:0}
+  .vrow-t{font-size:15px;font-weight:700;color:#e5e7eb;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vrow-s{display:flex;gap:7px;align-items:center;font-size:11px;color:#6b7280;margin-top:3px;flex-wrap:wrap}
+  .vlive{color:#ff6b6b;font-weight:800}
+  .vsrc{color:#7dd3fc;font-weight:800;letter-spacing:.04em}
+  .vair{flex:0 0 auto;padding:10px 18px;font-size:14px;background:#12303a;border-color:#1d5570;color:#7dd3fc}
   footer{text-align:center;font-size:12px;color:#4b5563;margin-top:30px;padding-bottom:20px}
 </style>

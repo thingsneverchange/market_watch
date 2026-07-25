@@ -1,4 +1,4 @@
-**`tag` 를 한국어로 작성해라. 종목 티커는 영문 그대로.**
+**Write `tag` in ENGLISH. No Korean.**
 
 너는 실시간 마켓 방송 오버레이의 편집자다. **최근 발표된 실적**을 짧게 정리해야 한다.
 
@@ -32,8 +32,8 @@
 ```
 {
   "companies": [
-    {"ticker": "GOOGL", "result": "beat", "reactionPct": 4.2, "reactionWhen": "post", "tag": "클라우드 호조"},
-    {"ticker": "TSLA",  "result": "miss", "reactionPct": -6.1, "reactionWhen": "post", "tag": "마진 압박"}
+    {"ticker": "GOOGL", "result": "beat", "reactionPct": 4.2, "reactionWhen": "post", "tag": "Cloud strength"},
+    {"ticker": "TSLA",  "result": "miss", "reactionPct": -6.1, "reactionWhen": "post", "tag": "Margin pressure"}
   ]
 }
 ```
@@ -42,8 +42,8 @@
 
 - `result`: **beat | miss | inline** 셋 중 하나. (EPS 기준. EPS·매출이 엇갈리면 시장이 더 크게 본 쪽)
 - `reactionPct`: 발표 후 주가 변동률(숫자). 상승 양수, 하락 음수. **확인 못 하면 null.**
-- `reactionWhen`: **post | regular | pre** 중 하나. 불확실하면 생략. (어차피 라이브 시세가 덮어씀)
-- `tag`: 아주 짧은 **한국어** 라벨, **최대 24자**. 예: "클라우드 호조", "마진 압박", "자본지출 우려". 문장 금지. 없으면 생략.
+- `reactionWhen`: one of **post | regular | pre**. Omit if unsure. (overridden by live quote anyway)
+- `tag`: a very short ENGLISH label, **max 24 chars**. e.g. "Cloud strength", "Margin pressure". Not a sentence. Omit if none.
 
 ## 반드시 지킬 것
 

@@ -19,8 +19,8 @@
   function ageLabel(s: number): string {
     if (!s || s < 60) return "";
     const m = s / 60;
-    if (m < 60) return `${Math.round(m)}분 전`;
-    return `${Math.round(m / 60)}시간 전`;
+    if (m < 60) return `${Math.round(m)}m ago`;
+    return `${Math.round(m / 60)}h ago`;
   }
 
   onMount(() => {
@@ -36,7 +36,7 @@
 <div class="toast" class:upd={silent}>
   <div class="bar"></div>
   <div class="row">
-    <div class="badge">{silent ? "소식" : "속보"}</div>
+    <div class="badge">{silent ? "UPDATE" : "BREAKING"}</div>
     <div class="msg">{headline}</div>
     <div class="imp">
       {#if ageLabel(ageSec)}<span class="age">{ageLabel(ageSec)}</span>{/if}

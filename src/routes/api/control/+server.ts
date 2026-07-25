@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getState, setChart, pushBreaking, clearBreaking, setVideo, clearVideo, CHART_PRESETS } from "$lib/server/control";
+import { getState, setChart, pushBreaking, clearBreaking, setVideo, clearVideo, setMusic, CHART_PRESETS } from "$lib/server/control";
 
 // 오버레이가 1.5초마다 폴링 — 현재 상태 + 프리셋 목록
 export const GET: RequestHandler = async () => {
@@ -34,6 +34,13 @@ export const POST: RequestHandler = async ({ request }) => {
       break;
     case "clearVideo":
       clearVideo();
+      break;
+    case "music":
+      setMusic({
+        playing: typeof body.playing === "boolean" ? body.playing : undefined,
+        volume: body.volume != null ? Number(body.volume) : undefined,
+        cmd: body.cmd === "next" || body.cmd === "prev" ? body.cmd : undefined
+      });
       break;
   }
 

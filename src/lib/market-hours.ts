@@ -87,17 +87,17 @@ export function marketState(now: Date = new Date()): MarketState {
   // 휴장일 테이블이 만료됐으면 열려있다고 단정하지 않는다.
   const year = Number(date.slice(0, 4));
   if (!date || !Number.isFinite(year)) {
-    return { ...base, open: false, session: "UNKNOWN", msg: "상태 미확인" };
+    return { ...base, open: false, session: "UNKNOWN", msg: "STATUS UNVERIFIED" };
   }
   if (year > COVERED_THROUGH) {
-    return { ...base, open: false, session: "UNKNOWN", msg: "상태 미확인" };
+    return { ...base, open: false, session: "UNKNOWN", msg: "STATUS UNVERIFIED" };
   }
 
   if (weekday === 0 || weekday === 6) {
-    return { ...base, open: false, session: "WEEKEND", msg: "주말 휴장" };
+    return { ...base, open: false, session: "WEEKEND", msg: "WEEKEND" };
   }
   if (HOLIDAYS.has(date)) {
-    return { ...base, open: false, session: "HOLIDAY", msg: "휴장일" };
+    return { ...base, open: false, session: "HOLIDAY", msg: "HOLIDAY" };
   }
 
   const early = EARLY_CLOSE.has(date);
@@ -105,12 +105,12 @@ export function marketState(now: Date = new Date()): MarketState {
   const b = { ...base, earlyClose: early, closeMin };
 
   if (min >= REG_OPEN && min < closeMin) {
-    return { ...b, open: true, session: "OPEN", msg: early ? "정규장 · 조기폐장 1시" : "정규장" };
+    return { ...b, open: true, session: "OPEN", msg: early ? "MARKET OPEN · EARLY CLOSE 1PM" : "MARKET OPEN" };
   }
   // ET 00:00~04:00 에는 어떤 거래도 없다. 기존 코드는 이 구간을 PRE-MARKET 이라고 표시했다.
-  if (min >= PRE_OPEN && min < REG_OPEN) return { ...b, open: false, session: "PRE", msg: "프리마켓" };
-  if (min >= closeMin && min < AFTER_CLOSE) return { ...b, open: false, session: "AFTER", msg: "애프터마켓" };
-  return { ...b, open: false, session: "CLOSED", msg: "장마감" };
+  if (min >= PRE_OPEN && min < REG_OPEN) return { ...b, open: false, session: "PRE", msg: "PRE-MARKET" };
+  if (min >= closeMin && min < AFTER_CLOSE) return { ...b, open: false, session: "AFTER", msg: "AFTER HOURS" };
+  return { ...b, open: false, session: "CLOSED", msg: "CLOSED" };
 }
 
 /** 정규장 여부 (구 finnhub.ts:isRegularHours 대체) */
@@ -133,6 +133,63 @@ function etMinuteToEpoch(dateStr: string, minutesFromMidnight: number): number {
   if (offset < -12) offset += 24;
   const base = Date.parse(`${dateStr}T00:00:00Z`);
   return base - offset * 3600e3 + minutesFromMidnight * 60e3;
+}
+
+/**
+ * 다음 정규장 개장까지 남은 ms. 주말·휴장일을 건너뛰며 최대 10일 앞까지 찾는다.
+ * "왜 닫혔는지"와 "언제 열리는지"를 같이 보여주기 위한 값 (하드코딩 없음 — 휴장 테이블 파생).
+ */
+export function msToNextOpen(now: Date = new Date()): number | null {
+  const s = marketState(now);
+  const nowMs = now.getTime();
+  if (s.session === "UNKNOWN" || !s.etDate) return null;
+
+  // 오늘 개장 전이면 오늘 09:30
+  if (s.session === "PRE") {
+    const t = etMinuteToEpoch(s.etDate, REG_OPEN);
+    if (t > nowMs) return t - nowMs;
+  }
+  // 그 외에는 다음 거래일을 찾는다
+  const [y, m, d] = s.etDate.split("-").map(Number);
+  for (let i = 1; i <= 10; i++) {
+    const probe = new Date(Date.UTC(y, m - 1, d + i, 12));
+    const ds = probe.toISOString().slice(0, 10);
+    const wd = probe.getUTCDay();
+    if (wd === 0 || wd === 6 || HOLIDAYS.has(ds)) continue;
+    return etMinuteToEpoch(ds, REG_OPEN) - nowMs;
+  }
+  return null;
+}
+
+/** 화면용 시장 상태 — 상태 + 닫힌 이유 + 다시 열리는 시각을 한 번에 */
+export type MarketStatus = {
+  open: boolean;
+  session: Session;
+  label: string;        // "MARKET OPEN" / "CLOSED"
+  reason: string;       // "WEEKEND" / "HOLIDAY" / "AFTER HOURS" / "" (열려 있으면 빈 문자열)
+  msToOpen: number | null;
+};
+
+export function marketStatus(now: Date = new Date()): MarketStatus {
+  const s = marketState(now);
+  if (s.open) {
+    return { open: true, session: s.session, label: s.msg, reason: "", msToOpen: null };
+  }
+  const REASON: Partial<Record<Session, string>> = {
+    WEEKEND: "WEEKEND",
+    HOLIDAY: "HOLIDAY",
+    PRE: "PRE-MARKET",
+    AFTER: "AFTER HOURS",
+    CLOSED: "OVERNIGHT",
+    UNKNOWN: "UNVERIFIED"
+  };
+  return {
+    open: false,
+    session: s.session,
+    label: s.session === "UNKNOWN" ? "STATUS UNVERIFIED" : "CLOSED",
+    reason: REASON[s.session] ?? "",
+    msToOpen: msToNextOpen(now)
+  };
 }
 
 export type MarketBell = { kind: "open" | "close" | null; ms: number };
