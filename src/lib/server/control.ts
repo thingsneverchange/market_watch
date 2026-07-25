@@ -60,8 +60,9 @@ export const CHART_PRESETS: ChartPreset[] = [
   { key: "gc",   label: "GOLD",         fut: "GC" },
   { key: "si",   label: "SILVER",       fut: "SI" },
   { key: "ng",   label: "NAT GAS",      fut: "NG" },
-  { key: "btc",  label: "BITCOIN",      fut: "BTC", tv: "BINANCE:BTCUSDT" },
-  { key: "dx",   label: "DOLLAR",       fut: "DX" },
+  { key: "btc",  label: "BITCOIN",      fut: "BTC", tv: "BINANCE:BTCUSDT",
+    note: "CME futures · closed weekends" },
+  { key: "dx",   label: "DOLLAR INDEX", fut: "DX" },
   { key: "zn",   label: "10Y NOTE",     fut: "ZN" }
 ];
 

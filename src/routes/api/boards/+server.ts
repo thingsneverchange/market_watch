@@ -12,7 +12,7 @@ import { marketState } from "$lib/market-hours";
 //      NQ(나스닥 선물)를 24시간 주는 **유일한 무료 경로**이고 서버 IP 에서도 200 이 온다.
 //      → 선물·원자재·VIX·BTC 는 전부 여기서. 24시간 스트림의 핵심.
 //   2) Finnhub — 60 req/min. US 주식/ETF 는 여기가 정확하고 빠르다(정규장 지수·테이프·SOXX).
-//   3) CoinGecko — BTC 폴백 (키 불필요)
+//   3) CoinGecko — **BTC 현물** (키 불필요). Finviz BTC 는 CME 선물이라 주말에 멈춘다.
 //
 //  쓰지 않는 것:
 //   · Yahoo — 데이터센터 IP 영구 차단 (맥·서버 모두 429). 배포본에선 불가
@@ -76,9 +76,16 @@ export const GET: RequestHandler = async () => {
   const gc = F("GC"); if (gc) crossSlots.push(slot("GOLD", gc.price, gc.changePct));
   const cl = F("CL"); if (cl) crossSlots.push(slot("OIL", cl.price, cl.changePct));
 
-  const fb = F("BTC");
-  if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct));
-  else if (btcFallback) crossSlots.push(slot("BTC", btcFallback.price, btcFallback.changePct));
+  // ★ BTC 는 **CoinGecko 현물이 우선**이다.
+  //   Finviz 의 "BTC" 는 CME 비트코인 **선물**이라 주말·야간 정비시간에 멈춘다.
+  //   실측(토요일): Finviz $64,070 −0.23% 가 30초 뒤에도 완전히 동일한 반면
+  //   CoinGecko 현물은 $64,364 +0.36% 로 계속 갱신됐다 — 값도 부호도 달랐다.
+  //   24시간 스트림에서 "비트코인이 안 움직인다"는 건 사고다. 현물을 쓴다.
+  if (btcFallback) crossSlots.push(slot("BTC", btcFallback.price, btcFallback.changePct));
+  else {
+    const fb = F("BTC");   // 코인게코가 죽었을 때만 선물로 폴백
+    if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct));
+  }
 
   const vx = F("VX"); if (vx) crossSlots.push(slot("VIX", vx.price, vx.changePct));
 
