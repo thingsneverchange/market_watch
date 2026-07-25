@@ -59,6 +59,9 @@
   let reactions: any[] = [];
   // 이미 지난 거시 이벤트 (최근 5개, 1주일 이내). 무료 경제 캘린더가 없어 직접 쌓는다.
   let pastMacro: any[] = [];
+  // 거시 지표 실제치 — **FRED(연준 원본)**. LLM 이 개입하지 않는 경로다.
+  let macroReadings: any[] = [];
+  let macroReleases: any[] = [];
 
   // ---- 속보 토스트 (단일 소유자) ----
   // 예전에는 전역 변수 1개 + writer 2개(자동/수동) + 추적되지 않는 setTimeout N개 구조라
@@ -351,6 +354,14 @@
   }
 
   // 컨트롤러 상태 폴링 — 차트 심볼/봉 전환 + 수동 속보
+  /** 거시 지표 (FRED). 6시간 캐시라 자주 부를 필요가 없다. */
+  async function refreshMacro() {
+    const j = await jget("/api/macro");
+    if (!j) return;
+    if (Array.isArray(j.readings)) macroReadings = j.readings;
+    if (Array.isArray(j.releases)) macroReleases = j.releases;
+  }
+
   async function refreshControl() {
     const j = await jget("/api/control");
     if (!j) return;
@@ -413,7 +424,7 @@
   onMount(() => {
     resize();
     window.addEventListener("resize", resize);
-    refresh(); refreshBreaking(); refreshControl();
+    refresh(); refreshBreaking(); refreshControl(); refreshMacro();
 
     // ※ 폴링 주기는 "호출 횟수"가 아니다. refresh 1회 = 유일 티커 17개 조회다.
     //   Finnhub 무료 한도 60 req/min 안에 들어오려면 주기 15s + 서버 TTL 20s 조합이 필요하다.
@@ -422,9 +433,11 @@
     const t2 = setInterval(refresh, 15000);
     const t3 = setInterval(refreshBreaking, 15000);
     const t5 = setInterval(refreshControl, 1500); // 컨트롤러 반응성
+    // 거시 지표는 월 단위로 갱신되는 값이라 10분이면 충분하다 (서버는 6시간 캐시)
+    const t6 = setInterval(refreshMacro, 600000);
     return () => {
       window.removeEventListener("resize", resize);
-      [t1, t2, t3, t5].forEach(clearInterval);
+      [t1, t2, t3, t5, t6].forEach(clearInterval);
       if (toastTimer) clearTimeout(toastTimer);
     };
   });
@@ -780,6 +793,42 @@
            저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다. -->
       <div class="panel react">
         <div class="lbl">⚡ MARKET REACTION<span class="src-hint">what moved &amp; why</span></div>
+
+        <!-- ★ 거시 지표 실제치 — 출처가 연준(FRED)이라 검증이 필요 없다.
+             LLM 이 준 값이 아니라 정부 발표 원본이다. -->
+        {#if macroReadings.length}
+          <div class="rx-grp">MACRO<span class="rx-sub">actual · FRED</span></div>
+          {#each macroReadings.slice(0, 4) as m}
+            {@const hotter = m.prev != null && m.value != null && m.value > m.prev}
+            <div class="rx-row">
+              <div class="rx-l">
+                <div class="rx-tk">{m.label}</div>
+                <div class="rx-tag">{m.period}{m.prev != null ? ` · prev ${m.prev}` : ""}</div>
+              </div>
+              <div class="rx-r">
+                <div class="rx-pct"
+                     class:u={m.upIsHawkish ? !hotter : hotter}
+                     class:d={m.upIsHawkish ? hotter : !hotter}>
+                  {m.value ?? "—"}{m.unit.startsWith("%") ? "%" : m.unit}
+                </div>
+                <div class="rx-when">{m.prev == null ? "" : hotter ? "▲ vs prev" : "▼ vs prev"}</div>
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        {#if macroReleases.length}
+          <div class="rx-grp">NEXT RELEASE<span class="rx-sub">FRED schedule</span></div>
+          {#each macroReleases.slice(0, 3) as rel}
+            <div class="rx-row past">
+              <div class="rx-l">
+                <div class="rx-tk">{rel.name}</div>
+                <div class="rx-tag">{stars(rel.imp)}</div>
+              </div>
+              <div class="rx-r"><div class="rx-when await">{rel.date}</div></div>
+            </div>
+          {/each}
+        {/if}
 
         <div class="rx-grp">MACRO<span class="rx-sub">last 7 days · upcoming</span></div>
 
