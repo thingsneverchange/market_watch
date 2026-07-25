@@ -144,8 +144,13 @@ export function msToNextOpen(now: Date = new Date()): number | null {
   const nowMs = now.getTime();
   if (s.session === "UNKNOWN" || !s.etDate) return null;
 
-  // 오늘 개장 전이면 오늘 09:30
-  if (s.session === "PRE") {
+  // ★ 오늘이 거래일이고 아직 09:30 전이면 **오늘** 개장이다.
+  //   예전엔 session === "PRE" 일 때만 이 분기를 탔는데, 프리마켓은 04:00 부터라
+  //   **자정~04:00 사이엔 여기를 못 타고** 아래 "다음 거래일" 루프로 떨어졌다.
+  //   그 결과 새벽 2시에 "opens in 1d 7h" 라고 하루를 더 세서 표시했다(실측).
+  //   24시간 방송에서 매일 새벽 4시간 동안 개장 카운트다운이 틀렸다는 뜻이다.
+  const todayWd = etParts(now).weekday;
+  if (todayWd >= 1 && todayWd <= 5 && !HOLIDAYS.has(s.etDate)) {
     const t = etMinuteToEpoch(s.etDate, REG_OPEN);
     if (t > nowMs) return t - nowMs;
   }
