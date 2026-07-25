@@ -34,19 +34,23 @@ function resolveSlots(st: ControlState) {
     if (key.startsWith("fv:")) {
       const sym = key.slice(3);
       return { key, label: sym, note: "", mode: "fut" as const,
-        tvSymbol: "", futKey: sym, sniper: false, why: "" };
+        tvSymbol: "", futKey: sym, nvCode: "", sniper: false, why: "" };
     }
     const p = CHART_PRESETS.find((x) => x.key === key) ?? CHART_PRESETS[0];
     const wantTv = st.chartAuto ? regular : false;
-    // tv 가 없으면 선물로, 선물이 없으면 tv 로 — 어느 쪽이든 빈 슬롯은 만들지 않는다
-    const useTv = (wantTv && !!p.tv) || !p.fut;
+    // 우선순위: (정규장 & TradingView 있음) → tv / 선물 있음 → fut / 그 외 → 네이버 지수
+    //  네이버 지수는 지수 **원본**이라 선물이 없는 코스피·상해·항셍의 유일한 길이다.
+    const useTv = wantTv && !!p.tv;
+    const mode: "tv" | "fut" | "nv" =
+      useTv ? "tv" : p.fut ? "fut" : p.nv ? "nv" : p.tv ? "tv" : "fut";
     return {
       key: p.key,
       label: p.label,
       note: p.note ?? "",
-      mode: useTv && p.tv ? "tv" : "fut",
+      mode,
       tvSymbol: p.tv ?? "",
       futKey: p.fut ?? "",
+      nvCode: p.nv ?? "",
       sniper: false,
       why: ""
     };
@@ -71,6 +75,7 @@ async function withSniper(st: ControlState, slots: ReturnType<typeof resolveSlot
     mode: "fut" as const,
     tvSymbol: "",
     futKey: target.key,
+    nvCode: "",
     sniper: true,
     // 왜 잡혔는지 화면에 밝힌다 — 근거 없이 차트가 바뀌면 시청자가 못 따라온다
     why: `${target.recentPct > 0 ? "+" : ""}${target.recentPct}% in 30m · ${target.z}x normal`

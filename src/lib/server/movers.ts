@@ -68,7 +68,9 @@ export function score(q: FutQuote): Mover | null {
     price: q.price,
     changePct: q.changePct,
     recentPct: Math.round(recentPct * 100) / 100,
-    z: Math.round(Math.abs(z) * 10) / 10,
+    // 표시 상한 99 — 변동성이 거의 0 이던 종목이 갑자기 움직이면 z 가 수천까지 튄다.
+    // "2378x normal" 은 방송 화면에서 정보가 아니라 오류처럼 보인다.
+    z: Math.min(99, Math.round(Math.abs(z) * 10) / 10),
     dir: r >= 0 ? 1 : -1
   };
 }

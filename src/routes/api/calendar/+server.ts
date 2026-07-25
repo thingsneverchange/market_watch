@@ -62,6 +62,16 @@ export const GET: RequestHandler = async () => {
   //   그 이후의 등락은 그냥 그날 시세지 실적 반응이 아니다 — 이틀 지난 GOOGL 에
   //   당일 시간외 %가 '실적 반응'인 척 계속 붙어 있던 문제(데이터 정직성)를 여기서 끊는다.
   const REACTION_WINDOW_MS = 24 * 3600e3;
+  /** 리캡의 세션 표기("regular"/"post"/"pre")를 화면 라벨로 정규화 */
+  const normWhen = (w: string | null | undefined): string | null => {
+    const v = String(w || "").toLowerCase();
+    if (!v) return null;
+    if (v === "pre" || v === "premarket" || v === "pre-market") return "PRE";
+    if (v === "post" || v === "after" || v === "aftermarket" || v === "after-hours") return "AH";
+    if (v === "regular" || v === "intraday" || v === "session") return "REG";
+    return v.toUpperCase().slice(0, 4);
+  };
+
   const inReactionWindow = (e: { pendingFrom: number }) =>
     e.pendingFrom <= now && now - e.pendingFrom < REACTION_WINDOW_MS;
 
@@ -136,13 +146,19 @@ export const GET: RequestHandler = async () => {
       // ★ %는 라이브 시세 우선(계속 갱신). Claude 스냅샷 폴백은 '발표 후'에만 유효하다
       //   (발표 전 종목에 리캡 값을 붙이면 나오지도 않은 반응을 지어내는 셈이다).
       //   stale 이어도 마지막 체결값 자체는 유효하므로 %는 보여 주되, reactionLive 로 pip 만 끈다.
-      reactionPct: live ? live.changePct : (movePhase === "reaction" ? (r?.reactionPct ?? null) : null),
+      // ★ 실적 반응 %는 **발표 후 24시간이 지나도 사라지면 안 된다**.
+      //   "인텔이 실적에 -7.9% 반응했다"는 지나간 사실이지 무효가 되는 값이 아니다.
+      //   예전에는 24시간 창 밖이면 null 로 지워서, 이틀 전 발표는 EPS 만 남고
+      //   정작 시청자가 제일 궁금해하는 "그래서 얼마나 빠졌는데?"가 안 보였다.
+      //   대신 **라이브인지 그날의 스냅샷인지**를 구분해서 라벨로 정직하게 밝힌다.
+      reactionPct: live ? live.changePct : (r?.reactionPct ?? null),
       reactionWhen: liveFresh
         ? live!.session === "pre" ? "PRE" : live!.session === "post" ? "AH" : "LIVE"
-        : (movePhase === "reaction"
-            ? (r?.reactionWhen ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null))
-            : null),
+        : normWhen(r?.reactionWhen)
+          ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null),
       reactionLive: liveFresh, // 진짜 라이브(최근 체결)일 때만 맥동 pip
+      // 라이브가 아니라 발표 당시 스냅샷이면 UI 가 "ON REPORT" 로 표시한다
+      reactionSnapshot: !live && r?.reactionPct != null,
       // ★ 세션별 분해 — "정규장에서 어떻게 끝났나 + 시간외에서 얼마나 더" 를 나눠 보여 준다
       regularPct: live?.regularPct ?? null,
       postPct: live?.postPct ?? null,
@@ -166,7 +182,7 @@ export const GET: RequestHandler = async () => {
       // 발표된 것끼리는 최근 발표가 위, 예정끼리는 가까운 것이 위
       return ra === 1 ? a.ts - b.ts : b.ts - a.ts;
     })
-    .slice(0, 8);
+    .slice(0, 5);
 
   // ── UPCOMING (다가오는 주요 이벤트 2개) ─────────────────
   // Claude 가 고른 거시 일정(FOMC/CPI 등 — Finnhub 무료는 경제 캘린더 403 이라 API 대체 불가)과
@@ -209,7 +225,29 @@ export const GET: RequestHandler = async () => {
     .slice(0, 2);
   const next = nextEvents[0] ?? null;
 
-  return new Response(JSON.stringify({ next, nextEvents, macroEvents, earningsEvents, upcoming }), {
+  // ── MARKET REACTION — "시장을 움직인 종목" ────────────────
+  //  ★ 리캡에는 반응 %가 있는데 화면엔 안 나오던 문제를 여기서 푼다.
+  //    EARNINGS 목록은 Finnhub 실적 캘린더의 시간창 안에 있는 종목만 담는다.
+  //    그래서 TSLA(-14.5%)·GOOGL(-4.2%) 처럼 며칠 전에 발표해 창을 벗어난 종목은
+  //    반응 데이터를 갖고 있으면서도 **어디에도 표시되지 않았다**.
+  //    → 리캡 전체를 독립 패널로 내보낸다. 시청자가 제일 궁금해하는 "얼마나 빠졌나"다.
+  const reactions = [...recapMap.entries()]
+    .map(([ticker, r]) => {
+      const liveNow = liveReactions.get(ticker);
+      return {
+        ticker,
+        result: r.result ?? null,
+        // 라이브 시세가 있으면 그것을, 없으면 발표 당시 스냅샷을
+        pct: liveNow ? liveNow.changePct : (r.reactionPct ?? null),
+        live: !!liveNow && !liveNow.stale,
+        when: normWhen(r.reactionWhen),
+        tag: r.tag ?? null
+      };
+    })
+    .filter((x) => x.pct != null)
+    .sort((a, b) => Math.abs(b.pct as number) - Math.abs(a.pct as number));
+
+  return new Response(JSON.stringify({ next, nextEvents, macroEvents, earningsEvents, upcoming, reactions }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

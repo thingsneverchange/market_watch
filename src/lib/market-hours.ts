@@ -225,9 +225,23 @@ export function marketBell(now: Date = new Date()): MarketBell {
 //  24시간 스트림에서 "지금 이 차트가 살아 있나"를 정직하게 말하려면 이게 필요하다.
 export type FuturesSession = { open: boolean; label: string };
 
+// CME 가 **하루 종일 닫는** 날 (주식 휴장일 중 일부는 선물이 정상 거래된다).
+//  · 신정·성금요일·독립기념일·추수감사절·크리스마스 → 선물도 휴장(또는 저녁에만 재개)
+//  · 마틴루터킹데이·대통령의날·메모리얼데이·노동절 등은 선물이 단축 거래된다 →
+//    "열려 있다"고 말해도 거짓은 아니므로 여기 넣지 않는다.
+//  완벽한 CME 캘린더는 아니지만, **닫힌 날 열렸다고 말하는 것**만은 막는다.
+const FUT_HOLIDAYS = new Set<string>([
+  "2026-01-01", "2026-04-03", "2026-07-03", "2026-11-26", "2026-12-25",
+  "2027-01-01", "2027-03-26", "2027-07-05", "2027-11-25", "2027-12-24"
+]);
+
 export function futuresSession(now: Date = new Date()): FuturesSession {
-  const { hour, minute, weekday } = etParts(now);
+  const { date, hour, minute, weekday } = etParts(now);
   const mins = hour * 60 + minute;
+
+  // ★ 휴장일 확인이 먼저다. 예전에는 크리스마스에도 "GLOBEX" 로 열려 있다고 표시했고,
+  //   그 상태로 Auto-Sniper 까지 돌아 "지금 급등 중"이라는 거짓말을 할 수 있었다.
+  if (FUT_HOLIDAYS.has(date)) return { open: false, label: "HOLIDAY" };
   const OPEN = 18 * 60;   // 일요일 재개장
   const CLOSE = 17 * 60;  // 일일 정비 시작 / 금요일 주간 마감
 

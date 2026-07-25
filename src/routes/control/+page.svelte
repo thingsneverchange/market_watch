@@ -92,7 +92,11 @@
   $: activePresets = activeKeys
     .map((k) => presets.find((p) => p.key === k))
     .filter((p): p is Preset => !!p);
-  $: isFutPreset = activePresets.some((p) => !!p.fut);
+  //  "fv:" 임시 키(추천 목록에서 올린 종목)도 자체 렌더 선물이다.
+  //  이걸 빼먹으면 임시 차트만 선택했을 때 1m/5m/15m 버튼이 뜨는데,
+  //  전부 5분봉으로 매핑돼서 눌러도 화면이 안 바뀐다(컨트롤이 고장난 것처럼 보인다).
+  $: isFutPreset = activePresets.some((p) => !!p.fut)
+    || activeKeys.some((k) => k.startsWith("fv:"));
   $: ranges = isFutPreset ? FUT_RANGES : INTERVALS;
   $: full = activeKeys.length >= MAX_SLOTS;
 

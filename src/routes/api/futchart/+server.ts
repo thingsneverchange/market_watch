@@ -1,5 +1,6 @@
 import type { RequestHandler } from "./$types";
 import { getFutures, type Timeframe } from "$lib/server/finviz";
+import { getIndexQuote, getIndexSeries, NAVER_INDEXES } from "$lib/server/naver";
 
 // ============================================================
 //  메인 차트용 선물 시계열
@@ -46,7 +47,95 @@ function toCandles(closes: number[], per: number) {
   return out;
 }
 
+const J = (o: any) => new Response(JSON.stringify(o), {
+  headers: { "content-type": "application/json", "cache-control": "no-store" }
+});
+
+/**
+ * 네이버 지수 — 코스피·닛케이·상해·항셍 등 **지수 원본**.
+ * Finviz 와 달리 **봉별 진짜 OHLC** 를 주므로 캔들을 지어내지 않는다.
+ * 국내 지수는 분봉이 있고, 해외 지수는 일봉만 온다(실측) → 없으면 일봉으로 내린다.
+ */
+async function naverChart(code: string, wantDay: boolean) {
+  const [q, minute] = await Promise.all([
+    getIndexQuote(code),
+    wantDay ? Promise.resolve([]) : getIndexSeries(code, "minute")
+  ]);
+  let bars = minute;
+  let daily = wantDay;
+  if (!bars.length) { bars = await getIndexSeries(code, "day"); daily = true; }
+  if (!q || bars.length < 2) {
+    return J({ ok: false, key: code, reason: q ? "no series" : "quote unavailable" });
+  }
+
+  // 방송 화면에서 260봉은 몸통이 1px 이 되어 캔들이 안 보인다 → 70개 안팎으로 묶는다.
+  //  (거래소 OHLC 를 묶는 것이므로 고가·저가가 그대로 보존된다 — Finviz 종가 묶기와 다르다)
+  const raw = bars.slice(-320);
+  const per = Math.max(1, Math.ceil(raw.length / 70));
+  const trimmed: typeof raw = [];
+  for (let i = 0; i < raw.length; i += per) {
+    const g = raw.slice(i, i + per);
+    if (!g.length) continue;
+    trimmed.push({
+      o: g[0].o,
+      h: Math.max(...g.map((x) => x.h)),
+      l: Math.min(...g.map((x) => x.l)),
+      c: g[g.length - 1].c,
+      t: g[g.length - 1].t
+    });
+  }
+  const closes = trimmed.map((b) => b.c);
+
+  // 시간축 눈금 — 라벨이 바뀌는 지점에만 찍는다 (분봉은 시:분, 일봉은 월)
+  const marks: { at: number; label: string }[] = [];
+  let prev = "";
+  trimmed.forEach((b, i) => {
+    const t = b.t;
+    // 분봉 t = YYYYMMDDHHmmss / 일봉 t = YYYYMMDD
+    const MON = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const lab = t.length >= 12
+      ? `${t.slice(8, 10)}:${t.slice(10, 12)}`
+      : (MON[Number(t.slice(4, 6)) - 1] ?? t.slice(4, 6));
+    const grp = t.length >= 12 ? t.slice(8, 10) : t.slice(4, 6);
+    if (grp !== prev && i > 0) { marks.push({ at: i, label: lab }); prev = grp; }
+    else if (!prev) prev = grp;
+  });
+  return J({
+    ok: true,
+    key: code,
+    src: "naver",
+    tf: daily ? "d1" : "m1",
+    label: NAVER_INDEXES[code] ?? code,
+    price: q.price,
+    changePct: q.changePct,
+    changeAbs: q.change,
+    // 전일 종가 = 현재값 - 변동폭 (보합선)
+    base: Number.isFinite(q.price - q.change) ? q.price - q.change : null,
+    points: closes,
+    candles: trimmed.map((b) => ({ o: b.o, h: b.h, l: b.l, c: b.c })),
+    // ★ 지어낸 봉이 아니라 거래소 OHLC 다 → 화면에서 "from 5m closes" 를 붙이지 않는다
+    realOhlc: true,
+    candleMin: null,
+    marks,
+    // 정직성: 지연 시간과 마지막 체결 시각을 그대로 넘긴다
+    delayMin: q.delayMin,
+    tradedAt: q.tradedAt,
+    status: q.status,
+    asOf: q.asOf
+  });
+}
+
 export const GET: RequestHandler = async ({ url }) => {
+  const src = url.searchParams.get("src") || "finviz";
+  if (src === "naver") {
+    const code = url.searchParams.get("key") || "KOSPI";
+    if (!(code in NAVER_INDEXES)) return J({ ok: false, key: code, reason: "unknown index" });
+    // 네이버 분봉은 **당일 장중**만 있다. 12D/14M 처럼 긴 구간을 고르면 일봉으로 가야 한다.
+    //  (안 그러면 "12D" 라고 해놓고 당일 분봉을 보여주게 된다)
+    const tfParam = url.searchParams.get("tf");
+    return naverChart(code, tfParam === "d1" || tfParam === "h1");
+  }
+
   const key = (url.searchParams.get("key") || "NQ").toUpperCase();
   const tf = TF[url.searchParams.get("tf") || "m5"] ?? "m5";
   const style = url.searchParams.get("style") === "candle" ? "candle" : "line";

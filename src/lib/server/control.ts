@@ -10,6 +10,8 @@ export type ChartPreset = {
   fut?: string;
   /** TradingView 심볼 → 정규장에서 캔들·지표를 보고 싶을 때. */
   tv?: string;
+  /** 네이버 지수 코드 → **지수 원본** + 거래소 진짜 OHLC. ETF 대체물이 아니다. */
+  nv?: string;
   /** 정직성 표기 — 지수 원본이 아니라 대체물일 때 화면과 컨트롤에 같이 띄운다. */
   note?: string;
 };
@@ -37,13 +39,17 @@ export const CHART_PRESETS: ChartPreset[] = [
   //  닛케이만 진짜 지수 선물(NKD)이 있어서 24시간 나온다.
   //  코스피·중국은 무료로 지수 원본을 주는 곳이 없어 **미국상장 ETF 대체물**을 쓴다.
   //  → 미국 정규장에만 움직이고 환율이 섞인다. 화면에 그대로 밝힌다.
-  { key: "nkd",  label: "NIKKEI 225",   fut: "NKD", tv: "AMEX:EWJ" },
-  { key: "kospi",label: "KOSPI",                    tv: "AMEX:EWY",
-    note: "EWY ETF proxy · US hours" },
-  { key: "chn",  label: "CHINA",                    tv: "AMEX:FXI",
-    note: "FXI ETF proxy · US hours" },
-  { key: "chna", label: "CHINA A-SHARE",            tv: "AMEX:ASHR",
-    note: "ASHR ETF proxy · US hours" },
+  //  ★ 전부 **지수 원본**이다 (예전엔 EWY/FXI 같은 미국상장 ETF 대체물이었다 —
+  //     환율이 섞이고 미국 시간에만 움직여서 "코스피"라 부르기 민망했다).
+  //     네이버가 지수 원본 + 거래소 진짜 OHLC 를 주고 서버 IP 에서도 200 이다(실측).
+  { key: "kospi",label: "KOSPI",        nv: "KOSPI" },
+  { key: "kosdaq",label: "KOSDAQ",      nv: "KOSDAQ" },
+  { key: "nkd",  label: "NIKKEI 225",   fut: "NKD", nv: ".N225" },
+  { key: "chn",  label: "SHANGHAI",     nv: ".SSEC" },
+  { key: "hsi",  label: "HANG SENG",    nv: ".HSI" },
+  //  지수 **원본** — TradingView 무료 임베드가 못 그리는 것들이다
+  { key: "ixic", label: "NASDAQ COMP",  nv: ".IXIC" },
+  { key: "dji",  label: "DOW JONES",    nv: ".DJI" },
   { key: "koru", label: "KORU 3X",                  tv: "AMEX:KORU",
     note: "3x leveraged Korea ETF" },
   // ── 유럽 ──

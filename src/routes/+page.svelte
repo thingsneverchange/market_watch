@@ -53,6 +53,10 @@
   let calendarStale = false;
   let nowMs = Date.now(); // 1초 틱 — 뉴스 나이(ago)·이벤트 카운트다운을 매초 갱신
   let upcoming: any[] = []; // 다가오는 실적 상세 리스트
+  // MARKET REACTION — 시장을 실제로 움직인 종목 + 거시 이벤트.
+  //  실적 목록(EARNINGS)은 Finnhub 캘린더 시간창 안의 종목만 담아서, 며칠 전에 발표한
+  //  TSLA(-14.5%)·GOOGL(-4.2%) 같은 종목은 반응 데이터가 있어도 화면 어디에도 안 나왔다.
+  let reactions: any[] = [];
 
   // ---- 속보 토스트 (단일 소유자) ----
   // 예전에는 전역 변수 1개 + writer 2개(자동/수동) + 추적되지 않는 setTimeout N개 구조라
@@ -85,7 +89,7 @@
   const IV_LABEL: Record<string, string> = { "1": "1m", "5": "5m", "15": "15m", "60": "1H", "D": "1D" };
   // 화면 표기용 한국어 매핑 (템플릿의 {@const} 는 타입 주석을 못 쓰므로 여기 둔다)
   const CONF_LABEL: Record<string, string> = { high: "HIGH", medium: "MED", low: "LOW" };
-  const WHEN_LABEL: Record<string, string> = { PRE: "PRE", AH: "AH", LIVE: "LIVE" };
+  const WHEN_LABEL: Record<string, string> = { PRE: "PRE", AH: "AH", LIVE: "LIVE", REG: "REGULAR" };
 
   // 차트 배지 세션 문구 — marketState() 는 순수 NYSE 시계라서 크로스에셋엔 거짓말을 한다.
   //   BTC 차트(BINANCE:BTCUSDT)는 주말에도 실시간인데 "WEEKEND" 라고 찍혔다.
@@ -101,10 +105,10 @@
   // ── 차트 슬롯 (최대 4개) ───────────────────
   //  어떤 소스로 그릴지는 **서버가 정해서** 내려준다(mode: "tv" | "fut").
   //  클라이언트마다 시각이 달라 화면이 엇갈리는 것을 막기 위해서다.
-  type Slot = { key: string; label: string; note: string; mode: "tv" | "fut";
-    tvSymbol: string; futKey: string; sniper?: boolean; why?: string };
+  type Slot = { key: string; label: string; note: string; mode: "tv" | "fut" | "nv";
+    tvSymbol: string; futKey: string; nvCode?: string; sniper?: boolean; why?: string };
   let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut",
-    tvSymbol: "NASDAQ:QQQ", futKey: "NQ" }];
+    tvSymbol: "NASDAQ:QQQ", futKey: "NQ", nvCode: "" }];
   let chartStyle: "line" | "candle" = "line";
   let chartInterval = "1";
   let ctlVersion = 0;
@@ -255,6 +259,7 @@
         }));
       }
       if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
+      if (Array.isArray(c.reactions)) reactions = c.reactions;
       calendarStale = false;
     } else {
       calendarStale = firstLoadDone;
@@ -487,14 +492,7 @@
         </div>
       {/if}
 
-      <!-- 영상 송출 중엔 이 자리(헤드라인)를 영상이 차지한다. 차트는 건드리지 않는다. -->
-      {#if video}
-        {#key video.id}
-          <LiveVideo videoId={video.id} label={video.label} />
-        {/key}
-      {/if}
-
-      <div class="panel news" class:hidden={!!video}>
+      <div class="panel news">
         <!-- 이 피드의 최신 기사 나이 최솟값이 2.4시간이라 "LIVE" 는 어떤 조건으로도 참이 될 수 없다 -->
         <div class="lbl">
           MARKET HEADLINES
@@ -516,6 +514,14 @@
           {/if}
         </div>
       </div>
+
+      <!-- 라이브 영상은 **헤드라인 아래 빈 공간**을 쓴다.
+           예전엔 헤드라인 패널을 통째로 가려서, 영상을 켜면 뉴스가 사라졌다. -->
+      {#if video}
+        {#key video.id}
+          <LiveVideo videoId={video.id} label={video.label} />
+        {/key}
+      {/if}
     </section>
 
     <!-- CENTER: 1분봉 차트 (컨트롤러 조종) -->
@@ -542,6 +548,9 @@
                 <span class="ch-meta" class:live={futSess.open}>
                   {FUT_TF_LABEL[futTf]} · {futSess.label}
                 </span>
+              {:else if sl.mode === "nv"}
+                <!-- 지수 원본. 현지 거래소 세션이라 미국 시계로 LIVE 를 주장하지 않는다. -->
+                <span class="ch-meta">INDEX</span>
               {:else}
                 <span class="ch-meta" class:live={isMarketOpen}>
                   {IV_LABEL[chartInterval] ?? chartInterval} · {marketMsg}
@@ -549,7 +558,10 @@
               {/if}
             </div>
             <div class="chart-body">
-              {#if sl.mode === "fut"}
+              {#if sl.mode === "nv"}
+                <FuturesChart src="naver" symbol={sl.nvCode ?? ""} tf={futTf} name={sl.label}
+                              compact={slots.length > 2} style={chartStyle} />
+              {:else if sl.mode === "fut"}
                 <!-- 임시 슬롯(fv:)은 라벨이 심볼코드("SB")뿐이라 이름을 넘기지 않는다.
                      그러면 차트가 소스가 준 진짜 이름("Sugar")을 쓴다. -->
                 <FuturesChart symbol={sl.futKey} tf={futTf}
@@ -658,6 +670,9 @@
                   </div>
                   {#if e.movePhase === "pre"}
                     <div class="e-when pre-print">INTO PRINT</div>
+                  {:else if e.reactionSnapshot}
+                    <!-- 지금 시세가 아니라 발표 당시의 반응이다. 라이브인 척하지 않는다. -->
+                    <div class="e-when snap">ON REPORT{e.reactionWhen && e.reactionWhen !== "REG" ? " · " + e.reactionWhen : ""}</div>
                   {:else if e.reactionWhen}
                     <div class="e-when">{WHEN_LABEL[e.reactionWhen] ?? e.reactionWhen}</div>
                   {/if}
@@ -695,6 +710,58 @@
           {/if}
         </div>
       </div>
+
+      <!-- ===== MARKET REACTION =====
+           "무엇이 시장을 움직였고 왜인가". 실적 목록과 성격이 다르다:
+           저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다. -->
+      <div class="panel react">
+        <div class="lbl">⚡ MARKET REACTION<span class="src-hint">what moved &amp; why</span></div>
+
+        {#if macroEvents.length}
+          <div class="rx-grp">MACRO</div>
+          {#each macroEvents.slice(0, 2) as ev}
+            <div class="rx-row">
+              <div class="rx-l">
+                <div class="rx-tk">{ev.title}</div>
+                <div class="rx-tag">{stars(ev.imp)}</div>
+              </div>
+              <div class="rx-r">
+                <!-- 결과가 나오기 전엔 카운트다운, 지난 뒤엔 '결과 대기'.
+                     무료 경제 캘린더가 없어 실제치/컨센서스를 못 가져온다 — 지어내지 않는다. -->
+                {#if ev.time.getTime() > nowMs}
+                  <div class="rx-when">{countdown(ev.time, ev.estimated, nowMs)}</div>
+                {:else}
+                  <div class="rx-when await">RESULT PENDING</div>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings</span></div>
+        {#each reactions.slice(0, 4) as r}
+          <div class="rx-row">
+            <div class="rx-l">
+              <div class="rx-tk">
+                {r.ticker}
+                {#if r.result === "beat"}<span class="e-res beat">BEAT</span>
+                {:else if r.result === "miss"}<span class="e-res miss">MISS</span>
+                {:else if r.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
+              </div>
+              {#if r.tag}<div class="rx-tag">{r.tag}</div>{/if}
+            </div>
+            <div class="rx-r">
+              <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0}>
+                {#if r.live}<span class="live-pip"></span>{/if}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
+              </div>
+              <div class="rx-when">{r.live ? "LIVE" : "ON REPORT" + (r.when && r.when !== "REG" ? " · " + r.when : "")}</div>
+            </div>
+          </div>
+        {/each}
+        {#if reactions.length === 0}
+          <div class="empty">No reaction data</div>
+        {/if}
+      </div>
     </section>
   </main>
 
@@ -705,7 +772,7 @@
     <div class="disc">
       <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
-      <span>Data: Finnhub · Finviz · CoinGecko</span>
+      <span>Data: Finnhub · Finviz · Naver · CoinGecko</span>
       <!-- TradingView 어트리뷰션은 **실제로 그 위젯을 띄웠을 때만** 표기한다.
            기본 차트는 자체 렌더라 항상 붙여두면 사실과 다르다. -->
       {#if anyTv}
@@ -858,6 +925,27 @@
   .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
   /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
   .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
+  /* 발표 당시 스냅샷 — 라이브와 색을 달리해 헷갈리지 않게 */
+  /* ===== MARKET REACTION ===== */
+  .rx-grp { font-size: 10px; font-weight: 800; color: #6b7280; letter-spacing: 0.1em;
+    margin: 6px 0 3px; display: flex; align-items: baseline; gap: 6px; }
+  .rx-grp:first-of-type { margin-top: 2px; }
+  .rx-sub { font-size: 9px; font-weight: 700; color: #4b5563; letter-spacing: 0.04em; }
+  .rx-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 5px 9px; border: 1px solid #191c22; border-radius: 7px; background: #0b0e13;
+    margin-bottom: 4px; }
+  .rx-l { min-width: 0; }
+  .rx-tk { font-size: 13px; font-weight: 800; color: #e8edf4; display: flex; align-items: center; gap: 5px; }
+  .rx-tag { font-size: 10px; color: #8a919b; font-weight: 600; margin-top: 1px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rx-r { text-align: right; flex-shrink: 0; min-width: 78px; }
+  .rx-pct { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rx-pct.u { color: #39d98a; }
+  .rx-pct.d { color: #ff5c5c; }
+  .rx-when { font-size: 9px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
+  .rx-when.await { color: #d8a860; }
+
+  .e-when.snap { color: #5b6472; letter-spacing: 0.02em; font-size: 10px; white-space: nowrap; }
   /* 세션 분해 (close / AH / pre) — 반응 %보다 작게, 보조 정보로 */
   .e-seg { display: flex; gap: 8px; justify-content: flex-end; margin-top: 3px;
     font-size: 10.5px; color: #6b7280; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -933,8 +1021,8 @@
   .chart-body { flex: 1 1 auto; min-height: 0; position: relative; }
   /* TradingView autosize 가 높이를 못 잡는 경우가 있어 1분할일 때만 최소 높이를 준다 */
   .chart-grid[data-n="1"] .chart-body { min-height: 320px; }
-  /* 영상 송출 중 헤드라인 패널은 숨긴다 (좌측 컬럼 자리를 영상이 쓴다) */
-  .news.hidden { display: none; }
+  /* 영상은 헤드라인 아래 남는 공간에 들어간다. 헤드라인은 내용만큼만 차지한다. */
+  .col.left > .news { flex: 0 0 auto; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
@@ -979,19 +1067,25 @@
         렌더되는 마크업이 하나도 없는 유령 클래스라 제거했다. movers 파이프라인 자체도 삭제됨. */
 
   /* 실적 캘린더 */
-  .earn { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .e-list { padding: 8px 12px 12px; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 7px; }
+  .earn { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 120px; }
+  /* MARKET REACTION 은 내용만큼만 차지한다 — EARNINGS 목록을 잡아먹으면 안 된다 */
+  .react { flex: 0 0 auto; padding: 0 12px 10px; }
+  .react .lbl { padding: 10px 4px 4px; }
+  .e-list { padding: 6px 12px 10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 5px; }
   .e-row {
     display: flex; justify-content: space-between; align-items: center;
-    padding: 12px 15px; background: #101318; border: 1px solid #191c22; border-radius: 10px;
+    padding: 8px 13px; background: #101318; border: 1px solid #191c22; border-radius: 9px;
   }
   .e-row.watch { border-color: #2f4a38; background: #0e1512; }
   .e-l { min-width: 0; }
-  .e-tk { font-size: 18px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
+  .e-tk { font-size: 16px; font-weight: 800; display: flex; align-items: center; gap: 6px; }
   .e-star { color: #39d98a; font-size: 13px; }
-  .e-sub { font-size: 12px; color: #8a919b; font-weight: 600; margin-top: 3px; display: flex; gap: 5px; flex-wrap: wrap; }
+  .e-sub { font-size: 11px; color: #8a919b; font-weight: 600; margin-top: 2px; display: flex; gap: 5px;
+    flex-wrap: nowrap; overflow: hidden; white-space: nowrap; }
   .e-time { color: #6b7280; }
-  .e-r { text-align: right; flex-shrink: 0; }
+  /* 반응 %·라벨이 들어갈 폭을 확보한다. 예전엔 폭이 없어 "ON REPORT · AH" 가
+     왼쪽 태그 글자 위로 겹쳐 찍혔다. */
+  .e-r { text-align: right; flex-shrink: 0; min-width: 84px; margin-left: 10px; }
   .e-dd { font-size: 16px; font-weight: 800; color: #c7cdd6; font-variant-numeric: tabular-nums; }
   .e-dd.soon { color: #f5a623; }
   .e-eps { font-size: 11px; color: #6b7280; font-weight: 700; margin-top: 2px; }

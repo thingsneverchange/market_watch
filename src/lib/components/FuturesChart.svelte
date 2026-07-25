@@ -24,6 +24,8 @@
   /** 4분할처럼 좁을 때 글자·여백을 줄인다 */
   export let compact = false;
   export let style: "line" | "candle" = "line";
+  /** "finviz" = 선물(종가 기반) / "naver" = 지수 원본(거래소 진짜 OHLC) */
+  export let src: "finviz" | "naver" = "finviz";
   /** Auto-Sniper 가 물어온 슬롯이면 이유를 표시한다 */
   export let why = "";
 
@@ -33,6 +35,8 @@
     base?: number | null; points?: number[]; marks?: { at: number; label: string }[];
     candles?: { o: number; h: number; l: number; c: number }[];
     candleMin?: number | null;
+    realOhlc?: boolean;
+    delayMin?: number; tradedAt?: string | null; status?: string;
     reason?: string;
   };
 
@@ -56,7 +60,7 @@
     const mine = ++token;
     try {
       const r = await fetch(
-        `/api/futchart?key=${encodeURIComponent(symbol)}&tf=${tf}&style=${style}`);
+        `/api/futchart?src=${src}&key=${encodeURIComponent(symbol)}&tf=${tf}&style=${style}`);
       const j: Payload = await r.json();
       if (mine !== token) return;           // 늦게 온 옛 응답은 버린다
       if (!j.ok) { err = j.reason || "no data"; data = null; return; }
@@ -68,7 +72,7 @@
   }
 
   // 심볼·주기·표시방식이 바뀌면 즉시 다시 받는다
-  $: symbol, tf, style, load();
+  $: symbol, tf, style, src, load();
 
   onMount(() => {
     ro = new ResizeObserver(([e]) => {
@@ -91,6 +95,8 @@
 
   $: candles = data?.candles ?? [];
   $: isCandle = style === "candle" && candles.length > 1;
+  // 거래소 진짜 OHLC 면 "5분 종가로 만든 봉" 고지를 붙이면 안 된다
+  $: realOhlc = data?.realOhlc === true;
 
   // 보합선도 범위에 넣어야 한다. 값이 종일 정산가 위에 있으면 선이 화면 밖으로 밀린다.
   //  캔들이면 꼬리(고가·저가)까지 넣어야 위아래가 잘리지 않는다.
@@ -185,10 +191,15 @@
         <!-- 차트가 왜 이걸로 바뀌었는지 밝힌다 (근거 없이 바뀌면 시청자가 못 따라온다) -->
         <div class="fc-why">{why}</div>
       {/if}
-      {#if isCandle && data?.candleMin}
+      {#if isCandle && !realOhlc && data?.candleMin}
         <!-- 진짜 틱 캔들이 아니라 5분 종가를 묶은 봉이다. 숨기지 않는다.
              (하단에 두면 시간축 라벨과 겹친다) -->
         <div class="fc-src">{data.candleMin}m bars · from 5m closes</div>
+      {:else if realOhlc}
+        <!-- 지연 여부를 그대로 밝힌다 (해외 지수는 15분 지연) -->
+        <div class="fc-src">
+          exchange OHLC{data?.delayMin ? ` · ${data.delayMin}m delayed` : ""}
+        </div>
       {/if}
     </div>
   {/if}
