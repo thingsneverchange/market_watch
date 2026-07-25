@@ -138,7 +138,8 @@
     const now = new Date();
     nowMs = now.getTime(); // 뉴스 나이 재계산용 (정지된 헤드라인도 매초 늙는다)
     etNow = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
+      // 초까지 넣으면 폭이 매초 흔들리고(숫자 폭 변화) 헤더가 접힌다. 분까지면 충분하다.
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: true
     }).format(now);
 
     // 휴장일·조기폐장까지 아는 공용 시장시계. 예전에는 이 로직이 서버/클라에 복붙돼 있었고
@@ -239,15 +240,16 @@
     const t = new Intl.DateTimeFormat("en-US", {
       timeZone: "America/New_York", month: "2-digit", day: "2-digit",
       hour: "2-digit", minute: "2-digit", hour12: false
-    }).format(new Date(dataAsOf));
+    }).format(new Date(dataAsOf)).replace(",", "");
 
+    // 헤더 폭이 빠듯하다 — 라벨을 짧게 유지한다(두 줄로 접히면 송출 프레임이 흔들린다).
     if (open) {
-      if (ageMin > 15) return { cls: "dead", text: `STALE ${t} ET` };
-      if (ageMin > 2) return { cls: "stale", text: `LAG ${t} ET` };
-      return { cls: "", text: `${t} ET` };
+      if (ageMin > 15) return { cls: "dead", text: `STALE ${t}` };
+      if (ageMin > 2) return { cls: "stale", text: `LAG ${t}` };
+      return { cls: "", text: t };
     }
     // 장 밖에서는 전일 종가인 게 정상이다 — 경보가 아니라 사실을 표기한다.
-    return { cls: "prev", text: `PREV CLOSE ${t} ET` };
+    return { cls: "prev", text: `PREV ${t}` };
   }
 
   async function jget(u: string) {
@@ -451,9 +453,11 @@
       <div class="badge" class:active={mkt.open} class:closed={!mkt.open}>
         <span class="dot"></span>
         <span class="b-main">{mkt.label}</span>
-        {#if mkt.reason}<span class="b-why">{mkt.reason}</span>{/if}
-        {#if !mkt.open && mkt.msToOpen != null}
-          <span class="b-next">opens in {reopenText(mkt.msToOpen)}</span>
+        <!-- 사유·재개장 시각은 **개장이 가까울 때만** 붙인다.
+             주말 내내 "WEEKEND · opens in 1d 18h" 를 달고 있으면 헤더가 두 줄로 접힌다.
+             (세션 구분은 시세 스트립의 세션 배지가 이미 담당한다) -->
+        {#if !mkt.open && mkt.msToOpen != null && mkt.msToOpen < 6 * 3600_000}
+          <span class="b-next">{reopenText(mkt.msToOpen)}</span>
         {/if}
       </div>
       <!-- 개장/마감 임박 카운트다운 (마지막 1시간에만, 마지막 5분엔 맥동) -->
@@ -961,6 +965,7 @@
   .idx { display: flex; gap: 7px; font-size: 15px; font-weight: 600; align-items: baseline; white-space: nowrap; }
   .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
 
+  .hd-r { flex-wrap: nowrap; white-space: nowrap; }
   .hd-r { display: flex; align-items: center; gap: 14px; }
   .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .clock .tz { color: #6b7280; font-size: 13px; font-weight: 600; }

@@ -493,12 +493,40 @@ function mapNews(n: any, ticker?: string): NewsItem {
 }
 
 // 시장 전체 뉴스
+/** 마지막으로 성공한 뉴스 — 재시작·일시장애 때 화면이 비지 않게 붙잡아 둔다 */
+let lastGoodNews: NewsItem[] = [];
+
 export async function getMarketNews(limit = 20): Promise<NewsItem[]> {
-  const j = await fhFetch(`/news?category=general`, 60_000);
-  if (!Array.isArray(j)) return [];
+  let j = await fhFetch(`/news?category=general`, 60_000);
+
+  // ★ 24시간 방송에서 "NO NEWS FEED" 는 사고다.
+  //   재시작 직후엔 캐시가 비어 있어서, 첫 요청이 한 번만 실패해도(429 등)
+  //   fhFetch 의 stale 폴백이 붙잡을 값조차 없어 화면이 통째로 빈다.
+  //   실제로 배포로 PM2 를 연달아 재시작하면서 이 상태가 재현됐다.
+  //   → 캐시가 없는 상태에서 실패하면 **백오프를 우회해 한 번 더** 시도한다.
+  if (!Array.isArray(j) && lastGoodNews.length === 0 && FINNHUB_API_KEY) {
+    try {
+      const r = await fetch(`${BASE}/news?category=general&token=${FINNHUB_API_KEY}`, { cache: "no-store" });
+      if (r.ok) {
+        const retry = await r.json();
+        if (Array.isArray(retry)) {
+          j = retry;
+          cache.set(`/news?category=general`, { at: Date.now(), data: retry });
+          failUntil.delete(`/news?category=general`);
+          console.warn("[finnhub] 뉴스 콜드스타트 재시도 성공");
+        }
+      }
+    } catch { /* 그래도 실패하면 아래에서 마지막 성공분으로 간다 */ }
+  }
+
+  // 그래도 못 받으면 마지막 성공분을 쓴다 — 빈 화면보다 낫다.
+  // (나이는 각 기사의 epoch 로 화면에 그대로 드러나므로 오래된 걸 숨기는 게 아니다)
+  if (!Array.isArray(j)) return lastGoodNews.slice(0, limit);
   // ※ 예전 코드는 정렬 '전에' slice(0,60) 을 해서, 피드가 시간순이 아니면
   //   진짜 최신 기사가 60번째 밖에서 통째로 버려졌다. map → sort → slice 순서로 고침.
-  return j.map((n) => mapNews(n)).sort((a, b) => b.epoch - a.epoch).slice(0, limit);
+  const mapped = j.map((n) => mapNews(n)).sort((a, b) => b.epoch - a.epoch);
+  if (mapped.length) lastGoodNews = mapped.slice(0, 40);
+  return mapped.slice(0, limit);
 }
 
 // 워치리스트 종목별 기업뉴스
