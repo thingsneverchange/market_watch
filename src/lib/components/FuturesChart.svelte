@@ -46,6 +46,8 @@
   let err = "";
   let timer: ReturnType<typeof setInterval> | null = null;
   let ro: ResizeObserver | null = null;
+  let sizeTimer: ReturnType<typeof setInterval> | null = null;
+  let raf = 0;
   let token = 0;   // 심볼/주기를 바꿔도 옛 응답이 새 상태를 덮지 않게
 
   // 상단 여백은 큰 시세 표기가 차지하는 높이만큼 비워 둔다 (곡선이 글자에 가리지 않게)
@@ -74,17 +76,41 @@
   // 심볼·주기·표시방식이 바뀌면 즉시 다시 받는다
   $: symbol, tf, style, src, load();
 
+  /**
+   * 크기 측정.
+   * ※ offsetWidth/Height 를 쓴다 — 이 화면은 부모에 transform: scale() 이 걸려 있어서
+   *   getBoundingClientRect() 는 **축소된 시각 크기**를 준다. SVG 는 레이아웃 픽셀 기준으로
+   *   그려야 글자·선 두께가 맞는다.
+   */
+  function measure() {
+    if (!box) return;
+    const w = box.offsetWidth, h = box.offsetHeight;
+    if (w > 0 && h > 0 && (w !== W || h !== H)) { W = w; H = h; }
+  }
+
   onMount(() => {
-    ro = new ResizeObserver(([e]) => {
-      W = Math.round(e.contentRect.width);
-      H = Math.round(e.contentRect.height);
-    });
-    ro.observe(box);
+    // ★ ResizeObserver 의 **초기 콜백에 의존하면 안 된다**.
+    //   실측: 프로덕션 빌드에서 콜백이 한 번도 안 울려 W/H 가 0 으로 남았고,
+    //   차트가 "Loading chart…" 에서 영원히 멈췄다 (데이터는 정상 수신 중인데도).
+    //   방송 화면 한가운데가 그대로 멈춘다는 뜻이라 반드시 직접 재야 한다.
+    measure();
+    // 레이아웃이 아직 안 끝났을 수 있으니 다음 프레임에 한 번 더
+    raf = requestAnimationFrame(() => { measure(); raf = requestAnimationFrame(measure); });
+    try {
+      ro = new ResizeObserver(measure);   // 이후 변화 대응 (초기값은 위에서 이미 잡았다)
+      ro.observe(box);
+    } catch { /* ResizeObserver 가 없어도 아래 폴백으로 버틴다 */ }
+    window.addEventListener("resize", measure);
+    // 마지막 안전망 — 어떤 이유로든 0 이면 계속 재시도한다 (화면이 비는 것보다 낫다)
+    sizeTimer = setInterval(() => { if (!(W > 0 && H > 0)) measure(); }, 1000);
     timer = setInterval(load, refreshMs);
   });
   onDestroy(() => {
     if (timer) clearInterval(timer);
+    if (sizeTimer) clearInterval(sizeTimer);
+    if (raf) cancelAnimationFrame(raf);
     ro?.disconnect();
+    if (typeof window !== "undefined") window.removeEventListener("resize", measure);
   });
 
   // ── 스케일 ────────────────────────────────
