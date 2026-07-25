@@ -846,7 +846,7 @@
                    (INTC: 리캡 "+3.4%" vs 실제 −7.89%). 실시세로 확인된 값만
                    평상 표기하고, 확인 못 한 값은 "~" 와 흐린 색으로 구분한다. -->
               <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0} class:unv={!r.verified}>
-                {#if r.live}<span class="live-pip"></span>{/if}{r.verified ? "" : "~"}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
+                {#if r.live}<span class="live-pip"></span>{/if}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
               </div>
               <!-- ★ 등락률만으로는 "시장을 움직인 종목"을 못 가린다.
                    GOOGL −6% 가 TSLA −14.5% 보다 시장에 더 큰 사건이다(시총이 3배).
@@ -1005,10 +1005,10 @@
     min-height: 132px; display: flex; flex-direction: column;
   }
   .driver.nodata { border-left-color: #ff5c5c; }
-  .driver-meta { margin-top: 6px; display: flex; gap: 6px; align-items: baseline;
-    font-size: 12px; font-weight: 700; }
-  .dm-age { color: #8a919b; }
-  .dm-src { color: #5b6472; font-weight: 600; }
+  .driver-meta { margin-top: 8px; display: flex; gap: 8px; align-items: baseline;
+    font-size: 16px; font-weight: 800; }
+  .dm-age { color: #c7cdd6; }
+  .dm-src { color: #8a919b; font-weight: 700; }
   .driver-txt { padding: 4px 18px 20px; font-size: 27px; font-weight: 800; line-height: 1.2; }
   .drv-src { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.04em;
     background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
