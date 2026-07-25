@@ -16,8 +16,13 @@ type Live = {
   stale: boolean;  // 마지막 체결이 오래됨 → "라이브"가 아니다 (맥동 pip 억제용)
 };
 
-const TTL_MS = 20_000; // 20초 캐시 (오버레이가 15초마다 폴링 → 티커당 사실상 매 폴링 갱신)
+// ★ 실측(2026-07): Yahoo 가 429 를 반환하기 시작했다. 원인은 요청 총량 —
+//   리액션 대상 12티커 × TTL 20s = 시간당 ~2160회 + 크로스에셋. 무료 비공식 엔드포인트엔 과했다.
+//   반응 %는 40초 granularity 로 충분하다(발표 후 몇 시간짜리 지표). TTL 을 올려 총량을 절반으로.
+const TTL_MS = 40_000;
 const FAIL_MS = 60_000;
+// 429 는 "잠깐 쉬라"는 신호다. 일반 실패(60초)와 같이 취급하면 재시도가 스로틀을 자가증폭한다.
+const RATE_LIMIT_MS = 10 * 60_000;
 
 // Yahoo 비공식 엔드포인트용 헤더. 맨 UA 만 보내면 CDN 휴리스틱에 더 쉽게 걸린다 → 현실적인 세트.
 const YF_HEADERS: Record<string, string> = {
@@ -46,6 +51,9 @@ function etMinutes(ms: number): number {
   return h * 60 + m;
 }
 
+/** 429 를 만나면 이 시각까지 **모든 티커**의 요청을 멈춘다 (스로틀은 티커별이 아니라 IP 단위다) */
+let globalRateLimitUntil = 0;
+
 async function fetchOne(ticker: string): Promise<Live | null> {
   const url =
     `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(ticker)}` +
@@ -54,6 +62,12 @@ async function fetchOne(ticker: string): Promise<Live | null> {
   const timer = setTimeout(() => ctl.abort(), 3500);
   try {
     const r = await fetch(url, { headers: YF_HEADERS, signal: ctl.signal, cache: "no-store" });
+    if (r.status === 429) {
+      // 지터를 섞어 백오프 해제 시각이 몰리지 않게 한다
+      globalRateLimitUntil = Date.now() + RATE_LIMIT_MS + Math.floor(Math.random() * 60_000);
+      console.warn("[livequote] Yahoo 429 — 10분간 요청 중단");
+      return null;
+    }
     if (!r.ok) return null;
     const j: any = await r.json();
     const res = j?.chart?.result?.[0];
@@ -107,6 +121,8 @@ export async function getLiveReaction(ticker: string): Promise<Live | null> {
   const now = Date.now();
   const hit = cache.get(ticker);
   if (hit && now - hit.at < TTL_MS) return hit.data;
+  // 429 백오프 중엔 네트워크를 아예 건드리지 않는다 (마지막 값이 있으면 그것만 돌려준다)
+  if (globalRateLimitUntil > now) return hit?.data ?? null;
   if ((failUntil.get(ticker) ?? 0) > now) return hit?.data ?? null;
 
   const running = inflight.get(ticker);

@@ -69,7 +69,18 @@ export const GET: RequestHandler = async () => {
     .filter((e) => inReactionWindow(e))
     .sort((a, b) => b.ts - a.ts)
     .map((e) => e.ticker);
-  const reactionTargets = [...new Set([...recapMap.keys(), ...reportedTickers])].slice(0, 12);
+
+  // ★ "오늘 발표 예정"인 종목도 라이브 시세를 붙인다 — 발표 **전** 주가가 어떻게 움직이는지
+  //   (기대감/경계감)가 시청자에게 의미 있다. 단, 이건 '실적 반응'이 아니라 '당일 등락'이므로
+  //   아래에서 phase 를 구분해 라벨을 다르게 준다 (INTO PRINT vs 반응).
+  const todayTickers = future
+    .filter((e) => ddays(e.date) === 0 && e.pendingFrom > now)
+    .map((e) => e.ticker);
+
+  // ★ 요청 총량 관리: Yahoo 는 비공식 무료 엔드포인트라 IP 단위 429 가 실재한다(실측).
+  //   화면에 실제로 보이는 만큼만 조회한다 — 6개면 상단 실적 행을 모두 덮는다.
+  //   (12개 × 짧은 TTL 이 시간당 요청을 2천 회대로 밀어올려 429 를 유발했다)
+  const reactionTargets = [...new Set([...recapMap.keys(), ...reportedTickers, ...todayTickers])].slice(0, 6);
   const liveReactions = reactionTargets.length ? await getLiveReactions(reactionTargets) : new Map();
 
   /**
@@ -93,8 +104,14 @@ export const GET: RequestHandler = async () => {
         ? ((e.epsActual - e.epsEst) / Math.abs(e.epsEst)) * 100
         : null;
     const r = recapMap.get(e.ticker);
-    // 반응 윈도우 밖이면 라이브 %를 아예 붙이지 않는다 → 일괄 REPORTED + EPS 로 표시 (규칙 단일화).
-    const live = inReactionWindow(e) ? liveReactions.get(e.ticker) : undefined;
+    // 두 국면을 구분한다:
+    //  · reaction  = 발표 후 24시간 → 이건 '실적 반응'
+    //  · pre       = 오늘 발표 예정(아직 전) → 이건 '발표를 앞둔 당일 등락'이지 반응이 아니다
+    //  그 외(이틀 지난 발표 등)엔 %를 아예 붙이지 않는다 → REPORTED + EPS 로 통일.
+    const isPrePrint = e.pendingFrom > now && ddays(e.date) === 0;
+    const movePhase: "reaction" | "pre" | null =
+      inReactionWindow(e) ? "reaction" : isPrePrint ? "pre" : null;
+    const live = movePhase ? liveReactions.get(e.ticker) : undefined;
     // 라이브지만 마지막 체결이 오래됐으면(주말·야간·거래정지) "라이브"가 아니다 → pip 을 끈다.
     const liveFresh = !!live && !live.stale;
     // 리캡의 result 를 Finnhub epsActual 보다 우선한다 (무료 소스는 발표 직후 null 이라 늦다)
@@ -116,13 +133,17 @@ export const GET: RequestHandler = async () => {
       ts: e.ts,
       // 최근 실적 결과 + 시장반응 (Claude 리캡 우선, 없으면 Finnhub 실제값에서 유도)
       result, // beat | miss | inline | null
-      // ★ 반응 %는 라이브 시세 우선(계속 갱신), Yahoo 실패/부재 시 Claude 스냅샷으로 폴백.
-      //   stale 이어도 마지막 체결값 자체는 유효하므로 %는 보여 주되, 아래 reactionLive 로 pip 만 끈다.
-      reactionPct: live ? live.changePct : (r?.reactionPct ?? null),
+      // ★ %는 라이브 시세 우선(계속 갱신). Claude 스냅샷 폴백은 '발표 후'에만 유효하다
+      //   (발표 전 종목에 리캡 값을 붙이면 나오지도 않은 반응을 지어내는 셈이다).
+      //   stale 이어도 마지막 체결값 자체는 유효하므로 %는 보여 주되, reactionLive 로 pip 만 끈다.
+      reactionPct: live ? live.changePct : (movePhase === "reaction" ? (r?.reactionPct ?? null) : null),
       reactionWhen: liveFresh
         ? live!.session === "pre" ? "PRE" : live!.session === "post" ? "AH" : "LIVE"
-        : (r?.reactionWhen ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null)),
+        : (movePhase === "reaction"
+            ? (r?.reactionWhen ?? (live ? (live.session === "pre" ? "PRE" : live.session === "post" ? "AH" : null) : null))
+            : null),
       reactionLive: liveFresh, // 진짜 라이브(최근 체결)일 때만 맥동 pip
+      movePhase,              // "reaction"(발표 후) | "pre"(오늘 발표 예정) | null → UI 라벨 분기
       tag: r?.tag ?? null,
       time: new Date(e.ts).toISOString()
     };
@@ -149,36 +170,41 @@ export const GET: RequestHandler = async () => {
   const aiEvent = fresh(feed, "key_event");
   const aiTs = aiEvent ? Date.parse(aiEvent.payload.whenET) : NaN;
 
-  type Ev = { title: string; ts: number; estimated: boolean; note: string; imp: number; origin: "ai" | "rule" };
-  const evPool: Ev[] = [];
+  // ★ 성격이 다른 두 종류를 섞지 않는다 — 화면에서 따로 그룹으로 보여 준다.
+  //   · MACRO  = 거시/정책 일정 (FOMC·CPI 등). Finnhub 무료는 경제 캘린더 403 이라 Claude 가 채운다.
+  //   · EARNINGS = 개별 종목 실적 (Finnhub 캘린더)
+  const macroEvents = [];
   if (aiEvent && Number.isFinite(aiTs) && aiTs > now - 2 * 3600e3) {
-    evPool.push({
-      title: aiEvent.payload.title, ts: aiTs, estimated: aiEvent.payload.estimated,
-      note: aiEvent.payload.note, imp: aiEvent.payload.importance, origin: "ai"
+    macroEvents.push({
+      title: aiEvent.payload.title,
+      time: new Date(aiTs).toISOString(),
+      estimated: aiEvent.payload.estimated,
+      note: aiEvent.payload.note,
+      imp: aiEvent.payload.importance,
+      origin: "ai" as const
     });
   }
-  for (const e of upcomingOnly) {
-    evPool.push({
-      title: `${e.ticker} EARNINGS${e.hour === "bmo" ? " · PRE-MKT" : e.hour === "amc" ? " · AFTER-MKT" : ""}`,
-      ts: e.ts,
-      // 시각이 추정치면 정밀 카운트다운을 주장하지 않는다 (IN ~3d 로 낮춘다)
-      estimated: e.hour !== "bmo" && e.hour !== "amc",
-      note: "", imp: watchSet.has(e.ticker) ? 5 : 4, origin: "rule"
-    });
-  }
-  const seenT = new Set<string>();
-  const nextEvents = evPool
-    .sort((a, b) => a.ts - b.ts)
-    .filter((e) => (seenT.has(e.title) ? false : (seenT.add(e.title), true)))
-    .slice(0, 2)
-    .map((e) => ({
-      title: e.title, time: new Date(e.ts).toISOString(),
-      estimated: e.estimated, note: e.note, imp: e.imp, origin: e.origin
-    }));
 
-  const next = nextEvents[0] ?? null; // 하위호환
+  const earningsEvents = upcomingOnly.slice(0, 3).map((e) => ({
+    ticker: e.ticker,
+    title: `${e.ticker} EARNINGS`,
+    time: new Date(e.ts).toISOString(),
+    session: hourLabel(e.hour),          // PRE-MKT | AFTER-MKT | INTRADAY
+    // 시각이 추정치면 정밀 카운트다운을 주장하지 않는다 (IN ~3d 로 낮춘다)
+    estimated: e.hour !== "bmo" && e.hour !== "amc",
+    dday: ddays(e.date),
+    watch: watchSet.has(e.ticker),
+    imp: watchSet.has(e.ticker) ? 5 : 4,
+    origin: "rule" as const
+  }));
 
-  return new Response(JSON.stringify({ next, nextEvents, upcoming }), {
+  // 하위호환: 두 종류를 시간순으로 합친 예전 형태도 계속 내보낸다
+  const nextEvents = [...macroEvents, ...earningsEvents]
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time))
+    .slice(0, 2);
+  const next = nextEvents[0] ?? null;
+
+  return new Response(JSON.stringify({ next, nextEvents, macroEvents, earningsEvents, upcoming }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

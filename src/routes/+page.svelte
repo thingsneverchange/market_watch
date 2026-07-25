@@ -26,9 +26,11 @@
   };
   // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
   let brief: any[] = [];
-  // UPCOMING = 다가오는 주요 이벤트 2개 (거시 일정 + 실적, 시간순). 각자 카운트다운.
+  // UPCOMING = 성격별로 분리. 거시/정책(MACRO)과 개별 실적(EARNINGS)은 보는 이유가 다르다.
   type UpEvent = { title: string; time: Date; estimated: boolean; imp: number; origin: string };
-  let upcomingEvents: UpEvent[] = [];
+  type UpEarn = UpEvent & { ticker: string; session: string; dday: number; watch: boolean };
+  let macroEvents: UpEvent[] = [];
+  let earningsEvents: UpEarn[] = [];
 
   // 패널별 신선도 — 헤더의 시세 배지는 /api/boards 만 본다. 감사 지적: /api/digest·/api/calendar 가
   // 네트워크 레벨로 실패하면 뉴스/실적 패널이 옛 값을 그대로 물고 얼어붙는데(=현재로 위장) 배지는 초록이었다.
@@ -185,11 +187,17 @@
       digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
     }
     if (c) {
-      const evs = Array.isArray(c.nextEvents) ? c.nextEvents : (c.next ? [c.next] : null);
-      if (evs) {
-        upcomingEvents = evs.map((e: any) => ({
+      if (Array.isArray(c.macroEvents)) {
+        macroEvents = c.macroEvents.map((e: any) => ({
           title: e.title, time: new Date(e.time), estimated: !!e.estimated,
-          imp: e.imp, origin: e.origin ?? "rule"
+          imp: e.imp, origin: e.origin ?? "ai"
+        }));
+      }
+      if (Array.isArray(c.earningsEvents)) {
+        earningsEvents = c.earningsEvents.map((e: any) => ({
+          title: e.title, time: new Date(e.time), estimated: !!e.estimated,
+          imp: e.imp, origin: e.origin ?? "rule",
+          ticker: e.ticker, session: e.session, dday: e.dday, watch: !!e.watch
         }));
       }
       if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
@@ -484,14 +492,35 @@
     <section class="col right">
       <div class="keyevent">
         <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
-        {#each upcomingEvents as ev, i (ev.title)}
-          <!-- 다가오는 주요 이벤트 2개. 각자 카운트다운. 두 번째는 살짝 낮춰 위계를 준다. -->
-          <div class="ke-item" class:sub={i > 0}>
-            <div class="ke-tit">{ev.title}</div>
-            <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
-          </div>
-        {/each}
-        {#if upcomingEvents.length === 0}<div class="ke-item"><div class="ke-tit">—</div></div>{/if}
+
+        <!-- 거시/정책 일정 — FOMC·CPI 등. 시장 전체를 움직인다. -->
+        {#if macroEvents.length}
+          <div class="ke-grp">MACRO</div>
+          {#each macroEvents as ev (ev.title)}
+            <div class="ke-item">
+              <div class="ke-tit">{ev.title}</div>
+              <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
+            </div>
+          {/each}
+        {/if}
+
+        <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
+        {#if earningsEvents.length}
+          <div class="ke-grp">EARNINGS</div>
+          {#each earningsEvents as ev (ev.ticker + ev.time.getTime())}
+            <div class="ke-item sub">
+              <div class="ke-el">
+                <span class="ke-tk">{ev.ticker}{#if ev.watch}<span class="ke-star">★</span>{/if}</span>
+                <span class="ke-sess">{ev.session}</span>
+              </div>
+              <div class="ke-timer">{countdown(ev.time, ev.estimated, nowMs)}</div>
+            </div>
+          {/each}
+        {/if}
+
+        {#if !macroEvents.length && !earningsEvents.length}
+          <div class="ke-item"><div class="ke-tit">—</div></div>
+        {/if}
       </div>
 
       <div class="panel earn">
@@ -518,11 +547,17 @@
               </div>
               <div class="e-r">
                 {#if e.reactionPct != null}
-                  <!-- 시장반응: 발표 후 주가 움직임. reactionLive 면 라이브 시세(계속 갱신). -->
+                  <!-- 두 국면을 라벨로 구분한다:
+                       · reaction = 발표 후 반응 (PRE/AH/LIVE)
+                       · pre      = 오늘 발표 예정 종목의 '발표 전 당일 등락' → INTO PRINT -->
                   <div class="e-react" class:u={e.reactionPct >= 0} class:d={e.reactionPct < 0}>
                     {#if e.reactionLive}<span class="live-pip"></span>{/if}{e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
                   </div>
-                  {#if e.reactionWhen}<div class="e-when">{e.reactionWhen}</div>{/if}
+                  {#if e.movePhase === "pre"}
+                    <div class="e-when pre-print">INTO PRINT</div>
+                  {:else if e.reactionWhen}
+                    <div class="e-when">{e.reactionWhen}</div>
+                  {/if}
                 {:else if e.status === "reported"}
                   <div class="e-dd rep">REPORTED</div>
                   {#if e.epsActual != null}
@@ -696,6 +731,8 @@
   .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1;
     display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
   .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
+  /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
+  .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
   /* 라이브 시세임을 알리는 맥동 점 */
   .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
     box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }
@@ -772,10 +809,17 @@
     background: linear-gradient(180deg, #12100a, #0d0f13); border: 1px solid #2a2410; border-radius: 12px;
     padding: 16px 20px;
   }
-  .ke-hdr { margin-bottom: 8px; }
+  .ke-hdr { margin-bottom: 6px; }
   .ke-lbl { color: #f5c518; font-weight: 800; font-size: 13px; letter-spacing: 0.08em; }
-  .ke-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 7px 0; }
-  .ke-item + .ke-item { border-top: 1px solid #2a2410; } /* 두 이벤트 사이 구분선 */
+  /* 그룹 라벨 — MACRO / EARNINGS 를 시각적으로 분리 */
+  .ke-grp { font-size: 10px; font-weight: 800; letter-spacing: 0.12em; color: #6b7280;
+    margin: 8px 0 2px; padding-top: 7px; border-top: 1px solid #2a2410; }
+  .ke-hdr + .ke-grp { margin-top: 0; padding-top: 0; border-top: 0; }
+  .ke-item { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 5px 0; }
+  .ke-el { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+  .ke-tk { font-size: 19px; font-weight: 800; letter-spacing: 0.01em; }
+  .ke-star { color: #39d98a; font-size: 12px; margin-left: 3px; }
+  .ke-sess { font-size: 11px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
   .ke-tit { font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
   .ke-timer { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
   /* 두 번째(다음의 다음) 이벤트는 위계를 낮춘다 */

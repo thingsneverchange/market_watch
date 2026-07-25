@@ -42,7 +42,11 @@ export type CrossQuote = {
 // 45s → 4심볼 기준 분당 최대 ~5회, 시간당 ~320회 (단일 서버 IP). Yahoo 스로틀 여유 안쪽.
 const TTL_MS = 45_000;
 const FAIL_MS = 90_000; // 실패한 심볼은 90초 쉬어 429 자가증폭을 막는다
+const RATE_LIMIT_MS = 10 * 60_000; // 429 = IP 단위 스로틀 → 전 심볼 정지
 const REQ_TIMEOUT_MS = 3500;
+
+/** 429 를 만나면 이 시각까지 모든 크로스에셋 요청을 멈춘다 */
+let globalRateLimitUntil = 0;
 
 // Yahoo 비공식 엔드포인트용 헤더 (livequote.ts 와 동일 취지 — 현실적인 브라우저 헤더).
 const YF_HEADERS: Record<string, string> = {
@@ -64,6 +68,11 @@ async function fetchOne(a: CrossAsset): Promise<CrossQuote | null> {
   const timer = setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS);
   try {
     const r = await fetch(url, { headers: YF_HEADERS, signal: ctl.signal, cache: "no-store" });
+    if (r.status === 429) {
+      globalRateLimitUntil = Date.now() + RATE_LIMIT_MS + Math.floor(Math.random() * 60_000);
+      console.warn("[crossasset] Yahoo 429 — 10분간 요청 중단");
+      return null;
+    }
     if (!r.ok) return null;
     const j: any = await r.json();
     const res = j?.chart?.result?.[0];
@@ -108,6 +117,7 @@ async function getOne(a: CrossAsset): Promise<CrossQuote | null> {
   const now = Date.now();
   const hit = cache.get(a.key);
   if (hit && now - hit.at < TTL_MS) return hit.data;
+  if (globalRateLimitUntil > now) return hit?.data ?? null;        // 429 백오프: 네트워크 미접촉
   if ((failUntil.get(a.key) ?? 0) > now) return hit?.data ?? null; // 백오프 중엔 마지막 값(있으면)
 
   const running = inflight.get(a.key);
