@@ -273,10 +273,21 @@ export const GET: RequestHandler = async () => {
     //   시각을 모르는 항목은 뒤로 보낸다.
     .sort((a, b) => b.ts - a.ts);
 
-  // 이미 지난 거시 이벤트 (최근 5개, 1주일 이내)
-  const pastMacro = recentMacro(5).map((m) => ({
-    title: m.title, whenET: m.whenET, imp: m.importance, note: m.note
-  }));
+  // ── 지난 거시 이벤트 ──────────────────────────────
+  //  1순위: 피드의 macro_recap (Claude 가 실제치·컨센서스·시장반응까지 채운다)
+  //  2순위: 우리가 직접 쌓은 기록 (제목·시각만 — 결과는 모른다)
+  //  둘 다 없으면 빈 배열이고 화면은 "collecting" 이라고 말한다.
+  const macroRecap = fresh(feed, "macro_recap")?.payload?.events;
+  const pastMacro = Array.isArray(macroRecap) && macroRecap.length
+    ? macroRecap.slice(0, 5).map((e: any) => ({
+        title: e.title, whenET: e.whenET, imp: e.importance,
+        actual: e.actual ?? null, consensus: e.consensus ?? null,
+        surprise: e.surprise ?? null, note: e.impact ?? ""
+      }))
+    : recentMacro(5).map((m) => ({
+        title: m.title, whenET: m.whenET, imp: m.importance,
+        actual: null, consensus: null, surprise: null, note: m.note
+      }));
 
   return new Response(JSON.stringify({
     next, nextEvents, macroEvents, earningsEvents, upcoming, reactions, pastMacro,

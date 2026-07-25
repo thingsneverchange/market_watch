@@ -47,9 +47,20 @@ log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${KIND:-?}" "$*" >
 die() { log "ERROR: $*"; echo "ERROR: $*" >&2; exit 1; }
 
 case "$KIND" in
-  top_story|key_event|earnings_recap|market_brief|live_videos) ;;
-  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief|live_videos" ;;
+  top_story|key_event|earnings_recap|market_brief|live_videos|macro_recap) ;;
+  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief|live_videos|macro_recap" ;;
 esac
+
+# ── LLM 호출 게이트 ───────────────────────────────────
+#  세션별 최소 간격 + 하루 총량 하드캡. 자세한 근거는 gate.sh 주석 참고.
+#  (예전엔 게이트가 없어 새벽·주말에도 20분마다 돌며 하루 282회를 썼다)
+#  --force 로 수동 실행 시엔 게이트를 건너뛴다.
+if [[ "${2:-}" != "--force" ]]; then
+  if ! "$HERE/gate.sh" "$KIND"; then
+    log "게이트에서 건너뜀 (세션 간격 또는 일일 예산)"
+    exit 0
+  fi
+fi
 
 PROMPT_FILE="$HERE/prompts/$(echo "$KIND" | tr '_' '-').md"
 [[ -f "$PROMPT_FILE" ]] || die "프롬프트 파일이 없습니다: $PROMPT_FILE"
@@ -107,18 +118,20 @@ log "성공: $RESULT"
 echo "$RESULT"
 
 # ============================================================
-#  crontab 예시  (crontab -e)
+#  crontab  (crontab -e)
 #
-#  # 30분마다 TOP STORY (미 정규장 시간대 위주로 돌리려면 시간 지정)
-#  */30 * * * *  /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh top_story
+#  ★ 이제 **모든 kind 가 gate.sh 를 통과해야** 실제 LLM 호출이 일어난다.
+#    그래서 cron 은 단순히 자주 두드리기만 하면 되고, "언제 얼마나" 는 게이트가 정한다.
+#    (예전엔 cron 주기가 곧 호출 횟수였고, 세션을 안 봐서 하루 282회를 썼다)
 #
-#  # 6시간마다 NEXT KEY EVENT
-#  17 */6 * * *  /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh key_event
+#  */10 * * * * /home/market-feed/feed-server/cron/update-feed.sh top_story      >/dev/null 2>&1
+#  */10 * * * * /home/market-feed/feed-server/cron/update-feed.sh market_brief   >/dev/null 2>&1
+#  */10 * * * * /home/market-feed/feed-server/cron/update-feed.sh earnings_recap >/dev/null 2>&1
+#  */10 * * * * /home/market-feed/feed-server/cron/update-feed.sh live_videos    >/dev/null 2>&1
+#  */30 * * * * /home/market-feed/feed-server/cron/update-feed.sh key_event      >/dev/null 2>&1
+#  */30 * * * * /home/market-feed/feed-server/cron/update-feed.sh macro_recap    >/dev/null 2>&1
 #
-#  # 매일 한국시간 오전 7시 실적 해설
-#  # 실적 리캡 (최근 발표 결과+반응) — 정규장 마감 후 자주
-#  */20 * * * *  /Users/yongjulee/Desktop/market-feed/cron/update-feed.sh earnings_recap
+#  예산 조정:  .env 에  DAILY_LLM_BUDGET=20   (기본 20)
+#  수동 강제:  ./update-feed.sh top_story --force   ← 게이트 무시
 #
-#  ※ 맥이 잠자면 cron 은 안 돕니다. 상시 갱신이 필요하면
-#     시스템 설정 > 배터리 > "디스플레이 꺼짐 시 자동 잠자기 방지" 를 켜세요.
-# ============================================================
+#  예상 호출량:  평일 20회 / 주말 5회  (기존 282회/일)

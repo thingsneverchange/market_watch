@@ -740,8 +740,16 @@
         {#each pastMacro as ev}
           <div class="rx-row past">
             <div class="rx-l">
-              <div class="rx-tk">{ev.title}</div>
-              <div class="rx-tag">{stars(ev.imp)}</div>
+              <div class="rx-tk">
+                {ev.title}
+                <!-- 예상 대비 어떻게 나왔나. 좋다/나쁘다가 아니라 방향 표기다. -->
+                {#if ev.surprise === "hot"}<span class="e-res miss">HOT</span>
+                {:else if ev.surprise === "cool"}<span class="e-res beat">COOL</span>
+                {:else if ev.surprise === "inline"}<span class="e-res inline">IN LINE</span>{/if}
+              </div>
+              <div class="rx-tag">
+                {#if ev.actual}<b class="mx-a">{ev.actual}</b>{#if ev.consensus}<span class="mx-c">vs {ev.consensus}</span>{/if} · {/if}{ev.note || stars(ev.imp)}
+              </div>
             </div>
             <div class="rx-r">
               <div class="rx-when done">{macroAgo(ev.whenET, nowMs)}</div>
@@ -979,7 +987,9 @@
   .rx-when { font-size: 9px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
   .rx-when.await { color: #d8a860; }
   .rx-when.done { color: #5b6472; }
-  .rx-row.past { opacity: 0.72; }
+  .rx-row.past { opacity: 0.85; }
+  .mx-a { color: #c7cdd6; font-weight: 800; }
+  .mx-c { color: #6b7280; font-weight: 600; margin-left: 3px; }
   .rx-note { font-size: 10px; color: #4b5563; font-weight: 600; padding: 2px 2px 6px; }
 
   .e-when.snap { color: #5b6472; letter-spacing: 0.02em; font-size: 10px; white-space: nowrap; }

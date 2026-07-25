@@ -56,6 +56,19 @@ export type MarketBrief = {
   }[];
 };
 
+/** 최근 7일 거시 지표 결과 + 시장 반응. 무료 경제 캘린더가 없어 Claude 가 채운다. */
+export type MacroRecap = {
+  events: {
+    title: string;
+    whenET: string;
+    actual: string | null;
+    consensus: string | null;
+    surprise: "hot" | "inline" | "cool";
+    impact: string;
+    importance: number;
+  }[];
+};
+
 export type Feed = {
   serverNow: number;
   items: {
@@ -64,6 +77,7 @@ export type Feed = {
     earnings_note?: FeedItem<EarningsNote>;
     earnings_recap?: FeedItem<EarningsRecap>;
     market_brief?: FeedItem<MarketBrief>;
+    macro_recap?: FeedItem<MacroRecap>;
   };
 };
 

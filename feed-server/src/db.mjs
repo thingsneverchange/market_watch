@@ -19,7 +19,9 @@ export const KINDS = {
   // 예정 이벤트는 시작시각을 실어 화면이 카운트다운·LIVE NOW 뱃지를 계산한다.
   market_brief: { maxAgeMs: 4 * 3600_000, label: "TODAY BRIEF" },
   // 라이브/예정 방송 후보 (연준 회견·정부 이벤트·실적콜). 사람이 /control 에서 골라 송출한다.
-  live_videos: { maxAgeMs: 3 * 3600_000, label: "LIVE VIDEOS" }
+  live_videos: { maxAgeMs: 3 * 3600_000, label: "LIVE VIDEOS" },
+  // 최근 7일 거시 지표 결과 + 시장 반응. 하루 1회만 생성하므로 신선도 기준도 넉넉하게.
+  macro_recap: { maxAgeMs: 30 * 3600_000, label: "MACRO RECAP" }
 };
 
 let db;
