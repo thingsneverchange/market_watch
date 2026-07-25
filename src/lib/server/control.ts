@@ -26,20 +26,40 @@ export const CHART_PRESETS: ChartPreset[] = [
   { key: "iwm",  label: "러셀2000",    tvSymbol: "AMEX:IWM" },
   { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" },
   { key: "btc",  label: "BTC",        tvSymbol: "BINANCE:BTCUSDT" },
-  { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" },
-  { key: "rut",  label: "러셀2000",    tvSymbol: "AMEX:IWM" }
+  { key: "gold", label: "GOLD",       tvSymbol: "OANDA:XAUUSD" }
 ];
 
 /** 컨트롤러가 보낼 수 있는 봉 간격 화이트리스트 */
 export const INTERVALS = ["1", "5", "15", "60", "D"];
+
+/** 라이브 영상 (연준 회견 등). 시스템은 '추천'만 하고, 실제 송출은 사람이 /control 에서 결정한다. */
+export type VideoState = { id: string; label: string; at: number } | null;
 
 export type ControlState = {
   version: number;              // 바뀔 때마다 +1 (오버레이가 변화 감지)
   chartKey: string;             // 현재 차트 프리셋 key
   chartInterval: string;        // 봉 간격 ("1" = 1분)
   breaking: { id: number; headline: string; level: number; at: number } | null; // 수동 속보
+  video: VideoState;            // 송출 중인 영상 (null = 차트 표시)
   updatedAt: number;
 };
+
+/**
+ * 유튜브 URL/ID 에서 **영상 ID만** 뽑는다.
+ * 임의 문자열을 그대로 iframe src 에 넣으면 안 된다 — 형식을 강제해 주입을 차단한다.
+ * 지원: youtu.be/ID, /watch?v=ID, /live/ID, /embed/ID, 그리고 ID 자체(11자)
+ */
+export function parseYouTubeId(input: string): string | null {
+  const s = String(input || "").trim();
+  if (!s) return null;
+  const ID = /^[A-Za-z0-9_-]{11}$/;
+  if (ID.test(s)) return s;
+  const m =
+    s.match(/(?:youtu\.be\/)([A-Za-z0-9_-]{11})/) ||
+    s.match(/[?&]v=([A-Za-z0-9_-]{11})/) ||
+    s.match(/\/(?:live|embed|shorts)\/([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
+}
 
 // 모듈 레벨 = dev/프로덕션에서 단일 프로세스 동안 유지됨
 const state: ControlState = {
@@ -47,6 +67,7 @@ const state: ControlState = {
   chartKey: "ndx",
   chartInterval: "1",
   breaking: null,
+  video: null,
   updatedAt: Date.now()
 };
 
@@ -82,6 +103,24 @@ export function pushBreaking(headline: string, level = 5) {
 
 export function clearBreaking() {
   state.breaking = null;
+  state.version++;
+  state.updatedAt = Date.now();
+  return state;
+}
+
+/** 영상 송출 시작. 형식이 유효한 유튜브 ID 만 통과한다. */
+export function setVideo(input: string, label = "") {
+  const id = parseYouTubeId(input);
+  if (!id) return state; // 잘못된 입력은 무시 (방송 중 깨진 iframe 방지)
+  state.video = { id, label: String(label || "").slice(0, 60), at: Date.now() };
+  state.version++;
+  state.updatedAt = Date.now();
+  return state;
+}
+
+/** 영상 내리기 → 오버레이는 차트로 복귀 */
+export function clearVideo() {
+  state.video = null;
   state.version++;
   state.updatedAt = Date.now();
   return state;

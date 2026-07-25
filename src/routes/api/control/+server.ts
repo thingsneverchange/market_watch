@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getState, setChart, pushBreaking, clearBreaking, CHART_PRESETS } from "$lib/server/control";
+import { getState, setChart, pushBreaking, clearBreaking, setVideo, clearVideo, CHART_PRESETS } from "$lib/server/control";
 
 // 오버레이가 1.5초마다 폴링 — 현재 상태 + 프리셋 목록
 export const GET: RequestHandler = async () => {
@@ -27,6 +27,13 @@ export const POST: RequestHandler = async ({ request }) => {
       break;
     case "clearBreaking":
       clearBreaking();
+      break;
+    // 영상 송출은 사람이 판단해서 누른다 (시스템은 추천만)
+    case "video":
+      setVideo(String(body.url ?? ""), String(body.label ?? ""));
+      break;
+    case "clearVideo":
+      clearVideo();
       break;
   }
 

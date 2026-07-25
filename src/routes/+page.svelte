@@ -8,7 +8,8 @@
 
   // ---- 상태 ----
   let etNow = "";
-  let marketMsg = "LOADING";
+  let kstNow = "";
+  let marketMsg = "불러오는 중";
   let isMarketOpen = false;
   let marketSession = "CLOSED";
   let bell: MarketBell = { kind: null, ms: 0 }; // 개장/마감 임박 카운트다운
@@ -91,14 +92,21 @@
   let chartInterval = "1";
   let chartLabel = "NASDAQ 100";
   let ctlVersion = 0;
+  // 라이브 영상 (연준 회견 등). null 이면 차트를 그대로 보여준다.
+  let video: { id: string; label: string } | null = null;
 
   let scale = 1;
 
   function updateTimers() {
     const now = new Date();
     nowMs = now.getTime(); // 뉴스 나이 재계산용 (정지된 헤드라인도 매초 늙는다)
-    etNow = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
+    // 현지(미 동부) — 24시간제. 한국 시청자에게 오전/오후 혼동이 없다.
+    etNow = new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    }).format(now);
+    // 한국시간 — 미국장은 한국 밤에 열리므로 "지금 한국은 몇 시"가 실사용에 중요하다
+    kstNow = new Intl.DateTimeFormat("ko-KR", {
+      timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false
     }).format(now);
 
     // 휴장일·조기폐장까지 아는 공용 시장시계. 예전에는 이 로직이 서버/클라에 복붙돼 있었고
@@ -262,6 +270,9 @@
       if (j.tvSymbol && j.tvSymbol !== chartSymbol) chartSymbol = j.tvSymbol;
       if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
       if (j.chartLabel) chartLabel = j.chartLabel;
+      // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
+      const v = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
+      if (v?.id !== video?.id) video = v;
     }
 
     if (!manualBooted) {
@@ -374,7 +385,11 @@
       {/each}
     </div>
     <div class="hd-r">
-      <div class="clock">{etNow} <span class="et">ET</span></div>
+      <!-- 한국시간 + 현지(ET). 미국장은 한국 밤에 열리므로 둘 다 필요하다. -->
+      <div class="clocks">
+        <div class="clock kst">{kstNow} <span class="tz">한국</span></div>
+        <div class="clock">{etNow} <span class="tz">현지 ET</span></div>
+      </div>
       <!-- 항상 렌더한다. 예전에는 첫 요청이 실패하면 배지가 DOM 에 아예 생기지 않아
            오프라인 콜드스타트가 "조용한 장"처럼 보였다. -->
       <div class="upd {freshness.cls}" title="시세 기준 시각 (소스가 준 마지막 체결)">
@@ -460,15 +475,34 @@
     <section class="col center">
       <div class="chart-card">
         <div class="chart-head">
-          <span class="ch-name">{chartLabel}</span>
+          <span class="ch-name">{video ? (video.label || "라이브 영상") : chartLabel}</span>
           <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
                주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
-          <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
-            {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
-          </span>
+          {#if video}
+            <span class="ch-meta live">● 영상 송출 중</span>
+          {:else}
+            <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
+              {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
+            </span>
+          {/if}
         </div>
         <div class="chart-body">
-          <TVChart symbol={chartSymbol} interval={chartInterval} />
+          <!-- 영상이 켜지면 차트 자리를 차지한다. 차트는 컴포넌트를 유지해 복귀가 즉시 되게 둔다. -->
+          <div class="chart-slot" class:hidden={!!video}>
+            <TVChart symbol={chartSymbol} interval={chartInterval} />
+          </div>
+          {#if video}
+            {#key video.id}
+              <iframe
+                class="live-video"
+                src={`https://www.youtube-nocookie.com/embed/${video.id}?autoplay=1&mute=0&rel=0&modestbranding=1&playsinline=1&cc_load_policy=1&cc_lang_pref=ko&hl=ko`}
+                title={video.label || "라이브 영상"}
+                allow="autoplay; encrypted-media; picture-in-picture"
+                referrerpolicy="strict-origin-when-cross-origin"
+                allowfullscreen
+              ></iframe>
+            {/key}
+          {/if}
         </div>
       </div>
 
@@ -665,8 +699,12 @@
   .idx .k { color: #6b7280; font-size: 13px; letter-spacing: 0.03em; }
 
   .hd-r { display: flex; align-items: center; gap: 14px; }
+  .clocks { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.15; }
   .clock { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .clock .et { color: #6b7280; font-size: 13px; font-weight: 600; }
+  /* 한국시간을 위에 크게 (주 시청자 기준), 현지시간은 아래 작게 */
+  .clock.kst { font-size: 22px; }
+  .clocks .clock:not(.kst) { font-size: 15px; color: #9aa3ad; }
+  .clock .tz { color: #6b7280; font-size: 12px; font-weight: 600; }
   .upd {
     display: flex; align-items: center; gap: 6px;
     font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #5b8a72;
@@ -798,6 +836,10 @@
   .ch-meta.live { color: #39d98a; background: #0d1712; border-color: #16281d; }
   /* TradingView autosize가 높이를 잡도록 명시적 최소 높이 강제 (0-height 방지) */
   .chart-body { flex: 1 1 auto; min-height: 320px; position: relative; }
+  /* 차트 슬롯 — 영상 송출 중에는 숨기되 언마운트하지 않는다 (복귀 시 재로딩 지연 방지) */
+  .chart-slot { position: absolute; inset: 0; }
+  .chart-slot.hidden { visibility: hidden; }
+  .live-video { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #000; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
