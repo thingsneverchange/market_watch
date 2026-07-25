@@ -37,7 +37,8 @@ if [[ -f "$CONF" ]]; then
 fi
 
 : "${MARKET_FEED_URL:=http://127.0.0.1:6210}"
-: "${CLAUDE_MODEL:=claude-opus-4-8}"
+# 기본 모델: 이 작업들(검색→선별→JSON)은 Sonnet 5 로 충분하다. Opus 는 과사양 + 구독 사용량을 몇 배 빨리 소모.
+: "${CLAUDE_MODEL:=claude-sonnet-5}"
 LOG_DIR="${MARKET_FEED_LOG_DIR:-$ROOT/logs}"
 mkdir -p "$LOG_DIR"
 LOG="$LOG_DIR/cron.log"
@@ -81,11 +82,14 @@ fi
 [[ -n "${MARKET_WRITE_SECRET:-}" ]] || die "MARKET_WRITE_SECRET 이 .env 에 없습니다"
 
 # ── 생성 ──────────────────────────────────────────────
-log "생성 시작 (model=$CLAUDE_MODEL)"
+# kind 별 모델 오버라이드: .env 에 CLAUDE_MODEL_MARKET_BRIEF=... 식으로 두면 그 kind 만 다른 모델.
+KIND_VAR="CLAUDE_MODEL_$(printf '%s' "$KIND" | tr '[:lower:]' '[:upper:]')"
+MODEL="${!KIND_VAR:-$CLAUDE_MODEL}"
+log "생성 시작 (model=$MODEL)"
 GENERATED_AT="$(node -e 'process.stdout.write(String(Date.now()))')"
 
 RAW="$("$CLAUDE" -p "$(cat "$PROMPT_FILE")" \
-        --model "$CLAUDE_MODEL" \
+        --model "$MODEL" \
         --allowed-tools "WebSearch,WebFetch" \
         2>>"$LOG")" || die "claude 실행 실패 (로그: $LOG)"
 
@@ -96,7 +100,7 @@ fi
 # ── JSON 추출 + 검증 후 전송 ──────────────────────────
 # LLM 이 ```json 펜스나 앞뒤 설명을 붙이는 경우가 있어 관대하게 추출한다.
 # 단, 추출 실패 시 **추측해서 보내지 않는다** — 실패로 끝낸다.
-RESULT="$(RAW_TEXT="$RAW" KIND="$KIND" GEN_AT="$GENERATED_AT" MODEL="$CLAUDE_MODEL" \
+RESULT="$(RAW_TEXT="$RAW" KIND="$KIND" GEN_AT="$GENERATED_AT" MODEL="$MODEL" \
           node "$HERE/extract-and-post.mjs" 2>>"$LOG")" || die "추출/전송 실패 (로그: $LOG)"
 
 log "성공: $RESULT"
