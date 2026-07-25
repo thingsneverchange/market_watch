@@ -4,6 +4,7 @@
   import TVChart from "$lib/components/TVChart.svelte";
   import MusicPlayer from "$lib/components/MusicPlayer.svelte";
   import LiveVideo from "$lib/components/LiveVideo.svelte";
+  import Sparkline from "$lib/components/Sparkline.svelte";
   import { marketState, marketBell, marketStatus, type MarketBell, type MarketStatus } from "$lib/market-hours";
   import { onMount } from "svelte";
 
@@ -23,8 +24,8 @@
   // 지수 3슬롯은 서버가 정한다: 장중 → 현물(S&P 500…), 장 밖 → 선물(S&P FUT…).
   // 크로스에셋 4종은 항상 고정.
   // 라벨은 서버가 정한다 (소스 가용성에 따라 지수/선물, SOXX/VIX 유무가 달라진다)
-  let indexLabels: string[] = ["S&P 500", "NASDAQ", "DOW"];
-  let crossLabels: string[] = ["SOXX", "GLD", "USO", "BTC"];
+  let indexLabels: string[] = ["NASDAQ FUT", "S&P FUT", "DOW FUT"];
+  let crossLabels: string[] = ["SOXX", "GOLD", "OIL", "BTC", "VIX"];
   let showingFutures = false;
   $: headerLabels = [...indexLabels, ...crossLabels];
 
@@ -63,14 +64,11 @@
   let manualBooted = false;
   let lastManualBreakingId = 0;
 
-  // 하단 미니차트 = 주요 지수 3종(DOW·S&P 500·러셀2000). 큰 중앙차트가 NASDAQ 을 담당하므로
-  // 나머지 미국 대표지수를 여기서 보여 준다. (NYSE 종합지수는 무료 임베드 미렌더라 러셀2000 로 대체)
-  // ※ 차트 tv 심볼과 옆 % 의 label(boards.top key)을 맞춘다. ETF 프록시는 무료 임베드에서 렌더된다.
-  const MINI_CHARTS = [
-    { label: "DOW",          tv: "AMEX:DIA" },
-    { label: "S&P 500",      tv: "AMEX:SPY" },
-    { label: "RUSSELL 2000", tv: "AMEX:IWM" }
-  ];
+  // 하단 미니차트 = **지수 선물 3종(NQ·ES·YM)**, 자체 SVG 렌더.
+  //  TradingView 무료 임베드는 선물을 아예 못 그린다(실측) → 24시간 스트림에서 정작 중요한
+  //  나스닥 선물 움직임을 못 보여준다. Finviz 추이로 직접 그려 그 제약을 없앴다.
+  //  덤: iframe 3개가 사라져 24시간 방송의 메모리·CPU 부담도 크게 줄었다.
+  let minis: { key: string; label: string; pct: number; price: string; spark: number[] }[] = [];
 
   // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"
   let dataAsOf: number | null = null;
@@ -205,6 +203,7 @@
       boards = b;
       if (Array.isArray(b.indexLabels) && b.indexLabels.length) indexLabels = b.indexLabels;
       if (Array.isArray(b.crossLabels) && b.crossLabels.length) crossLabels = b.crossLabels;
+      if (Array.isArray(b.minis)) minis = b.minis;
       showingFutures = !!b.futures;
       // ★ 신선도는 소스가 준 체결 시각(dataAsOf)이다.
       //   예전 코드는 "내가 fetch 한 시각"을 찍어서, Finnhub 가 429 여도 옛 캐시만 있으면
@@ -516,19 +515,17 @@
       </div>
 
       <div class="spark-strip">
-        {#each MINI_CHARTS as mc}
-          {@const top = boards.top.find((x) => x.k === mc.label)}
+        {#each minis as m (m.key)}
           <div class="ss-card">
             <div class="ss-top">
-              <span class="ss-name">{mc.label}</span>
-              {#if top}
-                <span class="ss-pct" class:u={top.pct >= 0} class:d={top.pct < 0}>
-                  {top.pct > 0 ? "+" : ""}{Number(top.pct).toFixed(2)}%
-                </span>
-              {/if}
+              <span class="ss-name">{m.label}</span>
+              <span class="ss-px">{m.price}</span>
+              <span class="ss-pct" class:u={m.pct >= 0} class:d={m.pct < 0}>
+                {m.pct > 0 ? "+" : ""}{Number(m.pct).toFixed(2)}%
+              </span>
             </div>
-            <!-- 314x137px 슬롯에 풀 차팅 엔진을 3개 더 띄울 이유가 없다 → 경량 위젯 -->
-            <div class="ss-chart"><TVChart symbol={mc.tv} mini={true} variant="mini" /></div>
+            <!-- 자체 SVG — 선물도 그릴 수 있고 iframe 이 아니라 가볍다 -->
+            <div class="ss-chart"><Sparkline points={m.spark} up={m.pct >= 0} /></div>
           </div>
         {/each}
       </div>
@@ -652,7 +649,7 @@
     <div class="disc">
       <span>DELAYED / PREV CLOSE · For information only, not investment advice</span>
       <span class="disc-sep">·</span>
-      <span>Data: FMP &amp; Finnhub</span>
+      <span>Data: Finnhub · Finviz · CoinGecko</span>
       <span class="disc-sep">·</span>
       <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
     </div>
@@ -865,6 +862,8 @@
     display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
   .ss-top { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
   .ss-name { font-size: 12px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
+  .ss-px { margin-left: auto; margin-right: 8px; font-size: 12px; font-weight: 700; color: #c7cdd6;
+    font-variant-numeric: tabular-nums; }
   .ss-pct { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .ss-chart { flex: 1; min-height: 90px; border-radius: 6px; overflow: hidden; position: relative; }
 
