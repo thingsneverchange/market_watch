@@ -115,8 +115,10 @@ export const GET: RequestHandler = async () => {
   const briefItem = fresh(feed, "market_brief");
   const brief = briefItem?.payload.items ?? null;
 
-  const list = (signal.length >= 4 ? signal : pool)
-    .slice(0, brief && brief.length ? 3 : 4)
+  // 우측의 중복 EARNINGS 패널을 지우면서 헤드라인에 쓸 세로 공간이 늘었다.
+  // 전쟁·지정학 국면에선 관련 기사가 쏟아지므로 더 많이 보여주는 편이 낫다.
+  const list = (signal.length >= 6 ? signal : pool)
+    .slice(0, brief && brief.length ? 5 : 7)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
   return new Response(JSON.stringify({ driver, news: list, brief, serverNow: Math.floor(nowSec) }), {

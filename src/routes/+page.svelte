@@ -681,9 +681,23 @@
       <div class="keyevent">
         <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
 
-        <!-- 거시/정책 일정 — FOMC·CPI 등. 시장 전체를 움직인다. -->
+        <!-- 지표 발표 일정 — 출처가 FRED(연준)라 날짜가 확정치다 -->
+        {#if macroReleases.length}
+          <div class="ke-grp">DATA</div>
+          {#each macroReleases.slice(0, 3) as rel}
+            <div class="ke-item">
+              <div class="ke-el">
+                <span class="ke-stars">{stars(rel.imp)}</span>
+                <span class="ke-tit">{rel.name}</span>
+              </div>
+              <div class="ke-timer">{rel.date.slice(5)}</div>
+            </div>
+          {/each}
+        {/if}
+
+        <!-- 거시/정책 일정 — FOMC 등. 시장 전체를 움직인다. -->
         {#if macroEvents.length}
-          <div class="ke-grp">MACRO</div>
+          <div class="ke-grp">EVENT</div>
           {#each macroEvents as ev (ev.title)}
             <div class="ke-item">
               <div class="ke-el">
@@ -710,94 +724,22 @@
           {/each}
         {/if}
 
-        {#if !macroEvents.length && !earningsEvents.length}
+        {#if !macroEvents.length && !earningsEvents.length && !macroReleases.length}
           <div class="ke-item"><div class="ke-tit">—</div></div>
         {/if}
       </div>
 
-      <div class="panel earn">
-        <div class="lbl">📅 EARNINGS
-          {#if calendarStale}<span class="stale-chip" title="Calendar feed not responding">STALE</span>{/if}
-          <span class="src-hint">recent first</span></div>
-        <div class="e-list">
-          {#each upcoming as e}
-            <!-- 발표된 종목(결과+반응)을 위로, 예정을 아래로. 설명 문구는 없다. -->
-            <div class="e-row" class:watch={e.watch} class:done={e.status !== "upcoming"}>
-              <div class="e-l">
-                <div class="e-tk">
-                  {e.ticker}
-                  {#if e.watch}<span class="e-star">★</span>{/if}
-                  {#if e.result === "beat"}<span class="e-res beat">BEAT</span>
-                  {:else if e.result === "miss"}<span class="e-res miss">MISS</span>
-                  {:else if e.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
-                </div>
-                <div class="e-sub">
-                  <span>{e.dateET}</span>
-                  <span>{e.status === "reported" || e.status === "pending" ? "reported" : "· " + e.session}</span>
-                  {#if e.tag}<span>· {e.tag}</span>{/if}
-                </div>
-              </div>
-              <div class="e-r">
-                {#if e.reactionPct != null}
-                  <!-- 두 국면을 라벨로 구분한다:
-                       · reaction = 발표 후 반응 (PRE/AH/LIVE)
-                       · pre      = 오늘 발표 예정 종목의 '발표 전 당일 등락' → INTO PRINT -->
-                  <div class="e-react" class:u={e.reactionPct >= 0} class:d={e.reactionPct < 0}>
-                    {#if e.reactionLive}<span class="live-pip"></span>{/if}{e.reactionPct > 0 ? "+" : ""}{e.reactionPct.toFixed(1)}%
-                  </div>
-                  {#if e.movePhase === "pre"}
-                    <div class="e-when pre-print">INTO PRINT</div>
-                  {:else if e.reactionSnapshot}
-                    <!-- 지금 시세가 아니라 발표 당시의 반응이다. 라이브인 척하지 않는다. -->
-                    <div class="e-when snap">ON REPORT{e.reactionWhen && e.reactionWhen !== "REG" ? " · " + e.reactionWhen : ""}</div>
-                  {:else if e.reactionWhen}
-                    <div class="e-when">{WHEN_LABEL[e.reactionWhen] ?? e.reactionWhen}</div>
-                  {/if}
-                  <!-- 세션 분해: 정규장에서 어떻게 끝났고, 시간외에서 얼마나 더 움직였나 -->
-                  <div class="e-seg">
-                    {#if e.regularPct != null}
-                      <span>close <b class:u={e.regularPct >= 0} class:d={e.regularPct < 0}>{e.regularPct > 0 ? "+" : ""}{e.regularPct.toFixed(1)}%</b></span>
-                    {/if}
-                    {#if e.postPct != null}
-                      <span>AH <b class:u={e.postPct >= 0} class:d={e.postPct < 0}>{e.postPct > 0 ? "+" : ""}{e.postPct.toFixed(1)}%</b></span>
-                    {/if}
-                    {#if e.prePct != null}
-                      <span>pre <b class:u={e.prePct >= 0} class:d={e.prePct < 0}>{e.prePct > 0 ? "+" : ""}{e.prePct.toFixed(1)}%</b></span>
-                    {/if}
-                  </div>
-                {:else if e.status === "reported"}
-                  <div class="e-dd rep">REPORTED</div>
-                  {#if e.epsActual != null}
-                    <div class="e-eps"><b>${Number(e.epsActual).toFixed(2)}</b></div>
-                  {/if}
-                {:else if e.status === "pending"}
-                  <!-- 발표됐지만 결과·반응이 아직 집계 안 됨. 공백을 공백이라 말한다. -->
-                  <div class="e-dd pend">REPORTED</div>
-                  <div class="e-eps pend-t">awaiting</div>
-                {:else}
-                  <div class="e-dd" class:soon={e.dday <= 1}>
-                    {e.dday <= 0 ? "TODAY" : "D-" + e.dday}
-                  </div>
-                {/if}
-              </div>
-            </div>
-          {/each}
-          {#if upcoming.length === 0}
-            <div class="empty">No recent earnings</div>
-          {/if}
-        </div>
-      </div>
+      <!-- ※ 예전엔 여기 EARNINGS 패널이 따로 있었는데 UPCOMING 의 EARNINGS 그룹과
+           내용이 겹쳤다(예정 실적이 두 곳에 나왔다). 발표된 종목은 아래 MARKET REACTION
+           이 반응%까지 담당하므로 이 패널을 지우고 공간을 헤드라인에 넘겼다. -->
 
-      <!-- ===== MARKET REACTION =====
-           "무엇이 시장을 움직였고 왜인가". 실적 목록과 성격이 다르다:
-           저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다. -->
-      <div class="panel react">
-        <div class="lbl">⚡ MARKET REACTION<span class="src-hint">what moved &amp; why</span></div>
-
-        <!-- ★ 거시 지표 실제치 — 출처가 연준(FRED)이라 검증이 필요 없다.
-             LLM 이 준 값이 아니라 정부 발표 원본이다. -->
-        {#if macroReadings.length}
-          <div class="rx-grp">MACRO<span class="rx-sub">actual · FRED</span></div>
+      <!-- ===== US ECONOMY =====
+           최신 발표치 + 이전치 대비 방향. 이건 '시장 반응'이 아니라 **지표 그 자체**라
+           MARKET REACTION 과 한 패널에 두면 이름과 내용이 어긋난다.
+           출처가 연준(FRED)이라 검증 대상이 아니라 기준이다. -->
+      {#if macroReadings.length}
+        <div class="panel econ">
+          <div class="lbl">📊 US ECONOMY<span class="src-hint">latest actual · FRED</span></div>
           {#each macroReadings.slice(0, 4) as m}
             {@const hotter = m.prev != null && m.value != null && m.value > m.prev}
             <div class="rx-row">
@@ -815,22 +757,16 @@
               </div>
             </div>
           {/each}
-        {/if}
+        </div>
+      {/if}
 
-        {#if macroReleases.length}
-          <div class="rx-grp">NEXT RELEASE<span class="rx-sub">FRED schedule</span></div>
-          {#each macroReleases.slice(0, 3) as rel}
-            <div class="rx-row past">
-              <div class="rx-l">
-                <div class="rx-tk">{rel.name}</div>
-                <div class="rx-tag">{stars(rel.imp)}</div>
-              </div>
-              <div class="rx-r"><div class="rx-when await">{rel.date}</div></div>
-            </div>
-          {/each}
-        {/if}
+      <!-- ===== MARKET REACTION =====
+           "무엇이 시장을 움직였고 왜인가". 실적 목록과 성격이 다르다:
+           저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다. -->
+      <div class="panel react">
+        <div class="lbl">⚡ MARKET REACTION<span class="src-hint">post-earnings moves</span></div>
 
-        <div class="rx-grp">MACRO<span class="rx-sub">last 7 days · upcoming</span></div>
+        <div class="rx-grp">MACRO<span class="rx-sub">last 7 days</span></div>
 
         <!-- 이미 지난 거시 이벤트. 지난 일정을 주는 무료 소스가 없어 피드에서 볼 때마다
              직접 쌓는다 → 처음엔 비어 있고 시간이 지나며 찬다. 그 사실을 그대로 말한다. -->
@@ -854,27 +790,10 @@
           </div>
         {/each}
 
-        {#if macroEvents.length}
-          {#each macroEvents.slice(0, 2) as ev}
-            <div class="rx-row">
-              <div class="rx-l">
-                <div class="rx-tk">{ev.title}</div>
-                <div class="rx-tag">{stars(ev.imp)}</div>
-              </div>
-              <div class="rx-r">
-                <!-- 결과가 나오기 전엔 카운트다운, 지난 뒤엔 '결과 대기'.
-                     무료 경제 캘린더가 없어 실제치/컨센서스를 못 가져온다 — 지어내지 않는다. -->
-                {#if ev.time.getTime() > nowMs}
-                  <div class="rx-when">{countdown(ev.time, ev.estimated, nowMs)}</div>
-                {:else}
-                  <div class="rx-when await">RESULT PENDING</div>
-                {/if}
-              </div>
-            </div>
-          {/each}
-        {/if}
-        {#if pastMacro.length === 0 && macroEvents.length === 0}
-          <div class="rx-note">Collecting macro events — this fills in as they occur.</div>
+        <!-- ※ 예정 이벤트는 여기 넣지 않는다. UPCOMING 이 담당한다.
+             예전엔 FOMC 가 UPCOMING 과 여기 양쪽에 나왔다 (같은 중복 문제). -->
+        {#if pastMacro.length === 0}
+          <div class="rx-note">No macro release in the last 7 days.</div>
         {/if}
 
         <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings · recent first</span></div>
@@ -1126,7 +1045,6 @@
   /* 세션 분해 (close / AH / pre) — 반응 %보다 작게, 보조 정보로 */
   .e-seg { display: flex; gap: 8px; justify-content: flex-end; margin-top: 3px;
     font-size: 10.5px; color: #6b7280; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .e-seg b { font-weight: 800; }
   /* 라이브 시세임을 알리는 맥동 점 */
   .live-pip { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
     box-shadow: 0 0 7px #ff3b30; animation: pulse 1.4s infinite; flex-shrink: 0; }
@@ -1253,6 +1171,9 @@
   /* MARKET REACTION 은 내용만큼만 차지한다 — EARNINGS 목록을 잡아먹으면 안 된다 */
   .react { flex: 0 0 auto; padding: 0 12px 10px; }
   .react .lbl { padding: 10px 4px 4px; }
+  /* 지표 패널 — '반응'이 아니라 발표치라 별도 패널로 분리했다 */
+  .econ { flex: 0 0 auto; padding: 0 12px 10px; }
+  .econ .lbl { padding: 10px 4px 4px; }
   .e-list { padding: 6px 12px 10px; flex: 1; overflow: hidden; display: flex; flex-direction: column; gap: 5px; }
   .e-row {
     display: flex; justify-content: space-between; align-items: center;
