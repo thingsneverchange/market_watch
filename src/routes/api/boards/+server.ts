@@ -120,11 +120,13 @@ export const GET: RequestHandler = async () => {
     return f
       ? {
           key, label, pct: f.changePct, price: fmt(f.price),
+          // 포인트 등락 — %만으로는 "몇 포인트 빠졌나"가 안 보인다
+          abs: f.changeAbs === null ? null : fmt(Math.abs(f.changeAbs)),
           spark: sample(f.spark),
           // 전일 정산가 = 차트의 "보합선". 이게 있어야 25시간 곡선과 등락률이 같은 얘기를 한다
           base: f.prevClose
         }
-      : { key, label, pct: 0, price: "—", spark: [] as number[], base: null };
+      : { key, label, pct: 0, price: "—", abs: null, spark: [] as number[], base: null };
   });
 
   return new Response(

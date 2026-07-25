@@ -6,40 +6,61 @@
 export type ChartPreset = {
   key: string;
   label: string;
-  tvSymbol: string; // TradingView 심볼
+  /** Finviz 선물 키 → 자체 SVG 렌더. 24시간 돌아가고 iframe 이 없다. */
+  fut?: string;
+  /** TradingView 심볼 → 정규장에서 캔들·지표를 보고 싶을 때. */
+  tv?: string;
+  /** 정직성 표기 — 지수 원본이 아니라 대체물일 때 화면과 컨트롤에 같이 띄운다. */
+  note?: string;
 };
 
-// 차트 프리셋 — 여기만 고치면 컨트롤러 버튼도 자동으로 바뀜
-// ※ 실브라우저 전수 검사 결과, 기존 프리셋 8개 중 **5개가 렌더되지 않았다**.
-//   지수(IXIC/SPX/DJI/NDX/NYA)와 CME 선물(NQ1!/ES1!)은 TradingView 무료 임베드에서
-//   차트 대신 "This symbol is only available on TradingView" 모달이 뜬다.
-//   TVC: 미러(TVC:IXIC / TVC:SPX / TVC:DJI)도 똑같이 막힌다 — 지수는 우회로가 없다.
+// 차트 프리셋 — 여기만 고치면 컨트롤러 버튼도 자동으로 바뀐다.
 //
-//   확인된 렌더 가능 목록: ETF(QQQ/SPY/DIA/IWM/SOXX/KORU), 암호화폐, FX/금속.
-//   그래서 지수는 전부 **추종 ETF**로 대체했다. 헤더의 등락률(SPY/QQQ/DIA 기준)과
-//   차트가 마침내 같은 상품을 가리킨다.
-// ★ 선물 프리셋("FUT:")이 먼저다 — 24시간 스트림의 기본값.
-//   TradingView 무료 임베드는 (a) 선물을 아예 못 그리고 (b) 주말엔 O∅H∅L∅C∅ 를 줘서
-//   화면 한가운데가 통째로 빈다(실측). 선물 프리셋은 Finviz 시계열로 자체 렌더하므로
-//   야간·주말에도 마지막 세션이 그대로 남아 절대 비지 않는다.
+// ※ TradingView 무료 임베드의 실측 제약 (이전 세션 전수 검사):
+//   지수 **원본**(IXIC/SPX/DJI/NDX/NYA, TVC: 미러 포함)과 CME 선물(NQ1!/ES1!)은
+//   차트 대신 "This symbol is only available on TradingView" 모달이 뜬다.
+//   렌더되는 것: ETF, 암호화폐, FX/금속.
+//   → 그래서 아시아 지수도 **ETF 대체물**로 넣는다. KOSPI 원본은 무료로는 길이 없다.
+//
+// ※ 두 소스의 역할 분담:
+//   fut = Finviz 선물. 야간·주말에도 살아 있고 자체 렌더라 절대 빈 화면이 안 된다.
+//   tv  = TradingView. 정규장에 캔들·지표가 필요할 때. (AUTO 모드가 자동 전환)
 export const CHART_PRESETS: ChartPreset[] = [
-  // 선물 — 자체 렌더. 24시간 스트림의 주력
-  { key: "nq",   label: "NASDAQ FUTURES", tvSymbol: "FUT:NQ" },
-  { key: "es",   label: "S&P FUTURES",    tvSymbol: "FUT:ES" },
-  { key: "ym",   label: "DOW FUTURES",    tvSymbol: "FUT:YM" },
-  { key: "rty",  label: "RUSSELL FUT",    tvSymbol: "FUT:ER2" },
-  { key: "cl",   label: "CRUDE OIL",      tvSymbol: "FUT:CL" },
-  { key: "gc",   label: "GOLD",           tvSymbol: "FUT:GC" },
-  { key: "vx",   label: "VIX",            tvSymbol: "FUT:VX" },
-  { key: "btc",  label: "BITCOIN",        tvSymbol: "FUT:BTC" },
-  // TradingView — Finviz 선물에 없는 현물 ETF 만 남긴다.
-  //  (예전 GOLD=OANDA:XAUUSD, BTC=BINANCE 프리셋은 위 선물과 이름이 겹쳐 지웠다)
-  { key: "ndx",  label: "NASDAQ 100", tvSymbol: "NASDAQ:QQQ" },
-  { key: "spx",  label: "S&P 500",    tvSymbol: "AMEX:SPY" },
-  { key: "dow",  label: "DOW",        tvSymbol: "AMEX:DIA" },
-  { key: "soxx", label: "SEMIS",      tvSymbol: "NASDAQ:SOXX" },
-  { key: "koru", label: "KORU",       tvSymbol: "AMEX:KORU" }
+  // ── 미국 ──
+  { key: "nq",   label: "NASDAQ",       fut: "NQ",  tv: "NASDAQ:QQQ" },
+  { key: "es",   label: "S&P 500",      fut: "ES",  tv: "AMEX:SPY" },
+  { key: "ym",   label: "DOW",          fut: "YM",  tv: "AMEX:DIA" },
+  { key: "rty",  label: "RUSSELL",      fut: "ER2", tv: "AMEX:IWM" },
+  { key: "soxx", label: "SEMIS",                    tv: "NASDAQ:SOXX" },
+  { key: "vx",   label: "VIX",          fut: "VX" },
+  // ── 아시아 ──
+  //  닛케이만 진짜 지수 선물(NKD)이 있어서 24시간 나온다.
+  //  코스피·중국은 무료로 지수 원본을 주는 곳이 없어 **미국상장 ETF 대체물**을 쓴다.
+  //  → 미국 정규장에만 움직이고 환율이 섞인다. 화면에 그대로 밝힌다.
+  { key: "nkd",  label: "NIKKEI 225",   fut: "NKD", tv: "AMEX:EWJ" },
+  { key: "kospi",label: "KOSPI",                    tv: "AMEX:EWY",
+    note: "EWY ETF proxy · US hours" },
+  { key: "chn",  label: "CHINA",                    tv: "AMEX:FXI",
+    note: "FXI ETF proxy · US hours" },
+  { key: "chna", label: "CHINA A-SHARE",            tv: "AMEX:ASHR",
+    note: "ASHR ETF proxy · US hours" },
+  { key: "koru", label: "KORU 3X",                  tv: "AMEX:KORU",
+    note: "3x leveraged Korea ETF" },
+  // ── 유럽 ──
+  { key: "dax",  label: "DAX",          fut: "DY" },
+  { key: "estx", label: "EURO STOXX",   fut: "EX" },
+  // ── 원자재 · 크립토 · 금리 ──
+  { key: "cl",   label: "CRUDE OIL",    fut: "CL" },
+  { key: "gc",   label: "GOLD",         fut: "GC" },
+  { key: "si",   label: "SILVER",       fut: "SI" },
+  { key: "ng",   label: "NAT GAS",      fut: "NG" },
+  { key: "btc",  label: "BITCOIN",      fut: "BTC", tv: "BINANCE:BTCUSDT" },
+  { key: "dx",   label: "DOLLAR",       fut: "DX" },
+  { key: "zn",   label: "10Y NOTE",     fut: "ZN" }
 ];
+
+/** 화면에 동시에 띄울 수 있는 차트 수 */
+export const MAX_SLOTS = 4;
 
 /** 컨트롤러가 보낼 수 있는 봉 간격 화이트리스트 */
 export const INTERVALS = ["1", "5", "15", "60", "D"];
@@ -49,8 +70,12 @@ export type VideoState = { id: string; label: string; at: number } | null;
 
 export type ControlState = {
   version: number;              // 바뀔 때마다 +1 (오버레이가 변화 감지)
-  chartKey: string;             // 현재 차트 프리셋 key
+  // 최대 4개까지 동시에 띄운다. 길이가 곧 레이아웃(1=전체, 2=좌우, 3=1+2, 4=2x2).
+  chartKeys: string[];
   chartInterval: string;        // 봉 간격 ("1" = 1분)
+  // AUTO = 정규장이면 TradingView(캔들·지표), 그 외엔 선물 자체 렌더.
+  // 끄면 항상 선물 자체 렌더 — TradingView 가 안 뜨는 환경에서도 화면이 안 빈다.
+  chartAuto: boolean;
   breaking: { id: number; headline: string; level: number; at: number } | null; // 수동 속보
   video: VideoState;            // 송출 중인 영상 (null = 차트 표시)
   // 배경음악 — 오디오는 방송 화면(오버레이)에서 나야 OBS 가 잡는다.
@@ -83,8 +108,9 @@ export function parseYouTubeId(input: string): string | null {
 // 모듈 레벨 = dev/프로덕션에서 단일 프로세스 동안 유지됨
 const state: ControlState = {
   version: 1,
-  chartKey: "nq",   // 24시간 방송의 기본 = 나스닥 선물
+  chartKeys: ["nq"],   // 24시간 방송의 기본 = 나스닥 선물 1개
   chartInterval: "1",
+  chartAuto: true,
   breaking: null,
   video: null,
   music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
@@ -101,14 +127,21 @@ export function getState(): ControlState {
   return state;
 }
 
-export function setChart(key: string, interval?: string) {
-  if (CHART_PRESETS.some((p) => p.key === key)) {
-    state.chartKey = key;
-    // 화이트리스트 검증 — 임의 문자열이 들어오면 차트 헤더 라벨이 깨진다
-    if (interval && INTERVALS.includes(interval)) state.chartInterval = interval;
-    state.version++;
-    state.updatedAt = Date.now();
-  }
+/**
+ * 차트 슬롯 설정. 최대 4개, 화이트리스트에 있는 key 만 통과시킨다.
+ * 빈 배열이 오면 무시한다 — 차트 없는 방송 화면은 사고다.
+ */
+export function setCharts(keys: string[], interval?: string, auto?: boolean) {
+  const valid = (Array.isArray(keys) ? keys : [])
+    .map((k) => String(k))
+    .filter((k) => CHART_PRESETS.some((p) => p.key === k))
+    .slice(0, MAX_SLOTS);
+  if (valid.length) state.chartKeys = valid;
+  // 화이트리스트 검증 — 임의 문자열이 들어오면 차트 헤더 라벨이 깨진다
+  if (interval && INTERVALS.includes(interval)) state.chartInterval = interval;
+  if (typeof auto === "boolean") state.chartAuto = auto;
+  state.version++;
+  state.updatedAt = Date.now();
   return state;
 }
 

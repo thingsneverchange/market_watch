@@ -1,3 +1,7 @@
+<script context="module" lang="ts">
+  let SEQ = 0;   // SVG id 는 문서 전역이라 인스턴스마다 달라야 한다
+</script>
+
 <script lang="ts">
   // 자체 스파크라인 — TradingView 임베드를 쓰지 않는다.
   //
@@ -34,7 +38,7 @@
     ? `${line} L${W},${height} L0,${height} Z`
     : "";
   $: stroke = up ? "#39d98a" : "#ff5c5c";
-  $: fillId = up ? "spark-up" : "spark-dn";
+  const fillId = `spk${++SEQ}`;
 </script>
 
 {#if coords.length > 1}

@@ -73,7 +73,7 @@
   //  나스닥 선물 움직임을 못 보여준다. Finviz 추이로 직접 그려 그 제약을 없앴다.
   //  덤: iframe 3개가 사라져 24시간 방송의 메모리·CPU 부담도 크게 줄었다.
   let minis: {
-    key: string; label: string; pct: number; price: string;
+    key: string; label: string; pct: number; price: string; abs: string | null;
     spark: number[]; base: number | null;
   }[] = [];
 
@@ -98,24 +98,22 @@
     if (/OANDA:|TVC:|FX_IDC|FOREXCOM|XAU|XAG|USOIL|UKOIL|WTI|BRENT|CRUDE/.test(s)) return { label: "SPOT", live: false };
     return null; // 지수 ETF → 기존 NYSE 세션 사용
   }
-  $: chartSess = chartSession(chartSymbol);
+  // ── 차트 슬롯 (최대 4개) ───────────────────
+  //  어떤 소스로 그릴지는 **서버가 정해서** 내려준다(mode: "tv" | "fut").
+  //  클라이언트마다 시각이 달라 화면이 엇갈리는 것을 막기 위해서다.
+  type Slot = { key: string; label: string; note: string; mode: "tv" | "fut";
+    tvSymbol: string; futKey: string };
+  let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut",
+    tvSymbol: "NASDAQ:QQQ", futKey: "NQ" }];
+  let chartInterval = "1";
+  let ctlVersion = 0;
 
-  // ── 메인 차트 소스 분기 ────────────────────
-  $: isFut = /^FUT:/i.test(chartSymbol);
-  $: futKey = isFut ? chartSymbol.slice(4).toUpperCase() : "NQ";
   //  컨트롤의 봉 설정을 Finviz 타임프레임으로 매핑 (1/5분 → 5분봉, 60 → 1시간봉, D → 일봉)
   $: futTf = (chartInterval === "D" ? "d1" : chartInterval === "60" ? "h1" : "m5") as
     "m5" | "h1" | "d1";
   const FUT_TF_LABEL = { m5: "24H · 5m", h1: "12D · 1h", d1: "14M · 1D" } as const;
-
-  // 방송 컨트롤 (컨트롤러가 조종 → 오버레이가 폴링 반영)
-  //  기본값을 **NQ 선물 자체 렌더**로 둔다. TradingView 무료 임베드는 주말에
-  //  O∅H∅L∅C∅ 를 주고 화면이 통째로 빈다(실측) — 24시간 방송에선 치명적이다.
-  //  "FUT:<키>" 면 자체 차트, 그 외 문자열이면 기존처럼 TradingView 로 간다.
-  let chartSymbol = "FUT:NQ";
-  let chartInterval = "1";
-  let chartLabel = "NASDAQ FUTURES";
-  let ctlVersion = 0;
+  // 차트가 하나라도 TradingView 면 어트리뷰션을 표기한다
+  $: anyTv = slots.some((x) => x.mode === "tv");
   // 라이브 영상 (연준 회견 등). null 이면 차트를 그대로 보여준다.
   let video: { id: string; label: string } | null = null;
   // 배경음악 — 조작은 /control 에서, 소리는 여기(오버레이)서 난다. UI 는 그리지 않는다.
@@ -311,9 +309,8 @@
     if (!j) return;
     if (j.version !== ctlVersion) {
       ctlVersion = j.version;
-      if (j.tvSymbol && j.tvSymbol !== chartSymbol) chartSymbol = j.tvSymbol;
+      if (Array.isArray(j.slots) && j.slots.length) slots = j.slots;
       if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
-      if (j.chartLabel) chartLabel = j.chartLabel;
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
       const v = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
       if (v?.id !== video?.id) video = v;
@@ -521,29 +518,40 @@
 
     <!-- CENTER: 1분봉 차트 (컨트롤러 조종) -->
     <section class="col center">
-      <div class="chart-card">
-        <div class="chart-head">
-          <span class="ch-name">{chartLabel}</span>
-          <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
-               주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
-          {#if isFut}
-            <!-- 선물은 현물 세션과 다르다: 밤새 열려 있고 매일 17–18시 ET 만 쉰다 -->
-            <span class="ch-meta" class:live={futSess.open}>
-              {FUT_TF_LABEL[futTf]} · {futSess.label}
-            </span>
-          {:else}
-            <span class="ch-meta" class:live={chartSess ? chartSess.live : isMarketOpen}>
-              {IV_LABEL[chartInterval] ?? chartInterval} · {chartSess ? chartSess.label : marketMsg}
-            </span>
-          {/if}
-        </div>
-        <div class="chart-body">
-          {#if isFut}
-            <FuturesChart symbol={futKey} tf={futTf} />
-          {:else}
-            <TVChart symbol={chartSymbol} interval={chartInterval} />
-          {/if}
-        </div>
+      <!-- 1~4개 차트. 슬롯 수가 곧 배치 (1=전체, 2=좌우, 3=1+2, 4=2x2) -->
+      <div class="chart-grid" data-n={slots.length}>
+        {#each slots as sl (sl.key)}
+          <div class="chart-card">
+            <div class="chart-head">
+              <!-- 선물 모드는 차트 안의 큰 시세 표기가 이름을 담당한다 (중복 방지) -->
+              <span class="ch-name">{sl.mode === "tv" ? sl.label : ""}</span>
+              {#if sl.note}
+                <!-- 지수 원본이 아니라 대체물임을 숨기지 않는다 -->
+                <span class="ch-note">{sl.note}</span>
+              {/if}
+              <!-- 예전 표기는 두 가지를 동시에 거짓말했다: 1분봉을 "1M"(=월봉)으로 찍었고,
+                   주말·휴장·차트 실패를 불문하고 초록 "LIVE" 를 박았다. -->
+              {#if sl.mode === "fut"}
+                <!-- 선물은 현물 세션과 다르다: 밤새 열려 있고 매일 17–18시 ET 만 쉰다 -->
+                <span class="ch-meta" class:live={futSess.open}>
+                  {FUT_TF_LABEL[futTf]} · {futSess.label}
+                </span>
+              {:else}
+                <span class="ch-meta" class:live={isMarketOpen}>
+                  {IV_LABEL[chartInterval] ?? chartInterval} · {marketMsg}
+                </span>
+              {/if}
+            </div>
+            <div class="chart-body">
+              {#if sl.mode === "fut"}
+                <FuturesChart symbol={sl.futKey} tf={futTf} name={sl.label}
+                              compact={slots.length > 2} />
+              {:else}
+                <TVChart symbol={sl.tvSymbol} interval={chartInterval} />
+              {/if}
+            </div>
+          </div>
+        {/each}
       </div>
 
       <div class="spark-strip">
@@ -553,10 +561,12 @@
               <span class="ss-name">{m.label}</span>
               <!-- 어느 구간의 차트인지 명시 — 등락률과 창이 다르면 시청자가 오해한다 -->
               <span class="ss-tf">24H</span>
+            </div>
+            <!-- 시세는 별도 줄에 크게. 포인트 등락을 %와 나란히 둔다. -->
+            <div class="ss-quote" class:u={m.pct >= 0} class:d={m.pct < 0}>
               <span class="ss-px">{m.price}</span>
-              <span class="ss-pct" class:u={m.pct >= 0} class:d={m.pct < 0}>
-                {m.pct > 0 ? "+" : ""}{Number(m.pct).toFixed(2)}%
-              </span>
+              {#if m.abs}<span class="ss-abs">{m.pct >= 0 ? "+" : "−"}{m.abs}</span>{/if}
+              <span class="ss-pct">{m.pct >= 0 ? "+" : "−"}{Math.abs(m.pct).toFixed(2)}%</span>
             </div>
             <!-- 자체 SVG — 선물도 그릴 수 있고 iframe 이 아니라 가볍다 -->
             <div class="ss-chart">
@@ -688,7 +698,7 @@
       <span>Data: Finnhub · Finviz · CoinGecko</span>
       <!-- TradingView 어트리뷰션은 **실제로 그 위젯을 띄웠을 때만** 표기한다.
            기본 차트는 자체 렌더라 항상 붙여두면 사실과 다르다. -->
-      {#if !isFut}
+      {#if anyTv}
         <span class="disc-sep">·</span>
         <span>Charts by <a href="https://www.tradingview.com" target="_blank" rel="noreferrer">TradingView</a></span>
       {/if}
@@ -878,21 +888,36 @@
 
   /* center: 큰 차트가 주인공 */
   .center { min-width: 0; }
+
+  /* 1~4분할 — 슬롯 수가 곧 배치. 3개는 위 1개 + 아래 2개가 가장 읽기 좋다. */
+  .chart-grid { flex: 1 1 auto; min-height: 0; display: grid; gap: 10px; }
+  .chart-grid[data-n="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+  .chart-grid[data-n="2"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+  .chart-grid[data-n="3"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+  .chart-grid[data-n="3"] > :first-child { grid-column: 1 / -1; }
+  .chart-grid[data-n="4"] { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
   .chart-card {
-    flex: 1 1 auto; min-height: 0; background: #08090c; border: 1px solid #191c22; border-radius: 12px;
+    min-height: 0; min-width: 0; background: #08090c; border: 1px solid #191c22; border-radius: 12px;
     overflow: hidden; display: flex; flex-direction: column;
   }
   .chart-head {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 18px; border-bottom: 1px solid #191c22; flex: 0 0 auto;
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    padding: 10px 14px; border-bottom: 1px solid #191c22; flex: 0 0 auto;
   }
   .ch-name { font-size: 20px; font-weight: 800; letter-spacing: -0.01em; }
+  /* 대체물(ETF 프록시 등)임을 화면에서 숨기지 않는다 */
+  .ch-note { font-size: 10px; font-weight: 700; color: #7c6a3a; letter-spacing: 0.04em;
+    background: #17140c; border: 1px solid #2b2411; padding: 3px 7px; border-radius: 999px;
+    white-space: nowrap; margin-right: auto; }
   /* 기본은 중립 회색. 정규장일 때만 초록. */
   .ch-meta { font-size: 12px; font-weight: 800; color: #8a919b; letter-spacing: 0.08em;
     background: #12151b; border: 1px solid #23272f; padding: 4px 10px; border-radius: 999px; }
   .ch-meta.live { color: #39d98a; background: #0d1712; border-color: #16281d; }
   /* TradingView autosize가 높이를 잡도록 명시적 최소 높이 강제 (0-height 방지) */
-  .chart-body { flex: 1 1 auto; min-height: 320px; position: relative; }
+  .chart-body { flex: 1 1 auto; min-height: 0; position: relative; }
+  /* TradingView autosize 가 높이를 못 잡는 경우가 있어 1분할일 때만 최소 높이를 준다 */
+  .chart-grid[data-n="1"] .chart-body { min-height: 320px; }
   /* 영상 송출 중 헤드라인 패널은 숨긴다 (좌측 컬럼 자리를 영상이 쓴다) */
   .news.hidden { display: none; }
 
@@ -900,13 +925,16 @@
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
   .ss-card { background: #0d0f13; border: 1px solid #191c22; border-radius: 10px; padding: 10px 12px 8px;
     display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
-  .ss-top { display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+  .ss-top { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
   .ss-name { font-size: 12px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
   .ss-tf { margin-left: 6px; font-size: 9px; font-weight: 800; color: #6b7280;
     border: 1px solid #2b3240; border-radius: 3px; padding: 0 3px; letter-spacing: 0.04em; }
-  .ss-px { margin-left: auto; margin-right: 8px; font-size: 12px; font-weight: 700; color: #c7cdd6;
-    font-variant-numeric: tabular-nums; }
-  .ss-pct { font-size: 13px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .ss-quote { display: flex; align-items: baseline; gap: 10px; flex-shrink: 0;
+    font-variant-numeric: tabular-nums; line-height: 1.1; margin: 2px 0 4px; }
+  .ss-px { font-size: 22px; font-weight: 800; color: #e8edf4; }
+  .ss-abs, .ss-pct { font-size: 15px; font-weight: 800; }
+  .ss-quote.u .ss-abs, .ss-quote.u .ss-pct { color: #39d98a; }
+  .ss-quote.d .ss-abs, .ss-quote.d .ss-pct { color: #ff5c5c; }
   .ss-chart { flex: 1; min-height: 90px; border-radius: 6px; overflow: hidden; position: relative; }
 
   .keyevent {
@@ -1011,7 +1039,10 @@
   .wrap.m .right  { order: 3; }
 
   /* 차트: 모바일 고정 높이 */
-  .wrap.m .chart-card { flex: none; height: 46vh; min-height: 280px; }
+  .wrap.m .chart-grid { flex: none; height: 46vh; min-height: 280px; }
+  /* 폰에서 4분할은 판독 불가 → 세로로 쌓되 2열까지만 */
+  .wrap.m .chart-grid[data-n="3"], .wrap.m .chart-grid[data-n="4"] { grid-template-columns: 1fr 1fr; }
+  .wrap.m .chart-grid[data-n="3"] > :first-child { grid-column: 1 / -1; }
   .wrap.m .ch-name { font-size: 18px; }
   .wrap.m .spark-strip { height: 78px; }
 

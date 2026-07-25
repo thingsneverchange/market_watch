@@ -1,3 +1,8 @@
+<script context="module" lang="ts">
+  // 인스턴스마다 고유한 SVG id 를 만들기 위한 카운터 (문서 전역 id 충돌 방지)
+  let SEQ = 0;
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
 
@@ -14,9 +19,14 @@
   export let symbol = "NQ";
   export let tf: "m5" | "h1" | "d1" = "m5";
   export let refreshMs = 60_000;
+  /** 화면에 크게 박을 이름 (프리셋 라벨). 없으면 소스가 준 이름을 쓴다. */
+  export let name = "";
+  /** 4분할처럼 좁을 때 글자·여백을 줄인다 */
+  export let compact = false;
 
   type Payload = {
     ok: boolean; label?: string; price?: number; changePct?: number;
+    changeAbs?: number | null;
     base?: number | null; points?: number[]; marks?: { at: number; label: string }[];
     reason?: string;
   };
@@ -29,7 +39,13 @@
   let ro: ResizeObserver | null = null;
   let token = 0;   // 심볼/주기를 바꿔도 옛 응답이 새 상태를 덮지 않게
 
-  const PAD = { t: 14, r: 66, b: 24, l: 10 };
+  // 상단 여백은 큰 시세 표기가 차지하는 높이만큼 비워 둔다 (곡선이 글자에 가리지 않게)
+  $: PAD = { t: compact ? 52 : 74, r: compact ? 54 : 66, b: 24, l: 10 };
+
+  // ★ SVG 의 id 는 **문서 전역**이다. 차트를 2~4개 띄우면 같은 "fc-fill" 이 여러 번
+  //   정의되고 먼저 정의된 것이 나머지를 덮는다 → 상승(초록) 금 차트에 하락(빨강)
+  //   그라디언트가 칠해졌다(실측). 인스턴스마다 고유 id 를 준다.
+  const uid = `fcg${++SEQ}`;
 
   async function load() {
     const mine = ++token;
@@ -91,13 +107,41 @@
     ? Array.from({ length: 5 }, (_, i) => min + ((max - min) * i) / 4)
     : [];
 
+  /** 값의 크기에 맞는 소수 자릿수 (28,306 → 0자리 / 90.47 → 2자리 / 0.6975 → 4자리) */
+  function digitsFor(n: number) {
+    const a = Math.abs(n);
+    return a >= 1000 ? 0 : a >= 10 ? 2 : 4;
+  }
   function fmtPx(n: number) {
-    const d = Math.abs(n) >= 1000 ? 0 : Math.abs(n) >= 10 ? 2 : 4;
+    const d = digitsFor(n);
     return n.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+  /**
+   * 큰 시세 표기용. **하단 미니차트(/api/boards)와 반올림 규칙이 같아야 한다** —
+   * 같은 NQ 를 위에선 28,307, 아래선 28,306.5 로 찍으면 시청자에겐 버그로 보인다.
+   * 축 눈금(fmtPx)은 촘촘하면 지저분하니 따로 둔다.
+   *
+   * 등락폭도 **가격의 자릿수**를 따른다. 자기 크기로 정하면 원유 −2.88 이
+   * −2.8800 으로 찍힌다 (가격은 90.47 인데).
+   */
+  function fmtQuote(n: number, ref = n) {
+    const a = Math.abs(ref);
+    const max = a >= 10 ? 2 : 4;
+    return Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: max });
   }
 
   $: lastX = pts.length ? X(pts.length - 1) : 0;
   $: lastY = pts.length ? Y(pts[pts.length - 1]) : 0;
+
+  // ── 큰 시세 표기 ───────────────────────────
+  //  %만 보면 "몇 포인트 빠졌나"가 안 잡힌다. 포인트 등락을 같은 크기로 나란히 둔다.
+  $: title = name || data?.label || symbol;
+  $: abs = typeof data?.changeAbs === "number" && Number.isFinite(data.changeAbs)
+    ? data.changeAbs : null;
+  $: sign = (data?.changePct ?? 0) >= 0 ? "+" : "−";  // 진짜 마이너스 기호(−)가 방송에서 또렷하다
+  $: absTxt = abs === null || !pts.length ? "" : sign + fmtQuote(abs, pts[pts.length - 1]);
+  $: pctTxt = sign + Math.abs(data?.changePct ?? 0).toFixed(2) + "%";
+  $: priceTxt = pts.length ? fmtQuote(pts[pts.length - 1]) : "—";
 
   // 눈금 라벨이 보합선 라벨·현재가 태그와 세로로 겹치는지 (겹치면 눈금을 숨긴다)
   const GAP = 13;
@@ -108,9 +152,20 @@
 
 <div class="fc" bind:this={box}>
   {#if ready}
+    <!-- 큰 시세 오버레이 — 멀리서·폰에서도 "뭐가 몇 포인트 빠졌나"가 바로 읽혀야 한다 -->
+    <div class="fc-read" class:sm={compact}>
+      <div class="fc-name">{title}</div>
+      <div class="fc-row" class:up class:dn={!up}>
+        <span class="fc-price">{priceTxt}</span>
+        {#if absTxt}<span class="fc-abs">{absTxt}</span>{/if}
+        <span class="fc-pct">{pctTxt}</span>
+      </div>
+    </div>
+  {/if}
+  {#if ready}
     <svg width={W} height={H} role="img" aria-label={`${data?.label ?? symbol} chart`}>
       <defs>
-        <linearGradient id="fc-fill" x1="0" y1="0" x2="0" y2="1">
+        <linearGradient id={uid} x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stop-color={stroke} stop-opacity="0.26" />
           <stop offset="100%" stop-color={stroke} stop-opacity="0" />
         </linearGradient>
@@ -135,7 +190,7 @@
         {/if}
       {/each}
 
-      <path d={area} fill="url(#fc-fill)" />
+      <path d={area} fill={`url(#${uid})`} />
 
       <!-- 보합선(전일 정산가): 곡선이 이 위면 오늘 상승 -->
       {#if base !== null}
@@ -162,6 +217,23 @@
 <style>
   .fc { width: 100%; height: 100%; position: relative; }
   .fc svg { display: block; }
+
+  /* 큰 시세 표기 — 이 방송의 첫 번째 정보. 폰으로 축소돼도 읽혀야 한다. */
+  .fc-read { position: absolute; top: 6px; left: 12px; pointer-events: none; z-index: 2; }
+  .fc-name { font-size: 15px; font-weight: 800; letter-spacing: 0.06em;
+    color: #8a919b; text-transform: uppercase; margin-bottom: 2px; }
+  .fc-row { display: flex; align-items: baseline; gap: 14px;
+    font-variant-numeric: tabular-nums; line-height: 1.05; }
+  .fc-price { font-size: 40px; font-weight: 800; color: #e8edf4; letter-spacing: -0.01em; }
+  .fc-abs, .fc-pct { font-size: 27px; font-weight: 800; }
+  .fc-row.up .fc-abs, .fc-row.up .fc-pct { color: #39d98a; }
+  .fc-row.dn .fc-abs, .fc-row.dn .fc-pct { color: #ff5c5c; }
+
+  /* 4분할처럼 좁을 때 */
+  .fc-read.sm .fc-name { font-size: 12px; }
+  .fc-read.sm .fc-price { font-size: 26px; }
+  .fc-read.sm .fc-abs, .fc-read.sm .fc-pct { font-size: 18px; }
+  .fc-read.sm .fc-row { gap: 9px; }
   .ax { fill: #6b7280; font-size: 11px; font-weight: 700;
     font-variant-numeric: tabular-nums; }
   .ax.mid { text-anchor: middle; }

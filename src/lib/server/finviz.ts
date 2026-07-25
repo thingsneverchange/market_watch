@@ -20,6 +20,8 @@ export type FutQuote = {
   label: string;      // "Nasdaq 100"
   price: number;
   changePct: number;
+  /** 포인트 등락 (−338.5). %만으로는 "몇 포인트 빠졌나"가 안 보인다. */
+  changeAbs: number | null;
   /** 기준선 = 전일 정산가. changePct 가 실제로 쓰는 기준이다(아래 주석 참고). */
   prevClose: number | null;
   spark: number[];    // 최근 25시간 5분봉 (자체 미니차트 렌더용)
@@ -91,6 +93,7 @@ function parse(j: any): Map<string, FutQuote> {
       price,
       // Finviz 의 change 는 이미 % 다 (실측: NQ change=-1.18 ↔ 실제 -1.18%)
       changePct: Number.isFinite(chg) ? Math.round(chg * 100) / 100 : 0,
+      changeAbs: Number.isFinite(usd) ? usd : null,
       prevClose: Number.isFinite(base) && base > 0 ? base : null,
       spark,
       marks,

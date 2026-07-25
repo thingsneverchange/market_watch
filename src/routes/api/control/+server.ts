@@ -1,5 +1,6 @@
 import type { RequestHandler } from "./$types";
-import { getState, setChart, pushBreaking, clearBreaking, setVideo, clearVideo, setMusic, setVideoAuto, autoAllowed, CHART_PRESETS } from "$lib/server/control";
+import { getState, setCharts, pushBreaking, clearBreaking, setVideo, clearVideo, setMusic, setVideoAuto, autoAllowed, CHART_PRESETS, MAX_SLOTS, type ControlState } from "$lib/server/control";
+import { isRegularHours } from "$lib/market-hours";
 import { getVerifiedVideos, pickAutoVideo } from "$lib/server/livevideos";
 
 /** 자동 송출이 켜져 있고 조건이 맞으면 영상을 대신 채워 넣는다 (수동이 항상 우선). */
@@ -17,17 +18,42 @@ async function withAuto(st: ReturnType<typeof getState>) {
   return { video: st.video, videoAutoActive: false };
 }
 
+/**
+ * 각 슬롯을 **실제로 그릴 소스**로 확정해서 내려준다.
+ * 오버레이가 이 판단을 하면 클라이언트마다 시각이 달라 화면이 엇갈릴 수 있으므로
+ * 서버가 한 번만 정한다.
+ *
+ * AUTO: 정규장이면 TradingView(캔들·지표), 그 외엔 선물 자체 렌더(24시간).
+ *       프리셋에 한쪽만 있으면 있는 쪽을 쓴다.
+ */
+function resolveSlots(st: ControlState) {
+  const regular = isRegularHours();
+  return st.chartKeys.slice(0, MAX_SLOTS).map((key) => {
+    const p = CHART_PRESETS.find((x) => x.key === key) ?? CHART_PRESETS[0];
+    const wantTv = st.chartAuto ? regular : false;
+    // tv 가 없으면 선물로, 선물이 없으면 tv 로 — 어느 쪽이든 빈 슬롯은 만들지 않는다
+    const useTv = (wantTv && !!p.tv) || !p.fut;
+    return {
+      key: p.key,
+      label: p.label,
+      note: p.note ?? "",
+      mode: useTv && p.tv ? "tv" : "fut",
+      tvSymbol: p.tv ?? "",
+      futKey: p.fut ?? ""
+    };
+  });
+}
+
 // 오버레이가 1.5초마다 폴링 — 현재 상태 + 프리셋 목록
 export const GET: RequestHandler = async () => {
   const st = getState();
-  const preset = CHART_PRESETS.find((p) => p.key === st.chartKey) ?? CHART_PRESETS[0];
   const auto = await withAuto(st);
   return new Response(JSON.stringify({
     ...st,
     ...auto,
-    tvSymbol: preset.tvSymbol,
-    chartLabel: preset.label,
-    presets: CHART_PRESETS
+    slots: resolveSlots(st),
+    presets: CHART_PRESETS,
+    maxSlots: MAX_SLOTS
   }), { headers: { "content-type": "application/json", "cache-control": "no-store" } });
 };
 
@@ -38,7 +64,11 @@ export const POST: RequestHandler = async ({ request }) => {
 
   switch (body.action) {
     case "chart":
-      setChart(String(body.key ?? ""), body.interval ? String(body.interval) : undefined);
+      setCharts(
+        Array.isArray(body.keys) ? body.keys : [body.key],
+        body.interval ? String(body.interval) : undefined,
+        typeof body.auto === "boolean" ? body.auto : undefined
+      );
       break;
     case "breaking":
       pushBreaking(String(body.headline ?? ""), Number(body.level ?? 5));
@@ -66,8 +96,7 @@ export const POST: RequestHandler = async ({ request }) => {
   }
 
   const st = getState();
-  const preset = CHART_PRESETS.find((p) => p.key === st.chartKey) ?? CHART_PRESETS[0];
-  return new Response(JSON.stringify({ ok: true, ...st, tvSymbol: preset.tvSymbol, chartLabel: preset.label }), {
+  return new Response(JSON.stringify({ ok: true, ...st, slots: resolveSlots(st) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

@@ -1,8 +1,12 @@
 <script lang="ts">
   import { onMount } from "svelte";
 
-  let presets: { key: string; label: string; tvSymbol?: string }[] = [];
-  let activeKey = "";
+  type Preset = { key: string; label: string; fut?: string; tv?: string; note?: string };
+  let presets: Preset[] = [];
+  // 화면에 띄울 차트들 (최대 4). 순서가 곧 배치 순서다.
+  let activeKeys: string[] = [];
+  let chartAuto = true;   // 정규장이면 TradingView 로 자동 전환
+  const MAX_SLOTS = 4;
   let interval = "1";
   let headline = "";
   let level = 5;
@@ -78,10 +82,14 @@
     { v: "60", t: "12D", d: "1h bars" },
     { v: "D",  t: "14M", d: "1d bars" }
   ];
-  // 선물 프리셋인지 = tvSymbol 이 "FUT:" 로 시작
-  $: activePreset = presets.find((p) => p.key === activeKey);
-  $: isFutPreset = /^FUT:/i.test((activePreset)?.tvSymbol ?? "");
+  // 선택된 차트 중 하나라도 자체 렌더(선물)면 범위 버튼을 그 기준으로 보여준다.
+  // 자동 전환이 켜져 있고 지금이 정규장이면 TradingView 라 봉 간격이 맞다.
+  $: activePresets = activeKeys
+    .map((k) => presets.find((p) => p.key === k))
+    .filter((p): p is Preset => !!p);
+  $: isFutPreset = activePresets.some((p) => !!p.fut);
   $: ranges = isFutPreset ? FUT_RANGES : INTERVALS;
+  $: full = activeKeys.length >= MAX_SLOTS;
 
   async function loadState() {
     try {
@@ -89,7 +97,8 @@
       if (r.ok) {
         const j = await r.json();
         presets = j.presets ?? [];
-        activeKey = j.chartKey;
+        activeKeys = Array.isArray(j.chartKeys) && j.chartKeys.length ? j.chartKeys : [];
+        chartAuto = j.chartAuto !== false;
         interval = j.chartInterval;
         liveVideo = j.video && j.video.id ? { id: j.video.id, label: j.video.label ?? "" } : null;
         if (j.music) music = { playing: j.music.playing, volume: j.music.volume };
@@ -164,15 +173,34 @@
     flash("Video stopped");
   }
 
-  async function setChart(key: string) {
-    activeKey = key;
-    flash(`Chart → ${presets.find(p=>p.key===key)?.label ?? key}`);
-    await post({ action: "chart", key, interval });
+  /** 프리셋 토글 — 이미 있으면 빼고, 없으면 추가(최대 4개). 마지막 하나는 못 뺀다. */
+  async function toggleChart(key: string) {
+    const i = activeKeys.indexOf(key);
+    if (i >= 0) {
+      if (activeKeys.length === 1) { flash("Need at least one chart"); return; }
+      activeKeys = activeKeys.filter((k) => k !== key);
+    } else {
+      if (activeKeys.length >= MAX_SLOTS) { flash(`Max ${MAX_SLOTS} charts — remove one first`); return; }
+      activeKeys = [...activeKeys, key];
+    }
+    flash(`${activeKeys.length} chart${activeKeys.length > 1 ? "s" : ""} on air`);
+    await post({ action: "chart", keys: activeKeys, interval });
+  }
+  /** 한 개만 남기고 나머지를 치운다 (제일 자주 쓰는 동작이라 따로 둔다) */
+  async function soloChart(key: string) {
+    activeKeys = [key];
+    flash(`Solo → ${presets.find(p=>p.key===key)?.label ?? key}`);
+    await post({ action: "chart", keys: activeKeys, interval });
   }
   async function setInterval(v: string) {
     interval = v;
     flash(`${isFutPreset ? "Range" : "Interval"} → ${ranges.find(i=>i.v===v)?.t}`);
-    await post({ action: "chart", key: activeKey, interval: v });
+    await post({ action: "chart", keys: activeKeys, interval: v });
+  }
+  async function toggleChartAuto() {
+    chartAuto = !chartAuto;
+    flash(chartAuto ? "Regular hours → TradingView" : "Always self-rendered futures");
+    await post({ action: "chart", keys: activeKeys, interval, auto: chartAuto });
   }
   async function sendBreaking() {
     const h = headline.trim();
@@ -222,12 +250,44 @@
   </header>
 
   <section>
-    <h2>📊 Chart</h2>
-    <div class="grid">
-      {#each presets as p}
-        <button class="btn sym" class:on={p.key === activeKey} on:click={() => setChart(p.key)}>{p.label}</button>
+    <h2>📊 Charts <span class="h2sub">— {activeKeys.length}/{MAX_SLOTS} on air · tap to add or remove · “only” to show just that one</span></h2>
+
+    <!-- 지금 배치 미리보기 — 몇 분할인지 한눈에 -->
+    <div class="slots">
+      {#each activeKeys as k, i}
+        <span class="slot">{i + 1}. {presets.find(p => p.key === k)?.label ?? k}</span>
       {/each}
     </div>
+
+    <div class="grid">
+      {#each presets as p}
+        {@const on = activeKeys.includes(p.key)}
+        <div class="symwrap">
+          <button class="btn sym" class:on class:dim={!on && full}
+                  on:click={() => toggleChart(p.key)}>
+            {p.label}
+            {#if on}<span class="pos">{activeKeys.indexOf(p.key) + 1}</span>{/if}
+            <!-- 지수 원본이 아니라 대체물이면 컨트롤에서도 밝힌다 -->
+            {#if p.note}<small>{p.note}</small>
+            {:else if !p.fut}<small>TradingView only</small>
+            {:else if !p.tv}<small>24/7 self-rendered</small>{/if}
+          </button>
+          {#if !on}
+            <button class="only" title="Show only this" on:click={() => soloChart(p.key)}>only</button>
+          {/if}
+        </div>
+      {/each}
+    </div>
+  </section>
+
+  <section>
+    <h2>🔀 Regular hours</h2>
+    <button class="btn wide" class:on={chartAuto} on:click={toggleChartAuto}>
+      {chartAuto ? "AUTO — TradingView during regular hours" : "ALWAYS self-rendered futures"}
+      <small>{chartAuto
+        ? "candles & indicators 9:30–16:00 ET, futures the rest of the day"
+        : "never blank, no iframes — use this if TradingView fails to load"}</small>
+    </button>
   </section>
 
   <section>
@@ -378,6 +438,24 @@
     padding:16px 8px;border-radius:12px;cursor:pointer;transition:.12s;-webkit-tap-highlight-color:transparent;}
   .btn:active{transform:scale(.96)}
   .btn.on{background:#1d2b22;border-color:#2f6b48;color:#4ade80}
+  .slots{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px}
+  .slot{font-size:11px;font-weight:800;color:#4ade80;background:#0d1712;border:1px solid #16281d;
+    border-radius:999px;padding:4px 10px}
+  .symwrap{position:relative;display:flex}
+  .symwrap .btn{flex:1}
+  .sym{padding-top:16px}
+  .sym small{display:block;font-size:9px;font-weight:600;color:#6b7280;margin-top:3px;
+    line-height:1.2;white-space:normal}
+  .sym.on small{color:#4ade80}
+  .sym.dim{opacity:.4}
+  .pos{position:absolute;top:5px;right:6px;font-size:10px;font-weight:800;color:#0b0e13;
+    background:#4ade80;border-radius:999px;min-width:15px;height:15px;line-height:15px;text-align:center}
+  .only{position:absolute;top:4px;right:5px;font-size:9px;font-weight:800;color:#6b7280;
+    background:#12151b;border:1px solid #23272f;border-radius:4px;padding:2px 5px;cursor:pointer}
+  .only:hover{color:#c7cdd6;border-color:#3a4150}
+  .wide{width:100%;display:flex;flex-direction:column;gap:3px;align-items:center;padding:14px}
+  .wide small{font-size:10px;font-weight:600;color:#6b7280}
+  .wide.on small{color:#4ade80}
   .iv-b{padding:12px 4px;font-size:14px;display:flex;flex-direction:column;gap:2px;align-items:center}
   .iv-b small{font-size:9px;color:#6b7280;font-weight:600}
   .iv-b.on small{color:#4ade80}

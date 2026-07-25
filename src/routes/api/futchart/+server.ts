@@ -62,6 +62,7 @@ export const GET: RequestHandler = async ({ url }) => {
       label: q.label,
       price: q.price,
       changePct: q.changePct,
+      changeAbs: q.changeAbs,   // 포인트 등락 — "몇 포인트 빠졌나"가 %보다 직관적이다
       base: q.prevClose,   // 보합선 = 전일 정산가
       points: pts,
       marks,
