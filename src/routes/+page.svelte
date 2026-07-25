@@ -161,8 +161,9 @@
 
   /** 중요도 1~5 → 별. 태그(텍스트)보다 한눈에 들어온다. */
   function stars(n: number): string {
+    // 별 5개를 다 그리면 자리만 먹고 개수는 오히려 안 세어진다 → "5★" 로 압축.
     const k = Math.max(1, Math.min(5, Math.round(n || 3)));
-    return "\u2605".repeat(k) + "\u2606".repeat(5 - k);
+    return `${k}\u2605`;
   }
 
   /** 지난 거시 이벤트의 경과 ("2d ago") */
@@ -964,27 +965,27 @@
   /* 시장반응: 발표 후 주가 % */
   .e-react { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; line-height: 1.1;
     display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
-  .e-when { font-size: 11px; color: #6b7280; font-weight: 700; text-align: right; }
+  .e-when { font-size: 12px; color: #6b7280; font-weight: 700; text-align: right; }
   /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
   .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
   /* 발표 당시 스냅샷 — 라이브와 색을 달리해 헷갈리지 않게 */
   /* ===== MARKET REACTION ===== */
-  .rx-grp { font-size: 10px; font-weight: 800; color: #6b7280; letter-spacing: 0.1em;
+  .rx-grp { font-size: 12px; font-weight: 800; color: #6b7280; letter-spacing: 0.1em;
     margin: 6px 0 3px; display: flex; align-items: baseline; gap: 6px; }
   .rx-grp:first-of-type { margin-top: 2px; }
-  .rx-sub { font-size: 9px; font-weight: 700; color: #4b5563; letter-spacing: 0.04em; }
+  .rx-sub { font-size: 10px; font-weight: 700; color: #4b5563; letter-spacing: 0.04em; }
   .rx-row { display: flex; align-items: center; justify-content: space-between; gap: 10px;
-    padding: 5px 9px; border: 1px solid #191c22; border-radius: 7px; background: #0b0e13;
-    margin-bottom: 4px; }
+    padding: 8px 11px; border: 1px solid #191c22; border-radius: 8px; background: #0b0e13;
+    margin-bottom: 5px; }
   .rx-l { min-width: 0; }
-  .rx-tk { font-size: 13px; font-weight: 800; color: #e8edf4; display: flex; align-items: center; gap: 5px; }
-  .rx-tag { font-size: 10px; color: #8a919b; font-weight: 600; margin-top: 1px;
+  .rx-tk { font-size: 17px; font-weight: 800; color: #e8edf4; display: flex; align-items: center; gap: 5px; }
+  .rx-tag { font-size: 13px; color: #8a919b; font-weight: 600; margin-top: 1px;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .rx-r { text-align: right; flex-shrink: 0; min-width: 78px; }
-  .rx-pct { font-size: 16px; font-weight: 800; font-variant-numeric: tabular-nums; }
+  .rx-pct { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .rx-pct.u { color: #39d98a; }
   .rx-pct.d { color: #ff5c5c; }
-  .rx-when { font-size: 9px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
+  .rx-when { font-size: 11px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
   .rx-when.await { color: #d8a860; }
   .rx-when.done { color: #5b6472; }
   .rx-row.past { opacity: 0.85; }
@@ -992,7 +993,7 @@
   .mx-c { color: #6b7280; font-weight: 600; margin-left: 3px; }
   .rx-note { font-size: 10px; color: #4b5563; font-weight: 600; padding: 2px 2px 6px; }
 
-  .e-when.snap { color: #5b6472; letter-spacing: 0.02em; font-size: 10px; white-space: nowrap; }
+  .e-when.snap { color: #5b6472; letter-spacing: 0.02em; font-size: 11px; white-space: nowrap; }
   /* 세션 분해 (close / AH / pre) — 반응 %보다 작게, 보조 정보로 */
   .e-seg { display: flex; gap: 8px; justify-content: flex-end; margin-top: 3px;
     font-size: 10.5px; color: #6b7280; font-weight: 600; font-variant-numeric: tabular-nums; }
@@ -1023,7 +1024,8 @@
   }
   .news-item.old { opacity: 0.45; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
   /* ★ 중요도 — 텍스트 태그보다 훨씬 빨리 읽힌다 */
-  .n-stars { flex-shrink: 0; font-size: 13px; letter-spacing: -1px; color: #4b5563; line-height: 1; }
+  .n-stars { flex-shrink: 0; font-size: 14px; font-weight: 800; color: #4b5563; line-height: 1;
+    min-width: 26px; }
   .n-stars.pos { color: #39d98a; }
   .n-stars.neg { color: #ff5c5c; }
   .n-tit { flex: 1; min-width: 0; font-size: 17px; font-weight: 600; line-height: 1.25; color: #eef1f4;
@@ -1101,7 +1103,7 @@
   .ke-el { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
   .ke-tk { font-size: 19px; font-weight: 800; letter-spacing: 0.01em; }
   /* ★ 이벤트 중요도 — 한눈에 우선순위가 보인다 */
-  .ke-stars { font-size: 11px; letter-spacing: -1px; color: #f5c518; line-height: 1; flex-shrink: 0; }
+  .ke-stars { font-size: 12px; font-weight: 800; color: #f5c518; line-height: 1; flex-shrink: 0; }
   .ke-sess { font-size: 11px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
   .ke-tit { font-size: 21px; font-weight: 700; letter-spacing: 0.01em; }
   .ke-timer { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }

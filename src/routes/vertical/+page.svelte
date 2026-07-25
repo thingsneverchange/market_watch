@@ -29,8 +29,9 @@
   const jget = async (u: string) => { try { const r = await fetch(u); return r.ok ? await r.json() : null; } catch { return null; } };
 
   function stars(n: number) {
+    // 별 5개를 다 그리지 않고 "5★" 로 압축한다 (세로 화면은 폭이 더 귀하다)
     const k = Math.max(1, Math.min(5, Math.round(n || 3)));
-    return "★".repeat(k) + "☆".repeat(5 - k);
+    return `${k}★`;
   }
   function ago(epoch: number, now: number) {
     const m = Math.max(0, Math.round((now / 1000 - epoch) / 60));
