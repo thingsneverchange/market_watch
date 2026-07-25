@@ -24,7 +24,7 @@
   // 크로스에셋 4종은 항상 고정.
   // 라벨은 서버가 정한다 (소스 가용성에 따라 지수/선물, SOXX/VIX 유무가 달라진다)
   let indexLabels: string[] = ["S&P 500", "NASDAQ", "DOW"];
-  let crossLabels: string[] = ["SOXX", "BTC", "GOLD", "OIL"];
+  let crossLabels: string[] = ["SOXX", "GLD", "USO", "BTC"];
   let showingFutures = false;
   $: headerLabels = [...indexLabels, ...crossLabels];
 

@@ -19,6 +19,18 @@ export const WATCHLIST = ["ARM", "MRVL", "VICR", "TTMI", "COHR", "SNX"];
 //   IWM(러셀2000)은 하단 미니차트의 % 매칭용으로만 담는다(헤더엔 안 뜸).
 //   개별 대형주(NVDA/AAPL/MSFT)는 아래 테이프, 크로스에셋(SOXX·BTC·GOLD·OIL)은 crossasset.ts.
 export const INDEX_TICKERS = ["SPY", "QQQ", "DIA", "IWM"];
+// ★ 크로스에셋을 **미국 상장 ETF 프록시**로 잡는다.
+//   이유: Finnhub 무료는 60 req/min(하루 8.6만)로 넉넉한데 US 주식/ETF 만 준다.
+//   반면 Yahoo 는 데이터센터 IP 영구차단, FMP 무료는 하루 250회라 폴링에 못 버틴다(실측).
+//   → 원자재·반도체를 ETF 로 받으면 무료로 안정적으로 돌아간다.
+//     GLD=금, USO=WTI원유, SOXX=반도체. (장 밖엔 전일 종가로 고정 — 화면이 그렇게 표기한다)
+//   ★ 라벨은 **ETF 티커 그대로** 쓴다. "GOLD 371.90" 이라고 쓰면 금 온스당 가격($4,070)으로
+//     오해하지만 실제로는 GLD ETF 가격이다. 티커로 표기하면 그 오해가 없다.
+export const CROSS_ETFS: { key: string; ticker: string }[] = [
+  { key: "SOXX", ticker: "SOXX" }, // 반도체
+  { key: "GLD",  ticker: "GLD" },  // 금
+  { key: "USO",  ticker: "USO" }   // WTI 원유
+];
 export const TAPE_TICKERS = [
   "NVDA", "AAPL", "MSFT", "AMZN", "GOOGL", "META", "TSLA", "AMD",
   ...WATCHLIST

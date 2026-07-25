@@ -21,9 +21,22 @@ export type FmpQuote = {
   asOf: number; // 소스가 준 시각(ms)
 };
 
-const TTL_MS = 45_000;
-const FAIL_MS = 60_000;
+// ★ FMP 무료는 **하루 250회**다 (실측: "Limit Reach"). 45초 TTL × 8심볼 = 하루 15,360회로
+//   61배 초과해 쿼터가 즉시 말랐다. 이 소스는 이제 "장 밖 보조"로만 쓴다:
+//   · TTL 10분 (장 밖 지표는 천천히 움직인다)
+//   · 하루 호출 예산 하드캡 — 넘으면 아예 네트워크를 안 친다(호출부가 Finnhub 로 폴백)
+const TTL_MS = 10 * 60_000;
+const FAIL_MS = 5 * 60_000;
 const REQ_TIMEOUT_MS = 4000;
+const DAILY_BUDGET = Number(process.env.FMP_DAILY_BUDGET || 200); // 250 한도에 여유를 둔다
+
+let spentDay = "";
+let spent = 0;
+function budgetLeft(): number {
+  const today = new Date().toISOString().slice(0, 10);
+  if (today !== spentDay) { spentDay = today; spent = 0; } // 날짜 바뀌면 리셋
+  return Math.max(0, DAILY_BUDGET - spent);
+}
 
 const cache = new Map<string, { at: number; data: FmpQuote | null }>();
 let failUntil = 0;
@@ -42,12 +55,20 @@ async function fetchBatch(symbols: string[]): Promise<Map<string, FmpQuote>> {
   const k = key();
   if (!k || symbols.length === 0) return out;
 
+  // 예산을 넘는 심볼은 아예 요청하지 않는다
+  const allowed = symbols.slice(0, budgetLeft());
+  if (allowed.length === 0) {
+    console.warn("[fmp] 일일 호출 예산 소진 — 이번 주기는 건너뜁니다");
+    return out;
+  }
+  spent += allowed.length;
+
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), REQ_TIMEOUT_MS);
   try {
     // stable/quote 는 symbol 을 하나만 받는다 → 병렬로 부르되 동시 개수를 제한한다.
     const results = await Promise.all(
-      symbols.map(async (s) => {
+      allowed.map(async (s) => {
         try {
           const r = await fetch(
             `https://financialmodelingprep.com/stable/quote?symbol=${encodeURIComponent(s)}&apikey=${k}`,
@@ -55,6 +76,7 @@ async function fetchBatch(symbols: string[]): Promise<Map<string, FmpQuote>> {
           );
           if (!r.ok) return null;
           const j: any = await r.json();
+          // 한도 초과·프리미엄 제한은 배열이 아니라 {Error Message:...} 로 온다
           const q = Array.isArray(j) ? j[0] : null;
           if (!q || !Number.isFinite(Number(q.price))) return null;
           return {
