@@ -106,10 +106,30 @@ export const lastError = new Map<string, string>();
 //   이러면 헤더는 언제나 통과하고, 저우선도 분당 18건을 보장받는다.
 // ============================================================
 const RATE_WINDOW_MS = 60_000;
-const RATE_MAX_TOTAL = 55;
-const RATE_MAX_LOW = 18;
+const RATE_MAX_TOTAL = 50;
+const RATE_MAX_LOW = 16;
 let sent: number[] = [];
 let sentLow: number[] = [];
+
+// ── 동시 실행 제한 ──────────────────────────────────
+//  분당 총량을 지켜도 429 가 남았다(실측: 배포 후에도 분당 2~4건, 헤더 티커 포함).
+//  총량이 아니라 **순간 동시성**이 문제다 — getQuotes 는 Promise.all 로 17개를
+//  같은 순간에 쏘고, 캐시가 한꺼번에 만료되는 시점엔 그게 통째로 겹친다.
+//  경로별 TTL 지터가 만료 시점은 흩어 주지만 콜드스타트에는 소용이 없다.
+//  한 번에 4건까지만 나가게 해서 같은 총량을 시간축에 펴 준다.
+const MAX_INFLIGHT = 4;
+let active = 0;
+const waiters: (() => void)[] = [];
+
+async function acquireSlot(): Promise<void> {
+  if (active < MAX_INFLIGHT) { active++; return; }
+  await new Promise<void>((resolve) => waiters.push(resolve));
+  active++;
+}
+function releaseSlot(): void {
+  active--;
+  waiters.shift()?.();
+}
 /** 예산 부족으로 건너뛴 요청 수 (진단용) */
 export let rateSkipped = 0;
 
@@ -144,7 +164,12 @@ async function fhFetch(path: string, ttlMs = 15_000, lowPriority = false): Promi
   if (running) return running; // 동일 tick 중복 발사 제거
 
   const p = (async () => {
+    // 순간 동시성 제한 — 대기 중에 다른 요청이 같은 경로를 캐시했을 수 있으므로
+    // 슬롯을 잡은 뒤 캐시를 한 번 더 본다 (중복 발사 방지).
+    await acquireSlot();
     try {
+      const fresh = cache.get(path);
+      if (fresh && Date.now() - fresh.at < effTtl) return fresh.data;
       const sep = path.includes("?") ? "&" : "?";
       const r = await fetch(`${BASE}${path}${sep}token=${FINNHUB_API_KEY}`, { cache: "no-store" });
       if (!r.ok) {
@@ -159,7 +184,10 @@ async function fhFetch(path: string, ttlMs = 15_000, lowPriority = false): Promi
         return stale();
       }
       const j = await r.json();
-      cache.set(path, { at: now, data: j });
+      // ★ now 가 아니라 **응답을 받은 시각**으로 찍는다.
+      //   동시성 제한이 생기면서 큐에서 대기하는 시간이 생겼는데, 대기 전에 찍은 now 를
+      //   쓰면 캐시가 그만큼 일찍 만료돼 불필요한 재요청이 늘어난다.
+      cache.set(path, { at: Date.now(), data: j });
       failUntil.delete(path);
       lastError.delete(path);
       if (cache.size > 400) cache.delete(cache.keys().next().value as string);
@@ -170,6 +198,7 @@ async function fhFetch(path: string, ttlMs = 15_000, lowPriority = false): Promi
       console.warn(`[finnhub] network fail ${path} (${e?.name ?? e})`);
       return stale();
     } finally {
+      releaseSlot();
       inflight.delete(path); // finally 필수 — 없으면 영구 무한 TTL 이 된다
     }
   })();
