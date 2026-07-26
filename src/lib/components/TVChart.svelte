@@ -1,5 +1,8 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, createEventDispatcher } from "svelte";
+
+  // 렌더 실패를 부모에게 알린다 — 방송 화면은 빈 채로 두느니 다른 소스로 갈아타야 한다
+  const dispatch = createEventDispatcher<{ fail: { symbol: string } }>();
 
   export let symbol = "TVC:IXIC";
   export let interval = "1";
@@ -130,6 +133,7 @@
       status = "error";
       // 오퍼레이터가 원인을 찾을 수 있는 유일한 흔적
       console.error("[TVChart] render failed:", symbol, interval, variant);
+      dispatch("fail", { symbol });
     }
   }
 

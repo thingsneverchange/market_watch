@@ -120,6 +120,9 @@
   let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut",
     tvSymbol: "NASDAQ:QQQ", futKey: "NQ", nvCode: "" }];
   let chartStyle: "line" | "candle" = "line";
+  // TradingView 렌더에 실패한 슬롯 — 자체 렌더로 갈아탄다.
+  // 정규장은 하루 중 가장 중요한 시간인데 거기서 화면 한가운데가 비면 안 된다.
+  let tvFailed = new Set<string>();
   let chartInterval = "1";
   let ctlVersion = 0;
 
@@ -367,7 +370,14 @@
     if (!j) return;
     if (j.version !== ctlVersion) {
       ctlVersion = j.version;
-      if (Array.isArray(j.slots) && j.slots.length) slots = j.slots;
+      if (Array.isArray(j.slots) && j.slots.length) {
+        // 슬롯 구성이 바뀌면 TradingView 실패 기록을 초기화한다
+        // (한 번 실패했다고 그 슬롯이 영원히 자체 렌더로 고정되면 안 된다)
+        if (j.slots.map((x: any) => x.key).join() !== slots.map((x) => x.key).join()) {
+          tvFailed = new Set();
+        }
+        slots = j.slots;
+      }
       if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
       if (j.chartStyle === "line" || j.chartStyle === "candle") chartStyle = j.chartStyle;
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
@@ -635,7 +645,13 @@
               {/if}
             </div>
             <div class="chart-body">
-              {#if sl.mode === "nv"}
+              {#if sl.mode === "tv" && tvFailed.has(sl.key) && (sl.futKey || sl.nvCode)}
+                <!-- TradingView 가 안 뜬 슬롯 → 자체 렌더로 대체.
+                     빈 화면보다 5분봉이라도 나오는 편이 낫다. -->
+                <FuturesChart src={sl.futKey ? "finviz" : "naver"}
+                              symbol={sl.futKey || sl.nvCode || ""} tf={futTf} name={sl.label}
+                              compact={slots.length > 2} style={chartStyle} />
+              {:else if sl.mode === "nv"}
                 <FuturesChart src="naver" symbol={sl.nvCode ?? ""} tf={futTf} name={sl.label}
                               compact={slots.length > 2} style={chartStyle} />
               {:else if sl.mode === "fut"}
@@ -646,7 +662,8 @@
                               compact={slots.length > 2} style={chartStyle}
                               why={sl.why ?? ""} />
               {:else}
-                <TVChart symbol={sl.tvSymbol} interval={chartInterval} />
+                <TVChart symbol={sl.tvSymbol} interval={chartInterval}
+                         on:fail={() => { tvFailed = new Set([...tvFailed, sl.key]); }} />
               {/if}
             </div>
           </div>
