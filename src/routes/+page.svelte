@@ -1187,7 +1187,7 @@
   .ps-when { font-size: 14px; font-weight: 800; color: #6b7280; font-variant-numeric: tabular-nums; }
   .ps-txt { font-size: 17px; font-weight: 600; line-height: 1.3; color: #c7cdd6;
     overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
-    -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+    -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .ps-src { font-size: 11px; font-weight: 700; color: #565d68; letter-spacing: 0.02em; }
 
   /* 하단 슬림 스파크라인 스트립 */

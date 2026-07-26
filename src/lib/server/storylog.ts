@@ -69,6 +69,9 @@ function save(rows: StoryEntry[]) {
 export function recordStory(d: {
   text?: string; source?: string; url?: string;
   sentiment?: string; origin?: string; epoch?: number;
+  // 호출부는 화면용 driver 객체를 통째로 넘긴다 (confidence·why 등이 더 붙어 있다).
+  // 여기서 쓰는 건 위 필드뿐이지만, 나머지를 초과 프로퍼티로 막을 이유가 없다.
+  [k: string]: unknown;
 }): void {
   const text = String(d?.text ?? "").trim();
   // "NO NEWS FEED" 같은 자리표시자는 이력이 아니다
