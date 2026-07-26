@@ -91,10 +91,20 @@ export type ImpactBoard = {
  */
 export async function getIndexMovers(limit = 5): Promise<ImpactBoard> {
   const tickers = [...HEAVYWEIGHTS, BENCH];
-  const [quotes, caps] = await Promise.all([
-    getQuotes(tickers, QUOTE_TTL_MS),
-    getMarketCaps(HEAVYWEIGHTS)
-  ]);
+
+  // ★ 44개를 한 번에 발사하지 않는다.
+  //   캐시가 빈 상태(재시작 직후)엔 이 한 번의 호출이 44 요청을 동시에 쏘는데,
+  //   같은 순간 헤더(/api/boards)도 17개를 쏜다 → 순간 61건으로 분당 한도를 넘겨 429 가 난다.
+  //   실측: 배포 직후 1분 안에 429 17건.
+  //   그냥 로그가 지저분해지는 문제가 아니다 — fhFetch 의 429 백오프는 **경로별**이라
+  //   내가 유발한 429 가 헤더가 쓰는 티커까지 45~90초 묶어 버린다(헤더가 멈춘다).
+  //   작은 배치로 나눠 순간 동시성을 낮춘다. 캐시가 차면 어차피 전부 캐시 히트다.
+  const quotes: Quote[] = [];
+  const CHUNK = 8;
+  for (let i = 0; i < tickers.length; i += CHUNK) {
+    quotes.push(...(await getQuotes(tickers.slice(i, i + CHUNK), QUOTE_TTL_MS)));
+  }
+  const caps = await getMarketCaps(HEAVYWEIGHTS);
 
   const by = new Map(quotes.map((q) => [q.ticker, q]));
   const bench = by.get(BENCH);
