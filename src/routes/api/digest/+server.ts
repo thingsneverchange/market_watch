@@ -117,7 +117,14 @@ export const GET: RequestHandler = async () => {
 
   // 우측의 중복 EARNINGS 패널을 지우면서 헤드라인에 쓸 세로 공간이 늘었다.
   // 전쟁·지정학 국면에선 관련 기사가 쏟아지므로 더 많이 보여주는 편이 낫다.
-  const list = (signal.length >= 6 ? signal : pool)
+  //
+  // ★ 단, **빈자리를 잡기사로 채우지 않는다.**
+  //   예전엔 `signal.length >= N ? signal : pool` 이라, 관련 기사가 N개에 못 미치면
+  //   필터를 통째로 풀어 버렸다. 그래서 자리를 늘리자마자 꿀벌 농부·IMAX 상영이
+  //   다시 목록에 올라왔다 — TOP STORY 에서 걸러낸 바로 그 기사들이다.
+  //   관련 기사가 3건뿐이면 3건만 보여준다. 채우는 것보다 안 틀리는 게 낫다.
+  //   (signal 이 아예 비었을 때만 최후로 pool 을 쓴다 — 화면이 통째로 비는 건 막는다)
+  const list = (signal.length ? signal : pool)
     .slice(0, brief && brief.length ? 5 : 7)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 

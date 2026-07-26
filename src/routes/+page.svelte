@@ -584,7 +584,12 @@
             {@const ageM = n.epoch ? (nowMs / 1000 - n.epoch) / 60 : 0}
             {@const s = sent(n.sentiment)}
             <!-- 트레이더 스캔: [임팩트레일] [주체칩 ▲/▾] 한 줄 헤드라인 … [출처·나이]. 90분↑은 흐리게. -->
-            <a class="news-item {s}" class:old={ageM > 90} href={n.url} target="_blank" rel="noreferrer" title={n.title}>
+            <!-- ★ 중요도 4~5 는 시간이 지나도 흐리게 만들지 않는다.
+                 나이로만 흐리게 처리하니 5★ 지정학 기사가 20시간 지났다는 이유로
+                 잡기사와 똑같이 회색이 됐다 — 정작 제일 중요한 게 안 보였다.
+                 오래됐다는 사실은 우측 나이 표기가 이미 말해 준다. -->
+            <a class="news-item {s}" class:hi={n.level >= 4} class:old={ageM > 90 && n.level < 4}
+               href={n.url} target="_blank" rel="noreferrer" title={n.title}>
               <span class="n-stars {s}">{stars(n.level)}</span>
               <span class="n-tit">{n.short ?? n.title}</span>
               {#if n.epoch}<span class="n-age">{ago(n.epoch, nowMs)}</span>{/if}
@@ -1086,7 +1091,12 @@
     display: flex; align-items: baseline; gap: 10px; padding: 7px 11px; border-radius: 8px;
     text-decoration: none; color: inherit; background: #101318; border: 1px solid #191c22;
   }
-  .news-item.old { opacity: 0.45; } /* 90분 넘은 뉴스는 신호가 아니라 맥락 → 흐리게 */
+  /* 90분 넘은 **낮은 중요도** 뉴스만 흐리게 (맥락이지 신호가 아니다) */
+  .news-item.old { opacity: 0.45; }
+  /* 중요도 4~5 — 나이와 무관하게 또렷하게. 방송에서 제일 먼저 읽혀야 할 줄이다. */
+  .news-item.hi { background: #12161c; border-color: #262b34; }
+  .news-item.hi .n-tit { color: #ffffff; font-weight: 700; }
+  .news-item.hi .n-age { color: #8a919b; }
   /* ★ 중요도 — 텍스트 태그보다 훨씬 빨리 읽힌다 */
   .n-stars { flex-shrink: 0; font-size: 14px; font-weight: 800; color: #4b5563; line-height: 1;
     min-width: 26px; }
