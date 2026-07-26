@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { isNearDuplicate } from "./dedupe";
+import { isFragment } from "./headline";
 
 // ============================================================
 //  TOP STORY 이력
@@ -77,6 +78,11 @@ export function recordStory(d: {
   // "NO NEWS FEED" 같은 자리표시자는 이력이 아니다
   if (!text || text === "—" || text === "NO NEWS FEED") return;
   if (d.origin === "none") return;
+  // ★ 미완성 문장은 **절대 이력에 남기지 않는다.**
+  //   실제 사고: "After Trump calls off bombing" 이 여기 박제돼서, 축약 로직을 고친
+  //   뒤에도 EARLIER TOP STORIES 에 계속 떴다. 파편은 없는 사실을 주장하는 것처럼
+  //   읽히므로(→ headline.ts 주석), 한 번 저장되면 오보가 24시간 되돌아온다.
+  if (isFragment(text)) return;
 
   const rows = load();
   // 최근 3건 안에 같은 사건이 있으면 새로 쌓지 않는다.
@@ -100,6 +106,8 @@ export function recordStory(d: {
 export function previousStories(currentText: string, limit = 3): StoryEntry[] {
   const cutoff = Date.now() - DAY_MS;
   return load()
-    .filter((r) => r.seenAt > cutoff && !isNearDuplicate(r.text, currentText))
+    // ★ 읽을 때도 한 번 더 거른다. 검사를 넣기 **전에** 저장된 파편이 파일에 남아 있고,
+    //   판정 규칙이 나중에 강해질 수도 있다. 옛 기록이 오늘 방송에 나가면 안 된다.
+    .filter((r) => r.seenAt > cutoff && !isFragment(r.text) && !isNearDuplicate(r.text, currentText))
     .slice(0, limit);
 }

@@ -32,7 +32,18 @@
   검색으로 확인한 기사가 하나도 없으면 `confidence` 를 `"low"` 로 하고 그 사실을 `why` 에 적어라.
 - **3시간 넘은 뉴스뿐이라면** `confidence: "low"` 로 표시하고 `why` 에 "최신 속보 없음"을 명시해라.
   오래된 기사를 최신인 것처럼 쓰지 마라.
-- `text` is the **broadcast headline**. ENGLISH ONLY. A complete phrase, no ellipsis, no unfinished sentence.
+- `text` is the **broadcast headline**. ENGLISH ONLY.
+  **It must be a complete statement that stands alone.** 이건 문체 문제가 아니라 오보 문제다.
+  실제 사고: 화면에 `"After Trump calls off bombing"` 만 나갔다. 시청자는 그걸 그 자체로
+  오늘의 뉴스로 읽는다 — 정작 실제 뉴스(이란의 조건부 중단 신호)는 사라지고
+  배경 사실 하나가 헤드라인 행세를 했다. 방송에서 이건 없는 뉴스를 지어낸 것과 같다.
+  · 종속절만 쓰지 마라. `After X` / `Amid Y` / `As Z` 로 시작하면 **반드시 주절을 붙여라**
+    (`Amid tariff fears, stocks slip` 은 되고 `Amid tariff fears` 는 안 된다).
+  · 전치사·접속사로 끝내지 마라 (`…push at`, `…and`).
+  · 숫자를 쓰면 단위까지 써라 (`$30 billion`, `500 points`, `4.25%`).
+  · 말줄임표(…)를 쓰지 마라.
+  ※ 이 조건은 서버에서도 검사한다. 통과하지 못하면 네 문장은 버려지고 규칙기반
+    헤드라인으로 대체된다 — 즉 완결되지 않은 문장은 방송에 나가지 못한다.
 - 주가 방향은 서술보다 우선한다. 지수가 빠지고 있으면 `sentiment` 는 `neg` 다.
 - 확실하지 않으면 `sentiment: "neu"`, `confidence: "low"` 로 두어라.
   **틀린 단정보다 정직한 불확실성이 낫다.**

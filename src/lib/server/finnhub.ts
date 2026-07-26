@@ -9,6 +9,7 @@
 //       그래서 응답의 t(마지막 체결 시각)를 asOf 로 실어 보내 화면이 나이를 표시하게 한다.
 // ============================================================
 import { FINNHUB_API_KEY } from "$env/static/private";
+import { isFragment } from "./headline";
 
 const BASE = "https://finnhub.io/api/v1";
 
@@ -602,6 +603,8 @@ export function shortHeadline(title: string): string {
   //   기사 제목은 클릭을 유도하려고 쓰인 것이라 그대로 두면 방송에 정보가 아니라
   //   광고 문구가 나간다.
   s = s.replace(/[.!?]\s+(?:here'?s|what to|things to|a look at)\b.*$/i, "").trim();
+  // 축약이 실패했을 때 돌아갈 원문 (출처 접미사만 떼어낸 상태)
+  const full = s;
 
   // 첫 종속절 경계에서 컷 (핵심 주절만 남긴다). 너무 앞이면(주어 잘림) 무시.
   const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying|on)\s/i);
@@ -635,7 +638,12 @@ export function shortHeadline(title: string): string {
   //   단위(billion/%/points…)가 떨어져 나간 경우이므로 숫자째 버린다.
   //   자르지 않은 문장은 건드리지 않는다 — 원문이 숫자로 끝나는 건 정상이다.
   if (truncated) s = s.replace(/\s+(?:to|at|past|above|below|near|by)?\s*[$€£]?[\d][\d.,]*[%]?$/i, "");
-  return s.replace(/[,\-–—:;]+$/, "").trim();
+  s = s.replace(/[,\-–—:;]+$/, "").trim();
+
+  // ★ 마지막 관문 — 축약 결과가 여전히 미완성이면 **축약을 포기하고 원문을 쓴다.**
+  //   축약 규칙은 새 문장 패턴을 만날 때마다 또 뚫린다(전부 실측으로만 발견됐다).
+  //   길어서 두 줄이 되는 것보다, "그래서 뭐?"로 끝나서 없는 사실을 주장하는 게 훨씬 나쁘다.
+  return isFragment(s) ? full : s;
 }
 
 function mapNews(n: any, ticker?: string): NewsItem {

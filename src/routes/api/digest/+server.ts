@@ -4,6 +4,7 @@ import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
+import { isFragment } from "$lib/server/headline";
 import { recordStory, previousStories } from "$lib/server/storylog";
 
 // 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다 (INTC 등 대형주 포함)
@@ -181,7 +182,12 @@ export const GET: RequestHandler = async () => {
   //   대형 이벤트 직후엔 색인된 기사가 없어 low 가 자주 나온다 → 그 구간은 규칙기반이 맡는다.
   const candidate = fresh(feed, "top_story");
   const lowConfidence = candidate?.payload.confidence === "low";
-  const ai = sup.superseded || lowConfidence ? undefined : candidate;
+  // ★ Claude 가 만든 문장도 **똑같이 완결성 검사를 통과해야** 방송에 나간다.
+  //   프롬프트로 "완성된 문장을 써라"라고 지시하고 있지만 지시는 보장이 아니다.
+  //   여기서 걸러야 하는 이유는 규칙 축약 때와 같다 — 파편은 없는 사실을
+  //   주장하는 것처럼 읽힌다(→ headline.ts). 생성 경로라고 예외를 둘 근거가 없다.
+  const aiFragment = !!candidate && isFragment(candidate.payload.text);
+  const ai = sup.superseded || lowConfidence || aiFragment ? undefined : candidate;
 
   // ★ AI 판단의 **근거 출처를 전부** 싣는다.
   //   Claude 가 웹검색으로 3개 기사를 읽고 한 문장을 만들어도 화면엔 sources[0] 한 곳만
@@ -223,7 +229,9 @@ export const GET: RequestHandler = async () => {
         ? `${sup.by.join("·")} 실적 발표로 이전 AI 판단은 만료됨`
         : lowConfidence
           ? "AI 판단이 근거 부족(low)으로 보류됨 — 최신 헤드라인으로 대체"
-          : "",
+          : aiFragment
+            ? "AI 문장이 미완성이라 보류됨 — 최신 헤드라인으로 대체"
+            : "",
       confidence: "",
       epoch: top.epoch,
       origin: "rule" as const, // 인과를 계산하지 않은 키워드 규칙 결과
