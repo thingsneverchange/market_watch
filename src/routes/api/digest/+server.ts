@@ -7,6 +7,37 @@ import { earnPendingFrom } from "$lib/server/et-time";
 // 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다 (INTC 등 대형주 포함)
 const MAJOR = new Set([...WATCHLIST, ...INDEX_TICKERS, ...TAPE_TICKERS, ...MAJORS]);
 
+/**
+ * URL 에서 **언론사 이름**을 뽑는다.
+ *  화면의 "1h ago · ○○" 자리는 짧은 출처 라벨용이다.
+ *  예전엔 AI 항목이 여기에 원문 **기사 제목**을 통째로 넣어서
+ *  "1h ago · Megacap earnings and Fed meeting could test a market on edge
+ *   next week. Here's what's ahead" 처럼 나갔다 — 걷어낸 바로 그 클릭 유도 문구가
+ *  다른 자리로 새어 나온 셈이다.
+ */
+const PUBLISHER: Record<string, string> = {
+  "cnbc.com": "CNBC", "reuters.com": "Reuters", "bloomberg.com": "Bloomberg",
+  "wsj.com": "WSJ", "ft.com": "FT", "marketwatch.com": "MarketWatch",
+  "barrons.com": "Barron's", "apnews.com": "AP", "investing.com": "Investing.com",
+  "yahoo.com": "Yahoo Finance", "businessinsider.com": "Business Insider",
+  "fortune.com": "Fortune", "axios.com": "Axios", "politico.com": "Politico",
+  "news.google.com": "Google News", "seekingalpha.com": "Seeking Alpha"
+};
+function publisherOf(url: string): string {
+  try {
+    const h = new URL(url).hostname.replace(/^www\./, "");
+    if (PUBLISHER[h]) return PUBLISHER[h];
+    // 서브도메인이 붙은 경우 뒤 두 조각으로 한 번 더
+    const base = h.split(".").slice(-2).join(".");
+    if (PUBLISHER[base]) return PUBLISHER[base];
+    // 그래도 모르면 도메인 본체를 그대로 (첫 글자만 대문자)
+    const name = base.split(".")[0];
+    return name ? name.charAt(0).toUpperCase() + name.slice(1) : "";
+  } catch {
+    return "";
+  }
+}
+
 export const GET: RequestHandler = async () => {
   const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);
   const nowSec = Date.now() / 1000;
@@ -65,7 +96,8 @@ export const GET: RequestHandler = async () => {
     driver = {
       text: ai.payload.text,
       sentiment: ai.payload.sentiment,
-      source: ai.payload.sources[0]?.title ?? "",
+      // 기사 제목이 아니라 **언론사 이름**을 넣는다 (짧은 라벨 자리다)
+      source: publisherOf(ai.payload.sources[0]?.url ?? ""),
       url: ai.payload.sources[0]?.url ?? "",
       why: ai.payload.why,
       confidence: ai.payload.confidence,
