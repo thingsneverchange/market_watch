@@ -35,9 +35,12 @@
 
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   let digest = {
-    driver: { text: "—", sentiment: "neu", source: "", url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
+    driver: { text: "—", sentiment: "neu", source: "", sources: [] as any[], url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
     news: [] as any[]
   };
+  // 직전 TOP STORY 3건. 스토리가 갈리면 이전 것은 흔적 없이 사라져서,
+  // 중간에 들어온 시청자에겐 "지금까지 무슨 일이 있었나"가 통째로 없었다.
+  let prevStories: any[] = [];
   // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
   let brief: any[] = [];
   // UPCOMING = 성격별로 분리. 거시/정책(MACRO)과 개별 실적(EARNINGS)은 보는 이유가 다르다.
@@ -53,7 +56,7 @@
   let calendarStale = false;
   let nowMs = Date.now(); // 1초 틱 — 뉴스 나이(ago)·이벤트 카운트다운을 매초 갱신
   let upcoming: any[] = []; // 다가오는 실적 상세 리스트
-  // MARKET REACTION — 시장을 실제로 움직인 종목 + 거시 이벤트.
+  // MARKET DRIVERS — 시장을 실제로 움직인 종목 + 거시 이벤트.
   //  실적 목록(EARNINGS)은 Finnhub 캘린더 시간창 안의 종목만 담아서, 며칠 전에 발표한
   //  TSLA(-14.5%)·GOOGL(-4.2%) 같은 종목은 반응 데이터가 있어도 화면 어디에도 안 나왔다.
   let reactions: any[] = [];
@@ -179,22 +182,27 @@
   }
 
   /**
-   * TOP STORY 가 시장과 어떻게 연결되는지 한 줄.
-   *  · AI 판단이면 Claude 가 쓴 why 를 그대로 쓴다 (인과를 실제로 따진 문장이다).
-   *  · 규칙 기반이면 **인과를 지어내지 않는다.** 대신 확실히 아는 것만 말한다:
-   *    무엇에 관한 기사이고(topic), 어느 방향인지(sentiment), 지금 지수는 어떤지.
-   *    "왜"를 모르면서 아는 척하는 것보다 낫다.
+   * ※ 예전 이 자리엔 "WHY IT MATTERS" 한 줄이 있었다.
+   *   AI 판단일 땐 Claude 의 why 를, 아닐 땐 관측값을 조합한 문장을 넣었는데
+   *   후자는 "Headline reads risk-off · NASDAQ FUT −0.31% right now" 처럼
+   *   화면 다른 곳에 이미 다 있는 숫자를 문장으로 다시 읽어 주는 것에 불과했다.
+   *   같은 공간에 **직전 TOP STORY 3건**을 넣는 편이 정보가 훨씬 많다 —
+   *   24시간 방송에서 중간에 들어온 시청자가 흐름을 잡을 수 있는 유일한 단서다.
    */
-  $: marketLink = (() => {
-    const d = digest.driver;
-    if (d.noData) return "";
-    if (d.origin === "ai" && d.why) return d.why;
-    // 규칙 기반 — 관측 가능한 사실만 조합한다
-    const dir = d.sentiment === "pos" ? "risk-on" : d.sentiment === "neg" ? "risk-off" : "mixed";
-    const lead = boards.top[0];
-    const idx = lead ? `${lead.k} ${lead.pct >= 0 ? "+" : "−"}${Math.abs(lead.pct).toFixed(2)}%` : "";
-    return `Headline reads ${dir}${idx ? ` · ${idx} right now` : ""}. No AI causal read this cycle.`;
-  })();
+
+  /** TOP STORY 근거 매체 목록 ("CNBC · Reuters"). 마크업에선 타입 주석을 못 쓴다 */
+  $: srcNames = (digest.driver.sources ?? [])
+    .map((s: any) => s?.name)
+    .filter(Boolean)
+    .join(" · ");
+
+  /** 직전 스토리의 경과 시간 — 이력은 "언제 최상단이었나"가 핵심이다 */
+  function seenAgo(ms: number, now: number): string {
+    const m = Math.max(0, Math.round((now - ms) / 60000));
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
+  }
 
   /** 지난 거시 이벤트의 경과 ("2d ago") */
   function macroAgo(iso: string, now: number): string {
@@ -286,6 +294,7 @@
     if (d) {
       if (d.driver) digest = d;
       brief = Array.isArray(d.brief) ? d.brief : [];
+      prevStories = Array.isArray(d.prevStories) ? d.prevStories : [];
       digestStale = false;
     } else {
       digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
@@ -541,7 +550,17 @@
         {#if digest.driver.epoch}
           <div class="driver-meta">
             <span class="dm-age">{ago(digest.driver.epoch, nowMs)} ago</span>
-            {#if digest.driver.source}<span class="dm-src">· {digest.driver.source}</span>{/if}
+            <!-- ★ 근거 출처를 **전부** 적는다.
+                 Claude 가 웹검색으로 여러 기사를 읽고 한 문장을 만들어도 예전엔 첫 매체
+                 하나만 나와서, 종합 판단이 "CNBC 기사 한 건"처럼 보였다.
+                 어디서 온 이야기인지가 이 화면 신뢰의 대부분이다. -->
+            {#if srcNames}
+              <!-- AI 판단은 기사 하나의 바이라인이 아니라 **여러 기사를 읽고 만든 문장**이다.
+                   "· CNBC" 로만 쓰면 CNBC 기사를 옮긴 것처럼 보인다 → "via" 로 구분한다. -->
+              <span class="dm-src">{digest.driver.origin === "ai" ? "via" : "·"} {srcNames}</span>
+            {:else if digest.driver.source}
+              <span class="dm-src">· {digest.driver.source}</span>
+            {/if}
           </div>
         {/if}
       </div>
@@ -602,16 +621,24 @@
       </div>
 
       <!-- 헤드라인 아래 빈 공간:
-           · 평소  → TOP STORY 가 **시장과 어떻게 연결되는지** 한 줄
+           · 평소  → **직전 TOP STORY 3건** (오늘 흐름을 잡는 유일한 단서)
            · 영상 송출 중 → 영상이 그 자리를 대신한다 (둘이 겹치지 않는다) -->
       {#if video}
         {#key video.id}
           <LiveVideo videoId={video.id} label={video.label} playing={videoPlaying} />
         {/key}
-      {:else if marketLink}
+      {:else if prevStories.length}
         <div class="panel mlink">
-          <div class="lbl">WHY IT MATTERS<span class="src-hint">{digest.driver.origin === "ai" ? "AI read" : "derived"}</span></div>
-          <div class="ml-txt">{marketLink}</div>
+          <div class="lbl">EARLIER TOP STORIES<span class="src-hint">last {prevStories.length}</span></div>
+          <div class="ps-list">
+            {#each prevStories as p}
+              <div class="ps-item {sent(p.sentiment)}">
+                <span class="ps-when">{seenAgo(p.seenAt, nowMs)}</span>
+                <span class="ps-txt">{p.text}</span>
+                {#if p.source}<span class="ps-src">{p.source}</span>{/if}
+              </div>
+            {/each}
+          </div>
         </div>
       {/if}
     </section>
@@ -752,12 +779,12 @@
       </div>
 
       <!-- ※ 예전엔 여기 EARNINGS 패널이 따로 있었는데 UPCOMING 의 EARNINGS 그룹과
-           내용이 겹쳤다(예정 실적이 두 곳에 나왔다). 발표된 종목은 아래 MARKET REACTION
+           내용이 겹쳤다(예정 실적이 두 곳에 나왔다). 발표된 종목은 아래 MARKET DRIVERS
            이 반응%까지 담당하므로 이 패널을 지우고 공간을 헤드라인에 넘겼다. -->
 
       <!-- ===== US ECONOMY =====
            최신 발표치 + 이전치 대비 방향. 이건 '시장 반응'이 아니라 **지표 그 자체**라
-           MARKET REACTION 과 한 패널에 두면 이름과 내용이 어긋난다.
+           MARKET DRIVERS 와 한 패널에 두면 이름과 내용이 어긋난다.
            출처가 연준(FRED)이라 검증 대상이 아니라 기준이다. -->
       {#if macroReadings.length}
         <div class="panel econ">
@@ -782,11 +809,14 @@
         </div>
       {/if}
 
-      <!-- ===== MARKET REACTION =====
-           "무엇이 시장을 움직였고 왜인가". 실적 목록과 성격이 다르다:
-           저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다. -->
+      <!-- ===== MARKET DRIVERS =====
+           "무엇이 시장을 움직였나". 실적 목록과 성격이 다르다:
+           저긴 '언제 발표하나' 일정표고, 여긴 '그래서 주가가 어떻게 됐나' 결과판이다.
+           ※ 이름을 REACTION → DRIVERS 로 바꿨다. 시청자가 찾는 건 "시장이 반응했다"가
+             아니라 **"무엇이 이 시장을 움직이고 있나"** 다. 담긴 내용(거시 결과 + 실제로
+             움직인 종목)은 처음부터 드라이버 목록이었는데 이름만 다른 걸 말하고 있었다. -->
       <div class="panel react">
-        <div class="lbl">⚡ MARKET REACTION<span class="src-hint">post-earnings moves</span></div>
+        <div class="lbl">⚡ MARKET DRIVERS<span class="src-hint">what moved it</span></div>
 
         <div class="rx-grp">MACRO<span class="rx-sub">last 7 days</span></div>
 
@@ -1033,7 +1063,7 @@
   /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
   .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
   /* 발표 당시 스냅샷 — 라이브와 색을 달리해 헷갈리지 않게 */
-  /* ===== MARKET REACTION ===== */
+  /* ===== MARKET DRIVERS ===== */
   .rx-grp { font-size: 12px; font-weight: 800; color: #6b7280; letter-spacing: 0.1em;
     margin: 6px 0 3px; display: flex; align-items: baseline; gap: 6px; }
   .rx-grp:first-of-type { margin-top: 2px; }
@@ -1146,10 +1176,19 @@
   .chart-grid[data-n="1"] .chart-body { min-height: 320px; }
   /* 영상은 헤드라인 아래 남는 공간에 들어간다. 헤드라인은 내용만큼만 차지한다. */
   .col.left > .news { flex: 0 0 auto; }
-  /* TOP STORY ↔ 시장 연결 한 줄 (영상 없을 때만) */
+  /* 직전 TOP STORY 이력 (영상 없을 때만) */
   .mlink { flex: 0 0 auto; }
-  .ml-txt { padding: 0 16px 14px; font-size: 15px; line-height: 1.45; color: #c7cdd6;
-    font-weight: 600; }
+  .ps-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 8px; }
+  /* 경과시간을 고정폭으로 왼쪽에 세워 세 줄이 시간축처럼 읽히게 한다 */
+  .ps-item { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px;
+    align-items: baseline; border-left: 3px solid var(--accent, #3a4150); padding-left: 10px; }
+  /* 헤드라인(17px)과 같은 크기로 두되 색만 낮춘다 — 유튜브에서 4~5배 축소돼 보이므로
+     "지난 것"을 작게 만들면 그냥 안 읽힌다. 위계는 굵기·색으로 준다. */
+  .ps-when { font-size: 14px; font-weight: 800; color: #6b7280; font-variant-numeric: tabular-nums; }
+  .ps-txt { font-size: 17px; font-weight: 600; line-height: 1.3; color: #c7cdd6;
+    overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+    -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .ps-src { font-size: 11px; font-weight: 700; color: #565d68; letter-spacing: 0.02em; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
@@ -1195,7 +1234,7 @@
 
   /* 실적 캘린더 */
   .earn { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 120px; }
-  /* MARKET REACTION 은 내용만큼만 차지한다 — EARNINGS 목록을 잡아먹으면 안 된다 */
+  /* MARKET DRIVERS 는 내용만큼만 차지한다 — EARNINGS 목록을 잡아먹으면 안 된다 */
   .react { flex: 0 0 auto; padding: 0 12px 10px; }
   .react .lbl { padding: 10px 4px 4px; }
   /* 지표 패널 — '반응'이 아니라 발표치라 별도 패널로 분리했다 */

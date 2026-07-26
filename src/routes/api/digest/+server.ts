@@ -3,6 +3,8 @@ import { getMarketNews, getEarnings, newsTopic, shortHeadline, WATCHLIST, TAPE_T
 import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
+import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
+import { recordStory, previousStories } from "$lib/server/storylog";
 
 // 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다 (INTC 등 대형주 포함)
 const MAJOR = new Set([...WATCHLIST, ...INDEX_TICKERS, ...TAPE_TICKERS, ...MAJORS]);
@@ -48,7 +50,13 @@ export const GET: RequestHandler = async () => {
   // → 시간 감쇠 점수: 6시간마다 레벨 1씩 깎는다.
   const decay = (n: { level: number; epoch: number }) =>
     n.level - (nowSec - n.epoch) / 3600 / 6;
-  const ranked = [...news].sort((a, b) => decay(b) - decay(a));
+  const sorted = [...news].sort((a, b) => decay(b) - decay(a));
+
+  // ★ 같은 사건을 다룬 기사 정리.
+  //   Finnhub 의 general 피드는 한 사건을 매체 수만큼 준다. 전부 유효한 기사라
+  //   기존 필터(level/matched)는 하나도 못 걸렀고, 화면엔 같은 뉴스가 연달아 세 줄 떴다.
+  //   정렬 **뒤에** 거르므로, 남는 건 그중 점수가 가장 높은 대표 기사다.
+  const ranked = dropNearDuplicates(sorted, (n) => n.title);
 
   // ★ TOP STORY 도 헤드라인 목록과 **같은 관련성 기준**을 통과한 것 중에서 고른다.
   //   예전엔 ranked[0] 을 그대로 썼는데, decay 는 신선도를 크게 쳐서 방금 올라온
@@ -91,13 +99,24 @@ export const GET: RequestHandler = async () => {
   const lowConfidence = candidate?.payload.confidence === "low";
   const ai = sup.superseded || lowConfidence ? undefined : candidate;
 
+  // ★ AI 판단의 **근거 출처를 전부** 싣는다.
+  //   Claude 가 웹검색으로 3개 기사를 읽고 한 문장을 만들어도 화면엔 sources[0] 한 곳만
+  //   나왔다. 시청자에게는 "CNBC 기사 하나"처럼 보이지만 실제로는 종합 판단이다.
+  //   어디서 온 이야기인지가 신뢰의 대부분이므로 매체를 모두 보여준다 (최대 3곳).
+  const aiSources = (ai?.payload.sources ?? [])
+    .map((s) => ({ name: publisherOf(s?.url ?? ""), url: String(s?.url ?? "") }))
+    .filter((s) => s.name && s.url)
+    .filter((s, i, arr) => arr.findIndex((x) => x.name === s.name) === i)
+    .slice(0, 3);
+
   let driver;
   if (ai) {
     driver = {
       text: ai.payload.text,
       sentiment: ai.payload.sentiment,
       // 기사 제목이 아니라 **언론사 이름**을 넣는다 (짧은 라벨 자리다)
-      source: publisherOf(ai.payload.sources[0]?.url ?? ""),
+      source: aiSources[0]?.name ?? "",
+      sources: aiSources,
       url: ai.payload.sources[0]?.url ?? "",
       why: ai.payload.why,
       confidence: ai.payload.confidence,
@@ -113,6 +132,7 @@ export const GET: RequestHandler = async () => {
       text: shortHeadline(top.title),
       sentiment: top.sentiment,
       source: top.source,
+      sources: top.source && top.url ? [{ name: top.source, url: top.url }] : [],
       url: top.url,
       // 왜 규칙기반으로 내려왔는지를 화면이 말한다 (조용히 바꾸지 않는다)
       why: sup.superseded
@@ -129,17 +149,30 @@ export const GET: RequestHandler = async () => {
     };
   } else {
     driver = {
-      text: "NO NEWS FEED", sentiment: "neu", source: "", url: "", why: "",
+      text: "NO NEWS FEED", sentiment: "neu", source: "", sources: [], url: "", why: "",
       confidence: "", epoch: 0, origin: "none" as const, supersededBy: null, aiHeld: false, noData: true
     };
   }
+
+  // ── TOP STORY 이력 ────────────────────────────────────
+  //  스토리가 갈리면 직전 것은 흔적 없이 사라졌다. 중간에 들어온 시청자에겐
+  //  "지금까지 무슨 일이 있었나"가 통째로 없는 셈이다 → 갈릴 때마다 쌓고 3건을 보여준다.
+  //  (같은 사건을 문구만 바꿔 재생성한 경우는 새 항목으로 치지 않는다)
+  recordStory(driver);
+  const prevStories = previousStories(driver.text, 3);
 
   // driver 로 쓴 기사는 리스트에서 제외 (같은 문장이 화면에 두 번 나오던 문제).
   // ★ 트레이더 관점: 양보다 신호. level≥3(시장 관련) 또는 분류된 것만 남기고, 그게 너무 적으면
   //   전체로 백필한다. 각 항목엔 대표 주체(topic) 칩을 붙여 "무엇에 관한 것"을 먼저 스캔하게 한다.
   // ★ YouTube 송출 → 다수 시청자가 1920 프레임을 폰에서 4~5배 축소해 본다.
   //   그래서 '적게·크게·짧게'. 4건만, 각 행을 크게 뽑아 축소해도 읽히게 한다.
-  const pool = ranked.filter((n) => !top || n.id !== top.id);
+  // ★ id 비교만으로는 부족했다.
+  //   AI 판단은 원문 기사와 id 가 다르므로 **항상 통과**했고, 그 결과 최상단 큰 글씨와
+  //   바로 아래 첫 줄이 같은 사건을 말했다. 규칙기반일 때도 다른 매체가 쓴 같은 기사가
+  //   그대로 남았다. → 실제로 화면에 나가는 **문장**으로 비교한다.
+  const pool = ranked.filter(
+    (n) => (!top || n.id !== top.id) && !isNearDuplicate(n.title, driver.text)
+  );
   const signal = pool.filter((n) => n.matched || n.level >= 3);
 
   // ── TODAY 브리핑 (오늘의 핵심 이벤트+영향, Claude 생성) ──
@@ -160,7 +193,7 @@ export const GET: RequestHandler = async () => {
     .slice(0, brief && brief.length ? 5 : 7)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
-  return new Response(JSON.stringify({ driver, news: list, brief, serverNow: Math.floor(nowSec) }), {
+  return new Response(JSON.stringify({ driver, news: list, brief, prevStories, serverNow: Math.floor(nowSec) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };
