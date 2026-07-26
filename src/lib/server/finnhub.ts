@@ -325,6 +325,14 @@ const NEGATION = /(?<![\w-])(?:no|not|fails? to|without|rules? out|denies|denied
 
 export type NewsScore = { level: number; sentiment: string; matched: boolean };
 
+// 전망·미리보기·요약 기사 — **일어난 일이 아니라 앞으로의 이야기**다.
+//  "Megacap earnings and Fed meeting could test a market on edge next week.
+//   Here's what's ahead" 같은 제목이 TOP STORY 에 올라갔다.
+//  키워드(earnings·Fed)는 다 걸리지만 정작 **아무 사실도 전하지 않는다.**
+//  방송 최상단은 "무슨 일이 있었나" 자리다 → 이런 건 맥락(L2)으로 내린다.
+const PREVIEW =
+  /here'?s what|what to (?:watch|know|expect)|things to know|(?:week|day|month) ahead|what'?s ahead|preview|set to|could test|to watch (?:this|next)|look ahead|key events? to/i;
+
 export function scoreNews(headline: string): NewsScore {
   const t = (headline || "").toLowerCase();
   let level = 2;
@@ -347,9 +355,16 @@ export function scoreNews(headline: string): NewsScore {
     level = 3; matched = true;
   }
 
+  // ★ 등급만 낮추면 부족하다 — 관련성 필터가 `matched || level >= 3` 이라
+  //   matched 가 남아 있으면 그대로 통과한다. 실측: "Megacap earnings and Fed meeting…"
+  //   이 L2 로 내려갔는데도 matched=true 라서 TOP STORY 후보로 살아남았다.
+  //   전망·잡기사는 **분류에 실패한 것으로 처리**해야 필터가 실제로 막는다.
+  if (PREVIEW.test(t)) { level = Math.min(level, 2); matched = false; }
+
   // 스포츠·연예·인도적 기사는 어떤 키워드가 걸렸든 L2 상한.
   // ("Spain beat Argentina to win World Cup" 이 관세 발표보다 높은 등급을 받던 문제)
-  if (NONMARKET.test(t)) level = Math.min(level, 2);
+  //  ("Spain beat Argentina" 의 beat 처럼 키워드가 우연히 걸리는 경우가 있어 matched 도 끈다)
+  if (NONMARKET.test(t)) { level = Math.min(level, 2); matched = false; }
 
   /* ---- sentiment: first-match 가 아니라 카운트 비교 ---- */
   let p = POS_RE.filter((r) => r.test(t)).length;
@@ -464,6 +479,12 @@ export function shortHeadline(title: string): string {
   let s = (title || "").trim();
   // 출처 접미사 제거: " - Reuters" / " | CNBC" / " – Bloomberg"
   s = s.replace(/\s*[-–—|]\s*[A-Z][A-Za-z.&' ]{1,24}$/, "").trim();
+  // ★ 문장 뒤에 붙는 유도 문구를 통째로 버린다.
+  //   "…test a market on edge next week. Here's what's ahead" → 앞 문장만 남긴다.
+  //   기사 제목은 클릭을 유도하려고 쓰인 것이라 그대로 두면 방송에 정보가 아니라
+  //   광고 문구가 나간다.
+  s = s.replace(/[.!?]\s+(?:here'?s|what to|things to|a look at)\b.*$/i, "").trim();
+
   // 첫 종속절 경계에서 컷 (핵심 주절만 남긴다). 너무 앞이면(주어 잘림) 무시.
   const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying|on)\s/i);
   if (m && m.index != null && m.index > 22) s = s.slice(0, m.index).trim();
