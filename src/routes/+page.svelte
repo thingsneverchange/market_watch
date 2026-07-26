@@ -43,9 +43,10 @@
   let prevStories: any[] = [];
   // 지금 시장을 지배하는 주제 (WAR / FED / TARIFFS …). 헤드라인 토픽을 중요도×신선도로 집계.
   let theme: { key: string; label: string; note: string; count: number; total: number; share: number; level: number } | null = null;
-  // 지수를 실제로 움직인 종목 (시총 × 등락률). 판정 기준은 lib/server/impact.ts 주석 참고.
-  let impact: { movers: any[]; benchPct: number | null; live: boolean; pendingCaps: number } =
-    { movers: [], benchPct: null, live: false, pendingCaps: 0 };
+  // 지금 시장이 보고 있는 종목. 판정 기준은 lib/server/focus.ts 상단 주석 참고.
+  //  가격이 아니라 **관심의 소재**를 잰다 — 실적을 앞둔 종목은 아직 안 움직였어도 중심이다.
+  let impact: { names: any[]; benchPct: number | null; live: boolean } =
+    { names: [], benchPct: null, live: false };
   // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
   let brief: any[] = [];
   // UPCOMING = 성격별로 분리. 거시/정책(MACRO)과 개별 실적(EARNINGS)은 보는 이유가 다르다.
@@ -243,14 +244,10 @@
     .filter(Boolean)
     .join(" · ");
 
-  /** 시총 변화액 표기 — $1,000B 를 넘으면 조 단위로 (방송에서 자릿수를 세게 만들지 않는다) */
-  function fmtB(b: number): string {
-    return b >= 1000 ? `${(b / 1000).toFixed(2)}T` : `${Math.round(b)}B`;
-  }
-  /** 막대 길이 = 목록 안 최대 영향액 대비 비율. 절대 크기가 아니라 서열을 보여 준다 */
-  function impactWidth(b: number | null): number {
-    const max = Math.max(...impact.movers.map((m: any) => Math.abs(m.impactB ?? 0)), 1);
-    return Math.max(6, Math.round((Math.abs(b ?? 0) / max) * 100));
+  /** 막대 길이 = 목록 안 1위 대비 관심도 비율. 절대 점수가 아니라 서열을 보여 준다 */
+  function focusWidth(s: number): number {
+    const max = Math.max(...impact.names.map((m: any) => m.score ?? 0), 0.001);
+    return Math.max(8, Math.round(((s ?? 0) / max) * 100));
   }
 
   /** 직전 스토리의 경과 시간 — 이력은 "언제 최상단이었나"가 핵심이다 */
@@ -438,9 +435,18 @@
    * 분당 60 제한을 헤더 시세와 나눠 써야 하므로 여유를 둔다.
    */
   async function refreshImpact() {
-    const j = await jget("/api/impact");
-    if (j && Array.isArray(j.movers)) impact = j;
+    // 현재 주도 테마를 같이 넘긴다 — 그 테마의 대표주에 가점이 붙는다
+    sentThemeKey = theme?.key ?? "";
+    const j = await jget(`/api/impact?theme=${encodeURIComponent(sentThemeKey)}`);
+    if (j && Array.isArray(j.names)) impact = j;
   }
+
+  // ★ 마운트 시점엔 theme 이 아직 null 이다 (digest 응답이 오기 전).
+  //   그대로 두면 첫 요청이 테마 없이 나가고, 다음 60초 틱까지 테마 대표주가
+  //   목록에 못 든다. 실측: GEO 국면인데 XOM·CVX 가 빠지고 실적만 남았다.
+  //   → 주제가 바뀌면 그 즉시 다시 받는다.
+  let sentThemeKey: string | null = null;
+  $: if (sentThemeKey !== null && (theme?.key ?? "") !== sentThemeKey) refreshImpact();
 
   async function refreshControl() {
     const j = await jget("/api/control");
@@ -698,36 +704,34 @@
           <LiveVideo videoId={video.id} label={video.label} playing={videoPlaying} />
         {/key}
       {:else}
-        <!-- ★ 지수를 실제로 움직인 종목.
-             기준은 **시가총액 × 등락률 = 지수에서 증발·증가한 달러**다.
-             등락률 순으로 줄 세우면 작은 회사의 큰 움직임이 대형주의 지수 영향력을 가린다
-             (GOOGL −6% = −$234B  vs  MMM +9.8% = +$9B).
-             거기에 "지수 대비 초과분"을 걸어 **시장에 끌려간 종목을 빼낸다** —
-             전부 −2% 인 날의 impact 상위는 그냥 시총 상위 목록이지 사건이 아니다.
-             ※ 거래량은 무료 티어에 아예 없다(/quote 에 필드 없음, /stock/candle 403). -->
-        {#if impact.movers.length}
+        <!-- ★ 지금 시장이 보고 있는 종목.
+             가격이 아니라 **관심의 소재**를 잰다:
+               · 최근 48시간 헤드라인에 몇 번 나왔나 (지금 이야기되고 있나)
+               · 실적이 임박했나 / 방금 냈나  ← 발표 전엔 아직 안 움직였어도 시장의 중심이다
+               · 지금 주도 테마(MARKET DRIVER)의 대표주인가
+             가격 변동은 네 번째로만 쓴다 — 순위를 정하는 값이 아니라 확인용이다.
+             그래서 각 행에 **왜 여기 있는지**를 같이 적는다. 근거 없이 티커만 띄우지 않는다. -->
+        {#if impact.names.length}
           <div class="panel mlink">
             <div class="lbl">
-              MOVING THE MARKET
-              <span class="src-hint">{impact.live ? "cap × move · live" : "cap × move · last session"}</span>
+              MARKET FOCUS
+              <span class="src-hint">news · catalyst · theme</span>
             </div>
             <div class="im-list">
-              {#each impact.movers as m}
+              {#each impact.names as m}
                 <div class="im-item">
                   <span class="im-tk">{m.ticker}</span>
-                  <span class="im-pct" class:u={m.pct >= 0} class:d={m.pct < 0}>
-                    {m.pct >= 0 ? "+" : "−"}{Math.abs(m.pct).toFixed(2)}%
+                  <span class="im-why" class:cat={m.earnDays != null && m.earnDays >= -3 && m.earnDays <= 7}>
+                    {m.reason}
                   </span>
                   <span class="im-bar">
-                    <!-- 막대 길이 = 이 목록 안에서의 상대 영향력. 숫자보다 먼저 읽힌다 -->
-                    <span class="im-fill" class:u={(m.impactB ?? 0) >= 0} class:d={(m.impactB ?? 0) < 0}
-                          style="width:{impactWidth(m.impactB)}%"></span>
+                    <!-- 막대 = 이 목록 안에서의 관심도 서열. 숫자보다 먼저 읽힌다 -->
+                    <span class="im-fill" style="width:{focusWidth(m.score)}%"></span>
                   </span>
-                  <span class="im-imp" class:u={(m.impactB ?? 0) >= 0} class:d={(m.impactB ?? 0) < 0}>
-                    {(m.impactB ?? 0) >= 0 ? "+" : "−"}${fmtB(Math.abs(m.impactB ?? 0))}
+                  <!-- 가격은 확인용이라 오른쪽 끝. 장 밖이면 직전 세션 값이다(헤더 배지가 말한다) -->
+                  <span class="im-pct" class:u={(m.pct ?? 0) >= 0} class:d={(m.pct ?? 0) < 0}>
+                    {m.pct == null ? "—" : `${m.pct >= 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(2)}%`}
                   </span>
-                  <!-- 시장 탓인지 이 종목 탓인지. 벤치마크를 못 받으면 주장하지 않는다 -->
-                  <span class="im-rel">{m.rel == null ? "" : `${m.rel >= 0 ? "+" : "−"}${Math.abs(m.rel).toFixed(1)} vs S&P`}</span>
                 </div>
               {/each}
             </div>
@@ -1361,19 +1365,20 @@
     -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .ps-src { font-size: 11px; font-weight: 700; color: #565d68; letter-spacing: 0.02em; }
 
-  /* 지수를 움직인 종목 — [티커] [등락률] [영향 막대] [$영향액] [지수 대비] */
-  .im-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 9px; }
-  .im-item { display: grid; grid-template-columns: 62px 74px 1fr 76px 84px;
+  /* 시장의 관심 종목 — [티커] [왜] [관심도 막대] [등락률] */
+  .im-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .im-item { display: grid; grid-template-columns: 64px 128px 1fr 78px;
     gap: 10px; align-items: center; font-variant-numeric: tabular-nums; }
   .im-tk { font-size: 19px; font-weight: 800; color: #e8edf4; letter-spacing: 0.01em; }
-  .im-pct { font-size: 17px; font-weight: 800; }
-  .im-pct.u, .im-imp.u, .im-fill.u { color: #39d98a; }
-  .im-pct.d, .im-imp.d, .im-fill.d { color: #ff5c5c; }
-  /* 막대는 목록 안 최대치 대비 서열. 숫자보다 먼저 읽힌다. */
+  /* 왜 여기 있는지. 촉매(실적)는 색을 줘서 "곧 뭔가 있다"를 먼저 보이게 한다 */
+  .im-why { font-size: 11px; font-weight: 800; color: #7a828d; letter-spacing: 0.04em;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .im-why.cat { color: #d8a860; }
   .im-bar { height: 8px; background: #14171d; border-radius: 4px; overflow: hidden; }
-  .im-fill { display: block; height: 100%; border-radius: 4px; background: currentColor; opacity: 0.75; }
-  .im-imp { font-size: 16px; font-weight: 800; text-align: right; }
-  .im-rel { font-size: 11px; font-weight: 700; color: #6b7280; text-align: right; white-space: nowrap; }
+  .im-fill { display: block; height: 100%; border-radius: 4px; background: #3d6ea8; opacity: 0.85; }
+  .im-pct { font-size: 17px; font-weight: 800; text-align: right; }
+  .im-pct.u { color: #39d98a; }
+  .im-pct.d { color: #ff5c5c; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }

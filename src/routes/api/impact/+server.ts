@@ -1,12 +1,14 @@
 import type { RequestHandler } from "./$types";
-import { getIndexMovers } from "$lib/server/impact";
+import { getMarketFocus } from "$lib/server/focus";
 
-// 지수를 실제로 움직인 종목 (시총 × 등락률). 판정 기준은 impact.ts 주석 참고.
-// ★ 별도 엔드포인트로 둔 이유: 종목이 40개라 캐시가 만료되는 순간 요청이 몰린다.
-//   헤더 시세(/api/boards)와 같은 경로에 두면 그 지연이 헤더까지 끌고 간다.
-//   화면은 이쪽만 느린 주기로 폴링한다.
-export const GET: RequestHandler = async () => {
-  const board = await getIndexMovers(5);
+// "지금 시장이 보고 있는 종목". 판정 기준은 focus.ts 상단 주석 참고.
+// ★ 오늘 지수를 얼마나 움직였나(사후 측정)가 아니다 —
+//   실적을 앞둔 GOOGL 은 아직 안 움직였는데도 그 주 시장의 중심이다.
+//
+// themeKey = 현재 MARKET DRIVER 주제. 화면이 넘겨 준다(테마 대표주에 가점).
+export const GET: RequestHandler = async ({ url }) => {
+  const themeKey = String(url.searchParams.get("theme") ?? "").toUpperCase().slice(0, 12);
+  const board = await getMarketFocus(themeKey, 5);
   return new Response(JSON.stringify(board), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });

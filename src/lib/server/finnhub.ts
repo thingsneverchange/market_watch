@@ -82,7 +82,51 @@ function pathHash(path: string): number {
 /** 경로별 마지막 실패 사유 (진단·부분실패 표시용) */
 export const lastError = new Map<string, string>();
 
-async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
+// ============================================================
+//  전역 요청 예산 (토큰 버킷)
+//
+//  왜 필요한가 — TTL 계산만으론 못 막는다:
+//   패널을 하나 붙일 때마다 "이 패널은 분당 몇 건"을 손으로 더해 왔는데,
+//   호출부가 늘면 그 산수가 어긋난다. 실측 사고: 관심종목 패널을 붙이자
+//   정상 주기에서도 429 가 분당 54건 났다.
+//   그냥 로그가 지저분한 문제가 아니다 — 429 백오프는 **경로별**이라
+//   부수적인 패널이 유발한 429 가 헤더 시세 티커까지 45~90초 묶어 버린다.
+//   화면의 심장인 헤더가 부가 기능 때문에 멈추는 구조였다.
+//
+//  그래서 요청을 쏘기 전에 예산을 확인한다. 예산이 없으면 **요청을 아예 안 쏜다** —
+//  429 를 받아 백오프에 걸리는 것보다 캐시를 한 번 더 쓰는 게 낫다.
+//
+//  우선순위 — **저우선에 별도 쿼터를 준다.**
+//   처음엔 "저우선은 전체 38건에서 멈춘다"로 짰는데 이건 틀렸다.
+//   헤더가 이미 34건을 쓰고 있으면 저우선에 남는 건 분당 4건뿐이라,
+//   시가총액 캐시(호출당 6개)가 사실상 영원히 안 찼다 (실측: 12번 호출해도 미충전).
+//   전체 상한과 저우선 쿼터는 **별개로** 세야 한다:
+//     · 전체     ≤ 55  → 한도 60 에 여유 5
+//     · 저우선   ≤ 18  → 헤더(34) + 저우선(18) = 52 로 항상 전체 상한 안쪽이다.
+//   이러면 헤더는 언제나 통과하고, 저우선도 분당 18건을 보장받는다.
+// ============================================================
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX_TOTAL = 55;
+const RATE_MAX_LOW = 18;
+let sent: number[] = [];
+let sentLow: number[] = [];
+/** 예산 부족으로 건너뛴 요청 수 (진단용) */
+export let rateSkipped = 0;
+
+function budgetOk(low: boolean): boolean {
+  const now = Date.now();
+  const fresh = (a: number[]) => a.filter((t) => now - t < RATE_WINDOW_MS);
+  if (sent.length && now - sent[0] >= RATE_WINDOW_MS) sent = fresh(sent);
+  if (sentLow.length && now - sentLow[0] >= RATE_WINDOW_MS) sentLow = fresh(sentLow);
+
+  if (sent.length >= RATE_MAX_TOTAL) return false;
+  if (low && sentLow.length >= RATE_MAX_LOW) return false;
+  sent.push(now);
+  if (low) sentLow.push(now);
+  return true;
+}
+
+async function fhFetch(path: string, ttlMs = 15_000, lowPriority = false): Promise<any> {
   if (!FINNHUB_API_KEY) return null;
   const now = Date.now();
   const hit = cache.get(path);
@@ -92,6 +136,9 @@ async function fhFetch(path: string, ttlMs = 15_000): Promise<any> {
   const effTtl = ttlMs * (0.85 + jit * 0.3);  // ±15% 지터 → 만료 시점 분산
   if (hit && now - hit.at < effTtl) return hit.data;
   if ((failUntil.get(path) ?? 0) > now) return stale();
+
+  // ★ 예산을 넘으면 요청을 쏘지 않는다. 429 를 맞고 백오프에 갇히는 것보다 낫다.
+  if (!budgetOk(lowPriority)) { rateSkipped++; return stale(); }
 
   const running = inflight.get(path);
   if (running) return running; // 동일 tick 중복 발사 제거
@@ -144,7 +191,7 @@ export type Quote = {
   asOf: number; // 소스가 준 마지막 체결 시각 (epoch ms). 0 = 알 수 없음
 };
 
-export async function getQuote(ticker: string, ttlMs = 20_000): Promise<Quote | null> {
+export async function getQuote(ticker: string, ttlMs = 20_000, lowPriority = false): Promise<Quote | null> {
   // TTL 20s + 클라이언트 폴링 15s → 티커당 분당 2회. 17티커 = 34 req/min.
   // (예전엔 TTL 8s < 폴링 12s 라 캐시가 폴링 사이에 **구조적으로 절대 히트하지 않았다**)
   //
@@ -152,9 +199,10 @@ export async function getQuote(ticker: string, ttlMs = 20_000): Promise<Quote | 
   //   헤더 시세(20s)와 "지수를 움직인 종목"(150s)은 요구 신선도가 다르다. 후자를 20s 로
   //   돌리면 종목이 40개라 그것만으로 33 req/min 을 더 써서 한도(60)를 넘긴다(실측 계산:
   //   헤더 34 + impact 33 = 67). 캐시 키는 같으므로 헤더는 여전히 20초마다 갱신된다.
-  const j = await fhFetch(`/quote?symbol=${encodeURIComponent(ticker)}`, ttlMs);
+  const j = await fhFetch(`/quote?symbol=${encodeURIComponent(ticker)}`, ttlMs, lowPriority);
   if (!j || j.c == null || j.c === 0) {
-    console.warn(`[finnhub] quote missing: ${ticker}`);
+    // 예산으로 건너뛴 경우도 여기로 온다 — 매 종목마다 찍으면 로그가 도배된다
+    if (!lowPriority) console.warn(`[finnhub] quote missing: ${ticker}`);
     return null;
   }
 
@@ -175,8 +223,8 @@ export async function getQuote(ticker: string, ttlMs = 20_000): Promise<Quote | 
   };
 }
 
-export async function getQuotes(tickers: string[], ttlMs?: number): Promise<Quote[]> {
-  const out = await Promise.all(tickers.map((t) => getQuote(t, ttlMs)));
+export async function getQuotes(tickers: string[], ttlMs?: number, lowPriority = false): Promise<Quote[]> {
+  const out = await Promise.all(tickers.map((t) => getQuote(t, ttlMs, lowPriority)));
   return out.filter((q): q is Quote => q !== null);
 }
 
@@ -442,8 +490,15 @@ const TOPIC_RULES: [RegExp, string][] = [
 //  ※ 거래량은 무료 티어로 못 얻는다(/quote 에 volume 없음, /stock/candle 은 403).
 //    그래서 "얼마나 거래됐나"가 아니라 "시가총액이 얼마나 증발/증가했나"로 크기를 잰다.
 //    지수 기여도의 정확한 대용은 아니지만, 방향과 규모는 정직하게 전달한다.
-const capCache = new Map<string, { at: number; capB: number | null }>();
+// ★ 항목마다 TTL 을 따로 들고 있다. 성공은 24시간, 실패는 5분이다. 이유:
+//   · 실패를 24시간 캐시하면(옛 동작) 예산 초과로 한 번 건너뛴 종목이 그날 내내 빠진다.
+//   · 반대로 실패를 아예 캐시 안 하면(중간에 시도했던 수정) `todo.slice(0,6)` 이
+//     **항상 같은 6개만** 재시도해서 목록이 앞으로 안 나간다 — 스윕이 영구히 막힌다.
+//     실측: 12번 호출해도 시총이 하나도 안 찼다.
+//   짧은 실패 TTL 이 두 문제를 동시에 푼다. 실패는 "값이 없다"가 아니라 "아직 모른다"다.
+const capCache = new Map<string, { at: number; capB: number | null; ttl: number }>();
 const CAP_TTL = 24 * 3600_000;   // 시총은 하루 단위로 충분하다 (요청 절약)
+const CAP_FAIL_TTL = 5 * 60_000; // 실패는 곧 다시 시도한다
 
 /** 티커 → 시가총액(십억 달러). 못 얻으면 null. */
 export async function getMarketCaps(tickers: string[]): Promise<Map<string, number | null>> {
@@ -452,12 +507,13 @@ export async function getMarketCaps(tickers: string[]): Promise<Map<string, numb
   const todo: string[] = [];
   for (const t of tickers) {
     const hit = capCache.get(t);
-    if (hit && now - hit.at < CAP_TTL) out.set(t, hit.capB);
+    if (hit && now - hit.at < hit.ttl) out.set(t, hit.capB);
     else todo.push(t);
   }
   // 한 번에 6개까지만 (분당 60 제한 안에서 여유 있게)
   await Promise.all(todo.slice(0, 6).map(async (t) => {
-    const j = await fhFetch(`/stock/profile2?symbol=${encodeURIComponent(t)}`, CAP_TTL);
+    // 시총은 24시간 캐시라 급하지 않다 → 저우선. 헤더 예산을 먹지 않는다.
+    const j = await fhFetch(`/stock/profile2?symbol=${encodeURIComponent(t)}`, CAP_TTL, true);
     // ★ marketCapitalization 의 단위는 **백만 + 그 회사 본국 통화**다. 달러가 아니다.
     //   실측:
     //     TSM  cap=62,367,347  currency=TWD   (대만달러 → 그대로 쓰면 "$62조")
@@ -466,24 +522,17 @@ export async function getMarketCaps(tickers: string[]): Promise<Map<string, numb
     //   달러로 착각하고 쓰면 TSM 이 영향액 1위를 영구히 차지한다(실측 −$1,826B).
     //   환산할 FX 소스가 없으므로 **USD 표기 종목만** 인정한다. 지어낸 환율로
     //   그럴듯한 숫자를 만드는 것보다 순위에서 빠지는 게 낫다.
-    const m = Number(j?.marketCapitalization);
-    const usd = String(j?.currency ?? "").toUpperCase() === "USD";
+    // 실패(예산 초과·네트워크)는 짧은 TTL 로 캐시한다 — 위 capCache 주석 참고.
+    if (!j) { capCache.set(t, { at: now, capB: null, ttl: CAP_FAIL_TTL }); out.set(t, null); return; }
+    const m = Number(j.marketCapitalization);
+    const usd = String(j.currency ?? "").toUpperCase() === "USD";
     const capB = usd && Number.isFinite(m) && m > 0 ? Math.round(m / 1000) : null;
-    if (!usd && j) console.warn(`[finnhub] ${t} 시총 통화가 ${j.currency} — 영향액 계산에서 제외`);
-    capCache.set(t, { at: now, capB });
+    if (!usd) console.warn(`[finnhub] ${t} 시총 통화가 ${j.currency} — 영향액 계산에서 제외`);
+    capCache.set(t, { at: now, capB, ttl: CAP_TTL });
     out.set(t, capB);
   }));
   for (const t of tickers) if (!out.has(t)) out.set(t, null);
   return out;
-}
-
-/**
- * 아직 **한 번도 조회하지 못한** 종목 수.
- *  캐시에 null 로 들어 있는 건 조회는 끝났고 쓸 수 없다고 판정된 것이다(비USD 표기 등).
- *  그건 "로딩 중"이 아니라 "영구 제외"라서, 화면의 콜드스타트 안내와 구분해야 한다.
- */
-export function capsPending(tickers: string[]): number {
-  return tickers.filter((t) => !capCache.has(t)).length;
 }
 
 export function newsTopic(headline: string, ticker?: string): string {
