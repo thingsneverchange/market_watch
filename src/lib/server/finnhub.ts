@@ -605,13 +605,36 @@ export function shortHeadline(title: string): string {
 
   // 첫 종속절 경계에서 컷 (핵심 주절만 남긴다). 너무 앞이면(주어 잘림) 무시.
   const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying|on)\s/i);
-  if (m && m.index != null && m.index > 22) s = s.slice(0, m.index).trim();
+  if (m && m.index != null && m.index > 22) {
+    // ★ 이 컷은 **주절이 앞에 온다**고 가정한다. 종속절이 먼저 오는 헤드라인엔 정반대다.
+    //   실측 사고 — 방송 최상단에 이 문장이 나갔다:
+    //     원문 "After Trump calls off bombing, Iran signals it will halt strikes as long as US does"
+    //     결과 "After Trump calls off bombing"          ← 배경만 남고 뉴스가 통째로 사라졌다
+    //   문법적으로도 미완성이고("그래서 뭐?"), 정작 시장이 볼 내용은 콤마 뒤에 있었다.
+    //   → 앞이 종속절이면 **뒤(주절)를 살린다.**
+    const lead = /^(?:after|as|amid|while|when|before|since|once|though|although|because|until|unless|despite|following|ahead of|now that|with)\b/i;
+    const tail = s.slice(m.index + m[0].length).trim();
+    s = lead.test(s) && tail.length >= 20
+      ? tail.charAt(0).toUpperCase() + tail.slice(1)   // "oil gives back gains" → "Oil gives…"
+      : s.slice(0, m.index).trim();
+  }
   // 그래도 길면 단어 경계로 자른다 (말줄임표 없이)
   const MAX = 60;
+  let truncated = false;
   if (s.length > MAX) {
     const sp = s.lastIndexOf(" ", MAX);
     s = s.slice(0, sp > 22 ? sp : MAX).trim();
+    truncated = true;
   }
+  // ★ 잘린 끝에 남은 기능어를 떼어낸다.
+  //   "…halts Israeli push at" 처럼 전치사로 끝나면 문장이 허공에 뜬다(실측).
+  //   단어 경계로 자르는 것만으로는 이게 안 잡힌다 — 자른 자리가 마침 전치사 뒤였을 뿐이다.
+  s = s.replace(/\s+(?:at|in|on|of|for|to|with|from|by|and|or|the|a|an|as|its|his|her|their|that|than|into|over|under)$/i, "");
+  // ★ 잘라내면서 **숫자가 반토막 나는 건 더 나쁘다** — 문장이 어색한 게 아니라 값이 틀린다.
+  //   "surges past $30 billion" → "surges past $30" 은 300억을 30으로 읽게 만든다.
+  //   단위(billion/%/points…)가 떨어져 나간 경우이므로 숫자째 버린다.
+  //   자르지 않은 문장은 건드리지 않는다 — 원문이 숫자로 끝나는 건 정상이다.
+  if (truncated) s = s.replace(/\s+(?:to|at|past|above|below|near|by)?\s*[$€£]?[\d][\d.,]*[%]?$/i, "");
   return s.replace(/[,\-–—:;]+$/, "").trim();
 }
 
