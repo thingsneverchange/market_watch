@@ -1,5 +1,5 @@
 import type { RequestHandler } from "./$types";
-import { getMarketNews, getEarnings, newsTopic, shortHeadline, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
+import { getMarketNews, getEarnings, newsTopic, newsThemes, shortHeadline, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
@@ -39,6 +39,30 @@ function publisherOf(url: string): string {
     return "";
   }
 }
+
+// ============================================================
+//  MARKET DRIVER — "지금 이 시장을 무엇이 지배하고 있나"
+//
+//  왜 필요했나:
+//   MARKET DRIVERS 패널은 MACRO(지난 거시 발표) + MOVERS(실적 반응) 두 그룹뿐이라,
+//   주말이나 실적 비수기엔 **양쪽 다 비어서 "No macro release / No reaction data"** 만 떴다.
+//   정작 시장을 움직이는 게 전쟁이어도 화면 어디에도 "WAR" 라는 말이 없었다.
+//   토픽 분류(newsTopic)는 이미 헤드라인마다 붙어 있었는데 **집계를 안 했을 뿐**이다.
+//
+//  방식: 헤드라인 토픽을 중요도×신선도로 가중 합산해 1위 주제를 뽑는다.
+//        LLM 을 쓰지 않는다 — 이미 있는 분류를 세는 것뿐이라 비용 0, 결정적이다.
+// ============================================================
+const THEME_LABEL: Record<string, string> = {
+  GEO: "WAR", FED: "FED", CPI: "INFLATION", JOBS: "JOBS", GDP: "GROWTH",
+  OIL: "OIL", GOLD: "GOLD", CRYPTO: "CRYPTO", FX: "DOLLAR", BONDS: "YIELDS",
+  TRADE: "TARIFFS", CHIPS: "CHIPS", "M&A": "M&A", EARNINGS: "EARNINGS"
+};
+
+// ※ 여기서 고유명사("Iran · Red Sea")를 뽑아 붙이는 안을 먼저 시도했다가 버렸다.
+//   두 가지가 걸렸다: (1) 기여 기사가 2~3건일 땐 반복 등장하는 이름이 없어 거의 항상 비고,
+//   문턱을 1회로 낮추면 "Red Sea" 가 "Red · Sea" 로 쪼개진다. (2) 바로 위 TOP STORY 가
+//   이미 어느 전쟁인지 문장으로 말하고 있어 **같은 정보를 두 번** 쓰는 셈이었다.
+//   대신 그 자리엔 화면 어디에도 없는 것 — **자산이 실제로 어떻게 반응했는지** — 를 넣는다.
 
 export const GET: RequestHandler = async () => {
   const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);
@@ -193,7 +217,44 @@ export const GET: RequestHandler = async () => {
     .slice(0, brief && brief.length ? 5 : 7)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
-  return new Response(JSON.stringify({ driver, news: list, brief, prevStories, serverNow: Math.floor(nowSec) }), {
+  // ── 지배 주제 집계 ────────────────────────────────────
+  //  TOP STORY 를 포함한 상위 관련 기사 전체를 본다 (드라이버는 목록에 남은 것만의 문제가 아니다).
+  //  가중치 = 중요도(별) × 신선도. 24시간 지난 기사도 0 이 되진 않게 바닥을 둔다 —
+  //  전쟁처럼 며칠 이어지는 국면에서 어제 기사라고 무게가 사라지면 안 된다.
+  const themePool = (top ? [top, ...pool] : pool).filter((n) => n.matched || n.level >= 3).slice(0, 14);
+  const weights = new Map<string, { w: number; n: number; level: number }>();
+  for (const n of themePool) {
+    const ageH = Math.max(0, (nowSec - n.epoch) / 3600);
+    const w = n.level * Math.max(0.35, 1 - ageH / 24);
+    // 한 기사가 여러 주제에 걸리면 전부 센다 (newsThemes 주석 참고).
+    // "…China pushing for end US-Iran war" 는 원유 기사이면서 전쟁 기사다.
+    for (const key of newsThemes(n.title, n.ticker)) {
+      if (key === "MKT") continue;           // 미분류는 주제가 아니다
+      const cur = weights.get(key) ?? { w: 0, n: 0, level: 0 };
+      cur.w += w; cur.n += 1; cur.level = Math.max(cur.level, n.level);
+      weights.set(key, cur);
+    }
+  }
+  const totalW = [...weights.values()].reduce((s, v) => s + v.w, 0);
+  const best = [...weights.entries()].sort((a, b) => b[1].w - a[1].w)[0];
+
+  // ★ 억지로 하나 고르지 않는다.
+  //   주제가 흩어져 있으면(1위가 전체의 25% 미만) "지금 시장은 한 가지에 쏠려 있지 않다"가
+  //   사실이다. 기사 1건짜리 주제를 드라이버라고 부르면 그건 드라이버가 아니라 그냥 기사다.
+  const theme =
+    best && best[1].n >= 2 && totalW > 0 && best[1].w / totalW >= 0.25
+      ? {
+          key: best[0],
+          label: THEME_LABEL[best[0]] ?? best[0],
+          count: best[1].n,
+          total: themePool.length,
+          share: Math.round((best[1].w / totalW) * 100),
+          /** 이 주제 기사들의 최고 중요도 — "5★ 짜리 사건인가"를 한 글자로 전한다 */
+          level: best[1].level
+        }
+      : null;
+
+  return new Response(JSON.stringify({ driver, news: list, brief, prevStories, theme, serverNow: Math.floor(nowSec) }), {
     headers: { "content-type": "application/json", "cache-control": "no-store" }
   });
 };

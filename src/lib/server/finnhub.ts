@@ -470,6 +470,23 @@ export function newsTopic(headline: string, ticker?: string): string {
 }
 
 /**
+ * 헤드라인이 걸리는 **모든** 주제. 칩 표기(newsTopic)와 달리 집계용이다.
+ *
+ * 왜 따로 필요한가:
+ *  newsTopic 은 규칙 배열의 **첫 매치 하나**만 돌려준다. 칩은 한 글자만 찍으니 그게 맞다.
+ *  그런데 지배 주제를 셀 때 그러면 틀린다 — 규칙 순서상 OIL 이 GEO 보다 앞이라
+ *    "Oil falls on report China pushing for end US-Iran war" (5★)
+ *  가 전쟁이 아니라 원유로만 세어졌다. 전쟁 국면에선 관련 기사가 원유·관세·국채로
+ *  흩어지므로, 첫 매치만 세면 정작 시장을 지배하는 주제가 과소평가된다.
+ *  집계에선 겹치는 주제를 전부 인정한다.
+ */
+export function newsThemes(headline: string, ticker?: string): string[] {
+  if (ticker) return [ticker.toUpperCase()];
+  const out = TOPIC_RULES.filter(([re]) => re.test(headline || "")).map(([, tag]) => tag);
+  return out.length ? out : ["MKT"];
+}
+
+/**
  * 헤드라인을 **핵심 한 구절**로 압축한다. 방송 글랜스는 문장을 정독하는 게 아니라 스캔이다.
  *  · 끝의 출처(" - Reuters" 등)는 이미 따로 표기 → 제거
  *  · 첫 종속절 경계(콤마 / — / as·after·amid·while·despite·following …)에서 컷 → 핵심 사실만

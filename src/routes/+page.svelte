@@ -41,6 +41,8 @@
   // 직전 TOP STORY 3건. 스토리가 갈리면 이전 것은 흔적 없이 사라져서,
   // 중간에 들어온 시청자에겐 "지금까지 무슨 일이 있었나"가 통째로 없었다.
   let prevStories: any[] = [];
+  // 지금 시장을 지배하는 주제 (WAR / FED / TARIFFS …). 헤드라인 토픽을 중요도×신선도로 집계.
+  let theme: { key: string; label: string; count: number; total: number; share: number; level: number } | null = null;
   // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
   let brief: any[] = [];
   // UPCOMING = 성격별로 분리. 거시/정책(MACRO)과 개별 실적(EARNINGS)은 보는 이유가 다르다.
@@ -190,6 +192,48 @@
    *   24시간 방송에서 중간에 들어온 시청자가 흐름을 잡을 수 있는 유일한 단서다.
    */
 
+  /**
+   * 주제별로 **먼저 봐야 할 자산**.
+   *  "WAR" 라는 단어만 띄우면 "그래서 시장은?" 이 안 나온다. 전쟁이면 원유·금·VIX 고,
+   *  반도체 이슈면 SOXX 다. 목록에 없거나 자리가 남으면 변동폭이 큰 순으로 채운다.
+   */
+  const THEME_ASSETS: Record<string, string[]> = {
+    GEO: ["OIL", "GOLD", "VIX"],
+    OIL: ["OIL", "GOLD", "VIX"],
+    GOLD: ["GOLD", "VIX", "OIL"],
+    FED: ["VIX", "GOLD", "NASDAQ"],
+    CPI: ["GOLD", "VIX", "NASDAQ"],
+    JOBS: ["VIX", "NASDAQ", "GOLD"],
+    GDP: ["NASDAQ", "VIX", "OIL"],
+    BONDS: ["GOLD", "VIX", "NASDAQ"],
+    FX: ["GOLD", "OIL", "BTC"],
+    CRYPTO: ["BTC", "NASDAQ", "VIX"],
+    CHIPS: ["SOXX", "NASDAQ", "VIX"],
+    TRADE: ["OIL", "GOLD", "NASDAQ"],
+    EARNINGS: ["NASDAQ", "SOXX", "VIX"],
+    "M&A": ["NASDAQ", "SOXX", "VIX"]
+  };
+
+  /** 지배 주제에 대한 **실제 시장 반응** 3종 */
+  $: themeMoves = (() => {
+    if (!theme || !boards.top?.length) return [] as any[];
+    const rows = boards.top;
+    const pick: any[] = [];
+    for (const want of THEME_ASSETS[theme.key] ?? []) {
+      const hit = rows.find((r: any) => String(r.k).toUpperCase().includes(want) && !pick.includes(r));
+      if (hit) pick.push(hit);
+    }
+    // 주제에 맞는 자산이 화면에 없을 수도 있다(소스 가용성에 따라 슬롯이 달라진다)
+    // → 그럴 땐 실제로 가장 크게 움직인 것으로 채운다. 빈 줄로 두지 않는다.
+    if (pick.length < 3) {
+      for (const r of [...rows].sort((a: any, b: any) => Math.abs(b.pct) - Math.abs(a.pct))) {
+        if (pick.length >= 3) break;
+        if (!pick.includes(r)) pick.push(r);
+      }
+    }
+    return pick.slice(0, 3);
+  })();
+
   /** TOP STORY 근거 매체 목록 ("CNBC · Reuters"). 마크업에선 타입 주석을 못 쓴다 */
   $: srcNames = (digest.driver.sources ?? [])
     .map((s: any) => s?.name)
@@ -295,6 +339,7 @@
       if (d.driver) digest = d;
       brief = Array.isArray(d.brief) ? d.brief : [];
       prevStories = Array.isArray(d.prevStories) ? d.prevStories : [];
+      theme = d.theme ?? null;
       digestStale = false;
     } else {
       digestStale = firstLoadDone; // 첫 로드 전 실패는 STALE 이 아니라 '아직 로딩'
@@ -816,8 +861,35 @@
              아니라 **"무엇이 이 시장을 움직이고 있나"** 다. 담긴 내용(거시 결과 + 실제로
              움직인 종목)은 처음부터 드라이버 목록이었는데 이름만 다른 걸 말하고 있었다. -->
       <div class="panel react">
-        <div class="lbl">⚡ MARKET DRIVERS<span class="src-hint">what moved it</span></div>
+        <div class="lbl">⚡ MARKET DRIVER<span class="src-hint">what's moving it</span></div>
 
+        <!-- ★ 지배 주제를 **한 단어로** 먼저 말한다.
+             예전엔 이 패널이 MACRO/MOVERS 두 목록뿐이라, 주말이나 실적 비수기엔 양쪽 다
+             비어서 "No macro release / No reaction data" 만 떴다. 정작 시장을 움직이는 게
+             전쟁이어도 화면 어디에도 "WAR" 라는 말이 없었다.
+             밑줄 근거는 헤드라인 몇 건이 이 주제인지 + 자산이 실제로 어떻게 반응했는지. -->
+        {#if theme}
+          <div class="mdrv">
+            <div class="mdrv-top">
+              <span class="mdrv-tag">{theme.label}</span>
+              <span class="mdrv-lv" class:max={theme.level >= 5}>{stars(theme.level)}</span>
+            </div>
+            <div class="mdrv-meta">{theme.count} of {theme.total} top headlines</div>
+            <!-- 주제 이름만으론 "그래서 시장은?" 이 안 나온다. 실제 반응을 붙인다. -->
+            {#if themeMoves.length}
+              <div class="mdrv-ev">
+                {#each themeMoves as m}
+                  <span class="mdrv-a">
+                    <b>{m.k}</b>
+                    <i class:u={m.pct >= 0} class:d={m.pct < 0}>{m.pct >= 0 ? "+" : "−"}{Math.abs(m.pct).toFixed(2)}%</i>
+                  </span>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        {/if}
+
+        {#if pastMacro.length}
         <div class="rx-grp">MACRO<span class="rx-sub">last 7 days</span></div>
 
         <!-- 이미 지난 거시 이벤트. 지난 일정을 주는 무료 소스가 없어 피드에서 볼 때마다
@@ -842,12 +914,13 @@
           </div>
         {/each}
 
-        <!-- ※ 예정 이벤트는 여기 넣지 않는다. UPCOMING 이 담당한다.
-             예전엔 FOMC 가 UPCOMING 과 여기 양쪽에 나왔다 (같은 중복 문제). -->
-        {#if pastMacro.length === 0}
-          <div class="rx-note">No macro release in the last 7 days.</div>
         {/if}
+        <!-- ※ 예정 이벤트는 여기 넣지 않는다. UPCOMING 이 담당한다.
+             예전엔 FOMC 가 UPCOMING 과 여기 양쪽에 나왔다 (같은 중복 문제).
+             ※ 비었을 땐 그룹 헤더째 감춘다. "No macro release" 두 줄이 패널의 절반을
+                차지하면서, 정작 진짜 드라이버가 들어갈 자리를 먹고 있었다. -->
 
+        {#if reactions.length}
         <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings · recent first</span></div>
         {#each reactions.slice(0, 4) as r}
           <div class="rx-row">
@@ -884,8 +957,10 @@
             </div>
           </div>
         {/each}
-        {#if reactions.length === 0}
-          <div class="empty">No reaction data</div>
+        {/if}
+        <!-- 셋 다 없을 때만 빈 상태를 말한다 (드라이버가 있으면 패널은 이미 제 역할을 한다) -->
+        {#if !theme && pastMacro.length === 0 && reactions.length === 0}
+          <div class="empty">No driver data</div>
         {/if}
       </div>
     </section>
@@ -1063,7 +1138,23 @@
   /* 발표 전 당일 등락 — '반응'이 아니라는 걸 라벨 색으로도 구분 */
   .e-when.pre-print { color: #d8a860; letter-spacing: 0.03em; }
   /* 발표 당시 스냅샷 — 라이브와 색을 달리해 헷갈리지 않게 */
-  /* ===== MARKET DRIVERS ===== */
+  /* ===== MARKET DRIVER ===== */
+  /* 지배 주제 — TOP STORY 처럼 **한 덩어리로 크게**. 목록이 아니라 결론이다. */
+  .mdrv { padding: 2px 2px 12px; border-bottom: 1px solid #191c22; margin-bottom: 10px; }
+  .mdrv-top { display: flex; align-items: baseline; gap: 10px; }
+  .mdrv-tag { font-size: 34px; font-weight: 900; letter-spacing: 0.01em; color: #ffffff; line-height: 1.05; }
+  .mdrv-lv { font-size: 15px; font-weight: 800; color: #d8a860; }
+  .mdrv-lv.max { color: #ff5c5c; }
+  .mdrv-meta { margin-top: 3px; font-size: 12px; font-weight: 700; color: #6b7280; letter-spacing: 0.02em; }
+  /* 근거 = 자산이 실제로 어떻게 반응했나. 주제 이름만으론 "그래서 시장은?" 이 안 나온다. */
+  .mdrv-ev { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px;
+    font-variant-numeric: tabular-nums; }
+  .mdrv-a { display: inline-flex; align-items: baseline; gap: 5px; }
+  .mdrv-a b { font-size: 11px; font-weight: 800; color: #7a828d; letter-spacing: 0.04em; }
+  .mdrv-a i { font-style: normal; font-size: 17px; font-weight: 800; }
+  .mdrv-a i.u { color: #39d98a; }
+  .mdrv-a i.d { color: #ff5c5c; }
+
   .rx-grp { font-size: 12px; font-weight: 800; color: #6b7280; letter-spacing: 0.1em;
     margin: 6px 0 3px; display: flex; align-items: baseline; gap: 6px; }
   .rx-grp:first-of-type { margin-top: 2px; }
