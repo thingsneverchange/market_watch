@@ -144,10 +144,15 @@ export type Quote = {
   asOf: number; // 소스가 준 마지막 체결 시각 (epoch ms). 0 = 알 수 없음
 };
 
-export async function getQuote(ticker: string): Promise<Quote | null> {
+export async function getQuote(ticker: string, ttlMs = 20_000): Promise<Quote | null> {
   // TTL 20s + 클라이언트 폴링 15s → 티커당 분당 2회. 17티커 = 34 req/min.
   // (예전엔 TTL 8s < 폴링 12s 라 캐시가 폴링 사이에 **구조적으로 절대 히트하지 않았다**)
-  const j = await fhFetch(`/quote?symbol=${encodeURIComponent(ticker)}`, 20_000);
+  //
+  // ★ ttlMs 를 호출부가 정할 수 있게 열어 뒀다.
+  //   헤더 시세(20s)와 "지수를 움직인 종목"(150s)은 요구 신선도가 다르다. 후자를 20s 로
+  //   돌리면 종목이 40개라 그것만으로 33 req/min 을 더 써서 한도(60)를 넘긴다(실측 계산:
+  //   헤더 34 + impact 33 = 67). 캐시 키는 같으므로 헤더는 여전히 20초마다 갱신된다.
+  const j = await fhFetch(`/quote?symbol=${encodeURIComponent(ticker)}`, ttlMs);
   if (!j || j.c == null || j.c === 0) {
     console.warn(`[finnhub] quote missing: ${ticker}`);
     return null;
@@ -170,8 +175,8 @@ export async function getQuote(ticker: string): Promise<Quote | null> {
   };
 }
 
-export async function getQuotes(tickers: string[]): Promise<Quote[]> {
-  const out = await Promise.all(tickers.map((t) => getQuote(t)));
+export async function getQuotes(tickers: string[], ttlMs?: number): Promise<Quote[]> {
+  const out = await Promise.all(tickers.map((t) => getQuote(t, ttlMs)));
   return out.filter((q): q is Quote => q !== null);
 }
 
@@ -453,14 +458,32 @@ export async function getMarketCaps(tickers: string[]): Promise<Map<string, numb
   // 한 번에 6개까지만 (분당 60 제한 안에서 여유 있게)
   await Promise.all(todo.slice(0, 6).map(async (t) => {
     const j = await fhFetch(`/stock/profile2?symbol=${encodeURIComponent(t)}`, CAP_TTL);
-    // Finnhub 의 marketCapitalization 단위는 **백만 달러**다
+    // ★ marketCapitalization 의 단위는 **백만 + 그 회사 본국 통화**다. 달러가 아니다.
+    //   실측:
+    //     TSM  cap=62,367,347  currency=TWD   (대만달러 → 그대로 쓰면 "$62조")
+    //     ASML cap=   603,230  currency=EUR
+    //     NVDA cap= 5,005,527  currency=USD   ← 이것만 의도한 값이다
+    //   달러로 착각하고 쓰면 TSM 이 영향액 1위를 영구히 차지한다(실측 −$1,826B).
+    //   환산할 FX 소스가 없으므로 **USD 표기 종목만** 인정한다. 지어낸 환율로
+    //   그럴듯한 숫자를 만드는 것보다 순위에서 빠지는 게 낫다.
     const m = Number(j?.marketCapitalization);
-    const capB = Number.isFinite(m) && m > 0 ? Math.round(m / 1000) : null;
+    const usd = String(j?.currency ?? "").toUpperCase() === "USD";
+    const capB = usd && Number.isFinite(m) && m > 0 ? Math.round(m / 1000) : null;
+    if (!usd && j) console.warn(`[finnhub] ${t} 시총 통화가 ${j.currency} — 영향액 계산에서 제외`);
     capCache.set(t, { at: now, capB });
     out.set(t, capB);
   }));
   for (const t of tickers) if (!out.has(t)) out.set(t, null);
   return out;
+}
+
+/**
+ * 아직 **한 번도 조회하지 못한** 종목 수.
+ *  캐시에 null 로 들어 있는 건 조회는 끝났고 쓸 수 없다고 판정된 것이다(비USD 표기 등).
+ *  그건 "로딩 중"이 아니라 "영구 제외"라서, 화면의 콜드스타트 안내와 구분해야 한다.
+ */
+export function capsPending(tickers: string[]): number {
+  return tickers.filter((t) => !capCache.has(t)).length;
 }
 
 export function newsTopic(headline: string, ticker?: string): string {

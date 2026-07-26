@@ -42,7 +42,10 @@
   // 중간에 들어온 시청자에겐 "지금까지 무슨 일이 있었나"가 통째로 없었다.
   let prevStories: any[] = [];
   // 지금 시장을 지배하는 주제 (WAR / FED / TARIFFS …). 헤드라인 토픽을 중요도×신선도로 집계.
-  let theme: { key: string; label: string; count: number; total: number; share: number; level: number } | null = null;
+  let theme: { key: string; label: string; note: string; count: number; total: number; share: number; level: number } | null = null;
+  // 지수를 실제로 움직인 종목 (시총 × 등락률). 판정 기준은 lib/server/impact.ts 주석 참고.
+  let impact: { movers: any[]; benchPct: number | null; live: boolean; pendingCaps: number } =
+    { movers: [], benchPct: null, live: false, pendingCaps: 0 };
   // TODAY 브리핑 — 오늘의 핵심 이벤트·뉴스와 영향 (Claude 피드, 없으면 패널 자체가 안 뜬다)
   let brief: any[] = [];
   // UPCOMING = 성격별로 분리. 거시/정책(MACRO)과 개별 실적(EARNINGS)은 보는 이유가 다르다.
@@ -240,6 +243,16 @@
     .filter(Boolean)
     .join(" · ");
 
+  /** 시총 변화액 표기 — $1,000B 를 넘으면 조 단위로 (방송에서 자릿수를 세게 만들지 않는다) */
+  function fmtB(b: number): string {
+    return b >= 1000 ? `${(b / 1000).toFixed(2)}T` : `${Math.round(b)}B`;
+  }
+  /** 막대 길이 = 목록 안 최대 영향액 대비 비율. 절대 크기가 아니라 서열을 보여 준다 */
+  function impactWidth(b: number | null): number {
+    const max = Math.max(...impact.movers.map((m: any) => Math.abs(m.impactB ?? 0)), 1);
+    return Math.max(6, Math.round((Math.abs(b ?? 0) / max) * 100));
+  }
+
   /** 직전 스토리의 경과 시간 — 이력은 "언제 최상단이었나"가 핵심이다 */
   function seenAgo(ms: number, now: number): string {
     const m = Math.max(0, Math.round((now - ms) / 60000));
@@ -419,6 +432,16 @@
     if (Array.isArray(j.releases)) macroReleases = j.releases;
   }
 
+  /**
+   * 지수를 움직인 종목. 44개 시세를 훑으므로 헤더(15초)와 같은 주기로 돌리지 않는다.
+   * 서버 캐시(quote 20초)가 있어 실제 요청은 그보다 훨씬 적지만,
+   * 분당 60 제한을 헤더 시세와 나눠 써야 하므로 여유를 둔다.
+   */
+  async function refreshImpact() {
+    const j = await jget("/api/impact");
+    if (j && Array.isArray(j.movers)) impact = j;
+  }
+
   async function refreshControl() {
     const j = await jget("/api/control");
     if (!j) return;
@@ -488,7 +511,7 @@
   onMount(() => {
     resize();
     window.addEventListener("resize", resize);
-    refresh(); refreshBreaking(); refreshControl(); refreshMacro();
+    refresh(); refreshBreaking(); refreshControl(); refreshMacro(); refreshImpact();
 
     // ※ 폴링 주기는 "호출 횟수"가 아니다. refresh 1회 = 유일 티커 17개 조회다.
     //   Finnhub 무료 한도 60 req/min 안에 들어오려면 주기 15s + 서버 TTL 20s 조합이 필요하다.
@@ -499,9 +522,11 @@
     const t5 = setInterval(refreshControl, 1500); // 컨트롤러 반응성
     // 거시 지표는 월 단위로 갱신되는 값이라 10분이면 충분하다 (서버는 6시간 캐시)
     const t6 = setInterval(refreshMacro, 600000);
+    // 지수 영향 종목 — 44개 시세를 훑으므로 60초. 서버 캐시가 20초라 대부분 캐시 히트다.
+    const t7 = setInterval(refreshImpact, 60000);
     return () => {
       window.removeEventListener("resize", resize);
-      [t1, t2, t3, t5, t6].forEach(clearInterval);
+      [t1, t2, t3, t5, t6, t7].forEach(clearInterval);
       if (toastTimer) clearTimeout(toastTimer);
     };
   });
@@ -672,19 +697,58 @@
         {#key video.id}
           <LiveVideo videoId={video.id} label={video.label} playing={videoPlaying} />
         {/key}
-      {:else if prevStories.length}
-        <div class="panel mlink">
-          <div class="lbl">EARLIER TOP STORIES<span class="src-hint">last {prevStories.length}</span></div>
-          <div class="ps-list">
-            {#each prevStories as p}
-              <div class="ps-item {sent(p.sentiment)}">
-                <span class="ps-when">{seenAgo(p.seenAt, nowMs)}</span>
-                <span class="ps-txt">{p.text}</span>
-                {#if p.source}<span class="ps-src">{p.source}</span>{/if}
-              </div>
-            {/each}
+      {:else}
+        <!-- ★ 지수를 실제로 움직인 종목.
+             기준은 **시가총액 × 등락률 = 지수에서 증발·증가한 달러**다.
+             등락률 순으로 줄 세우면 작은 회사의 큰 움직임이 대형주의 지수 영향력을 가린다
+             (GOOGL −6% = −$234B  vs  MMM +9.8% = +$9B).
+             거기에 "지수 대비 초과분"을 걸어 **시장에 끌려간 종목을 빼낸다** —
+             전부 −2% 인 날의 impact 상위는 그냥 시총 상위 목록이지 사건이 아니다.
+             ※ 거래량은 무료 티어에 아예 없다(/quote 에 필드 없음, /stock/candle 403). -->
+        {#if impact.movers.length}
+          <div class="panel mlink">
+            <div class="lbl">
+              MOVING THE MARKET
+              <span class="src-hint">{impact.live ? "cap × move · live" : "cap × move · last session"}</span>
+            </div>
+            <div class="im-list">
+              {#each impact.movers as m}
+                <div class="im-item">
+                  <span class="im-tk">{m.ticker}</span>
+                  <span class="im-pct" class:u={m.pct >= 0} class:d={m.pct < 0}>
+                    {m.pct >= 0 ? "+" : "−"}{Math.abs(m.pct).toFixed(2)}%
+                  </span>
+                  <span class="im-bar">
+                    <!-- 막대 길이 = 이 목록 안에서의 상대 영향력. 숫자보다 먼저 읽힌다 -->
+                    <span class="im-fill" class:u={(m.impactB ?? 0) >= 0} class:d={(m.impactB ?? 0) < 0}
+                          style="width:{impactWidth(m.impactB)}%"></span>
+                  </span>
+                  <span class="im-imp" class:u={(m.impactB ?? 0) >= 0} class:d={(m.impactB ?? 0) < 0}>
+                    {(m.impactB ?? 0) >= 0 ? "+" : "−"}${fmtB(Math.abs(m.impactB ?? 0))}
+                  </span>
+                  <!-- 시장 탓인지 이 종목 탓인지. 벤치마크를 못 받으면 주장하지 않는다 -->
+                  <span class="im-rel">{m.rel == null ? "" : `${m.rel >= 0 ? "+" : "−"}${Math.abs(m.rel).toFixed(1)} vs S&P`}</span>
+                </div>
+              {/each}
+            </div>
           </div>
-        </div>
+        {/if}
+
+        <!-- 직전 TOP STORY — 이력이 쌓였을 때만 -->
+        {#if prevStories.length}
+          <div class="panel mlink">
+            <div class="lbl">EARLIER TOP STORIES<span class="src-hint">last {prevStories.length}</span></div>
+            <div class="ps-list">
+              {#each prevStories as p}
+                <div class="ps-item {sent(p.sentiment)}">
+                  <span class="ps-when">{seenAgo(p.seenAt, nowMs)}</span>
+                  <span class="ps-txt">{p.text}</span>
+                  {#if p.source}<span class="ps-src">{p.source}</span>{/if}
+                </div>
+              {/each}
+            </div>
+          </div>
+        {/if}
       {/if}
     </section>
 
@@ -847,7 +911,15 @@
                      class:d={m.upIsHawkish ? hotter : !hotter}>
                   {m.value ?? "—"}{m.unit.startsWith("%") ? "%" : m.unit}
                 </div>
-                <div class="rx-when">{m.prev == null ? "" : hotter ? "▲ vs prev" : "▼ vs prev"}</div>
+                <!-- ★ 방향도 값과 **같은 색**을 쓴다.
+                     예전엔 회색이라, 정작 "지난번보다 뜨거워졌나"가 한눈에 안 들어왔다.
+                     기준은 등락이 아니라 매파/비둘기다 — CPI 상승은 빨강(악재),
+                     실업률 상승도 빨강. upIsHawkish 가 그 방향을 들고 있다. -->
+                <div class="rx-when"
+                     class:u={m.prev != null && (m.upIsHawkish ? !hotter : hotter)}
+                     class:d={m.prev != null && (m.upIsHawkish ? hotter : !hotter)}>
+                  {m.prev == null ? "" : hotter ? "▲ vs prev" : "▼ vs prev"}
+                </div>
               </div>
             </div>
           {/each}
@@ -874,6 +946,10 @@
               <span class="mdrv-tag">{theme.label}</span>
               <span class="mdrv-lv" class:max={theme.level >= 5}>{stars(theme.level)}</span>
             </div>
+            <!-- 왜 이 주제가 시장에 중요한가 — 주제마다 고정 문장이다.
+                 그때그때 지어내지 않는다: 전달하는 건 사건이 아니라 메커니즘이라
+                 이 문장이 틀릴 일이 없고, "왜 하필 이 세 자산인가"를 설명해 준다. -->
+            {#if theme.note}<div class="mdrv-note">{theme.note}</div>{/if}
             <div class="mdrv-meta">{theme.count} of {theme.total} top headlines</div>
             <!-- 주제 이름만으론 "그래서 시장은?" 이 안 나온다. 실제 반응을 붙인다. -->
             {#if themeMoves.length}
@@ -1145,7 +1221,8 @@
   .mdrv-tag { font-size: 34px; font-weight: 900; letter-spacing: 0.01em; color: #ffffff; line-height: 1.05; }
   .mdrv-lv { font-size: 15px; font-weight: 800; color: #d8a860; }
   .mdrv-lv.max { color: #ff5c5c; }
-  .mdrv-meta { margin-top: 3px; font-size: 12px; font-weight: 700; color: #6b7280; letter-spacing: 0.02em; }
+  .mdrv-note { margin-top: 6px; font-size: 14px; font-weight: 600; line-height: 1.35; color: #a9b1bc; }
+  .mdrv-meta { margin-top: 5px; font-size: 12px; font-weight: 700; color: #6b7280; letter-spacing: 0.02em; }
   /* 근거 = 자산이 실제로 어떻게 반응했나. 주제 이름만으론 "그래서 시장은?" 이 안 나온다. */
   .mdrv-ev { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px 16px;
     font-variant-numeric: tabular-nums; }
@@ -1173,6 +1250,9 @@
   .rx-when { font-size: 11px; font-weight: 700; color: #5b6472; letter-spacing: 0.03em; white-space: nowrap; }
   .rx-when.await { color: #d8a860; }
   .rx-when.done { color: #5b6472; }
+  /* US ECONOMY 의 "▲/▼ vs prev" — 값과 같은 색으로 방향을 즉시 읽히게 한다 */
+  .rx-when.u { color: #39d98a; }
+  .rx-when.d { color: #ff5c5c; }
   /* 시총 변화액 — 등락률과 규모를 분리해서 보여준다 */
   .rx-imp { font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums; }
   .rx-imp.u { color: #2f9c68; } .rx-imp.d { color: #c14a4a; }
@@ -1280,6 +1360,20 @@
     overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
     -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; }
   .ps-src { font-size: 11px; font-weight: 700; color: #565d68; letter-spacing: 0.02em; }
+
+  /* 지수를 움직인 종목 — [티커] [등락률] [영향 막대] [$영향액] [지수 대비] */
+  .im-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 9px; }
+  .im-item { display: grid; grid-template-columns: 62px 74px 1fr 76px 84px;
+    gap: 10px; align-items: center; font-variant-numeric: tabular-nums; }
+  .im-tk { font-size: 19px; font-weight: 800; color: #e8edf4; letter-spacing: 0.01em; }
+  .im-pct { font-size: 17px; font-weight: 800; }
+  .im-pct.u, .im-imp.u, .im-fill.u { color: #39d98a; }
+  .im-pct.d, .im-imp.d, .im-fill.d { color: #ff5c5c; }
+  /* 막대는 목록 안 최대치 대비 서열. 숫자보다 먼저 읽힌다. */
+  .im-bar { height: 8px; background: #14171d; border-radius: 4px; overflow: hidden; }
+  .im-fill { display: block; height: 100%; border-radius: 4px; background: currentColor; opacity: 0.75; }
+  .im-imp { font-size: 16px; font-weight: 800; text-align: right; }
+  .im-rel { font-size: 11px; font-weight: 700; color: #6b7280; text-align: right; white-space: nowrap; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }

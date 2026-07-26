@@ -58,11 +58,71 @@ const THEME_LABEL: Record<string, string> = {
   TRADE: "TARIFFS", CHIPS: "CHIPS", "M&A": "M&A", EARNINGS: "EARNINGS"
 };
 
-// ※ 여기서 고유명사("Iran · Red Sea")를 뽑아 붙이는 안을 먼저 시도했다가 버렸다.
-//   두 가지가 걸렸다: (1) 기여 기사가 2~3건일 땐 반복 등장하는 이름이 없어 거의 항상 비고,
-//   문턱을 1회로 낮추면 "Red Sea" 가 "Red · Sea" 로 쪼개진다. (2) 바로 위 TOP STORY 가
-//   이미 어느 전쟁인지 문장으로 말하고 있어 **같은 정보를 두 번** 쓰는 셈이었다.
-//   대신 그 자리엔 화면 어디에도 없는 것 — **자산이 실제로 어떻게 반응했는지** — 를 넣는다.
+/**
+ * 주제를 특정하는 **지명** — "WAR" 가 아니라 "IRAN WAR" 여야 정보다.
+ *
+ * 대문자 단어를 자동으로 긁는 방식은 버렸다. "Red Sea" 가 "Red · Sea" 로 쪼개지고,
+ * 기여 기사가 2~3건일 땐 반복되는 이름이 없어 거의 항상 비었다.
+ * 다어절 이름을 **통째로 매치하는 목록**이 결과가 훨씬 안정적이다.
+ * 인명·기관명(Powell·FOMC·OPEC)은 넣지 않는다 — "POWELL FED" 처럼 어색해지고,
+ * 주제 라벨(FED/OIL)이 이미 같은 말을 하고 있다.
+ */
+const QUALIFIERS: [RegExp, string][] = [
+  [/\biran(?:ian)?\b/i, "IRAN"],
+  [/\bisrael(?:i)?\b/i, "ISRAEL"],
+  [/\bruss(?:ia|ian)\b/i, "RUSSIA"],
+  [/\bukrain(?:e|ian)\b/i, "UKRAINE"],
+  [/\bgaza\b/i, "GAZA"],
+  [/\b(?:yemen|houthi)\w*\b/i, "YEMEN"],
+  [/\bred sea\b/i, "RED SEA"],
+  [/\bhormuz\b/i, "HORMUZ"],
+  [/\b(?:china|chinese|beijing)\b/i, "CHINA"],
+  [/\btaiwan\b/i, "TAIWAN"],
+  [/\bnorth korea\b/i, "N.KOREA"],
+  [/\bvenezuela\b/i, "VENEZUELA"],
+  [/\b(?:europe|european union|brussels)\b/i, "EUROPE"],
+  [/\bjapan(?:ese)?\b/i, "JAPAN"],
+  [/\bindia\b/i, "INDIA"],
+  [/\bmexico\b/i, "MEXICO"],
+  [/\bcanada\b/i, "CANADA"]
+];
+
+/**
+ * 기여 헤드라인들에서 지명을 고른다.
+ *  등장 횟수로 세되 **TOP STORY 에 나온 이름엔 가산점**을 준다 — 거기 나왔다면 그게 주인공이다.
+ *  점수 2 미만이면 붙이지 않는다(한 기사에 스쳐 나온 지명을 주제로 승격시키지 않는다).
+ */
+function themeQualifier(titles: string[], topTitle: string): string {
+  let bestName = "", bestScore = 0;
+  for (const [re, name] of QUALIFIERS) {
+    let score = titles.reduce((n, t) => n + (re.test(t) ? 1 : 0), 0);
+    if (re.test(topTitle)) score += 1;
+    if (score > bestScore) { bestScore = score; bestName = name; }
+  }
+  return bestScore >= 2 ? bestName : "";
+}
+
+/**
+ * 주제가 **왜 시장에 중요한가** 한 줄.
+ *  주제마다 고정 문장이다 — 그때그때 지어내지 않는다. 전달하는 건 사건이 아니라
+ *  메커니즘이라서, 이 문장이 틀릴 일이 없고 "왜 하필 이 세 자산을 보여주나"를 설명한다.
+ */
+const THEME_NOTE: Record<string, string> = {
+  GEO: "Risk premium shows up first in crude, gold and volatility.",
+  OIL: "Energy costs feed straight into inflation and transport margins.",
+  GOLD: "Gold bids when real yields fall or risk premium rises.",
+  FED: "The rate path sets the discount rate under every long-duration asset.",
+  CPI: "Hotter prints push rate-cut expectations further out.",
+  JOBS: "A tight labour market is what keeps the Fed from easing.",
+  GDP: "Growth data decides between soft landing and slowdown.",
+  BONDS: "Yields are the hurdle rate megacap valuations are measured against.",
+  TRADE: "Tariffs hit importer margins and China-exposed revenue first.",
+  CHIPS: "Semis lead the index — they carry the AI capex cycle.",
+  CRYPTO: "Crypto trades as the highest-beta read on risk appetite.",
+  FX: "A stronger dollar squeezes overseas earnings and commodities.",
+  EARNINGS: "Guidance moves the tape more than the quarter just reported.",
+  "M&A": "Deal flow signals how cheap money and corporate confidence are."
+};
 
 export const GET: RequestHandler = async () => {
   const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);
@@ -222,7 +282,7 @@ export const GET: RequestHandler = async () => {
   //  가중치 = 중요도(별) × 신선도. 24시간 지난 기사도 0 이 되진 않게 바닥을 둔다 —
   //  전쟁처럼 며칠 이어지는 국면에서 어제 기사라고 무게가 사라지면 안 된다.
   const themePool = (top ? [top, ...pool] : pool).filter((n) => n.matched || n.level >= 3).slice(0, 14);
-  const weights = new Map<string, { w: number; n: number; level: number }>();
+  const weights = new Map<string, { w: number; n: number; level: number; titles: string[] }>();
   for (const n of themePool) {
     const ageH = Math.max(0, (nowSec - n.epoch) / 3600);
     const w = n.level * Math.max(0.35, 1 - ageH / 24);
@@ -230,8 +290,9 @@ export const GET: RequestHandler = async () => {
     // "…China pushing for end US-Iran war" 는 원유 기사이면서 전쟁 기사다.
     for (const key of newsThemes(n.title, n.ticker)) {
       if (key === "MKT") continue;           // 미분류는 주제가 아니다
-      const cur = weights.get(key) ?? { w: 0, n: 0, level: 0 };
+      const cur = weights.get(key) ?? { w: 0, n: 0, level: 0, titles: [] };
       cur.w += w; cur.n += 1; cur.level = Math.max(cur.level, n.level);
+      cur.titles.push(n.title);
       weights.set(key, cur);
     }
   }
@@ -245,7 +306,10 @@ export const GET: RequestHandler = async () => {
     best && best[1].n >= 2 && totalW > 0 && best[1].w / totalW >= 0.25
       ? {
           key: best[0],
-          label: THEME_LABEL[best[0]] ?? best[0],
+          // "WAR" 만으론 어느 전쟁인지 모른다 → 지명이 잡히면 "IRAN WAR"
+          label: [themeQualifier(best[1].titles, top?.title ?? ""), THEME_LABEL[best[0]] ?? best[0]]
+            .filter(Boolean).join(" "),
+          note: THEME_NOTE[best[0]] ?? "",
           count: best[1].n,
           total: themePool.length,
           share: Math.round((best[1].w / totalW) * 100),
