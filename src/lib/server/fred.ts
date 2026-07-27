@@ -103,6 +103,27 @@ function periodLabel(date: string, freq: string): string {
   return `${y}-${m}`;                              // 월간
 }
 
+/**
+ * 시리즈 주기 캐시.
+ *  ★ 주기는 **정적 메타데이터**다 (CPI 가 어느 날 갑자기 일간이 되지 않는다).
+ *   그런데 매번 다시 물었고, 그 호출이 실패하면 `?? "M"` 으로 **추측**했다.
+ *   실측: 프로덕션 콜드스타트에서 DFF(일간)의 메타 호출이 실패해
+ *     기간 표기  "2026-07-23" → "2026-07"
+ *     직전 값    전일(3.63)  → 한 달 전(3.62)
+ *   둘 다 에러 없이 조용히 틀렸다. 추측한 주기로 계산하면 그런 일이 난다.
+ *   → 한 번 성공하면 기억하고, 모르면 **추측하지 않고 건너뛴다.**
+ */
+const freqCache = new Map<string, string>();
+
+async function seriesMeta(series: string): Promise<{ freq: string; updated: string } | null> {
+  const meta = await fred(`/series?series_id=${series}`);
+  const f = String(meta?.seriess?.[0]?.frequency_short ?? "").toUpperCase();
+  const updated = String(meta?.seriess?.[0]?.last_updated ?? "").slice(0, 19);
+  if (f) { freqCache.set(series, f); return { freq: f, updated }; }
+  const known = freqCache.get(series);
+  return known ? { freq: known, updated } : null;   // 모르면 null — 추측하지 않는다
+}
+
 /** 주요 거시 지표의 **실제 발표치** (연준 원본). 실패하면 마지막 값. */
 export async function getMacroReadings(): Promise<MacroReading[]> {
   const now = Date.now();
@@ -112,23 +133,38 @@ export async function getMacroReadings(): Promise<MacroReading[]> {
 
   inflight = (async () => {
     try {
+      // ★ 지표 하나가 실패했다고 그 행이 화면에서 **사라지면 안 된다.**
+      //   실측: NFP 의 관측치 호출이 한 번 실패하자 US ECONOMY 에서 통째로 증발했다.
+      //   시청자에겐 "고용 지표가 없는 화면"이 되고, 왜 없는지도 알 수 없다.
+      //   → 실패한 지표는 **직전 성공값을 유지**한다. 나이는 updated 필드가 이미 말한다.
+      const prevByKey = new Map((cache?.data ?? []).map((r) => [r.key, r]));
       const out: MacroReading[] = [];
+      let fresh = 0;
+
       for (const s of FRED_SPECS) {
+        const keep = () => { const old = prevByKey.get(s.key); if (old) out.push(old); };
+
         // 분기 시리즈도 YoY 를 내려면 넉넉히 받는다
         const j = await fred(`/series/observations?series_id=${s.series}&sort_order=desc&limit=60`);
         const obs: Obs[] = (j?.observations ?? []).filter((o: Obs) => o.value !== ".");
-        if (!obs.length) continue;
-        const meta = await fred(`/series?series_id=${s.series}`);
-        const freq = String(meta?.seriess?.[0]?.frequency_short ?? "M");
-        const { value, prev } = convert(obs, s.transform, freq);
+        if (!obs.length) { console.warn(`[fred] ${s.label} 관측치 실패 — 직전 값 유지`); keep(); continue; }
+
+        const meta = await seriesMeta(s.series);
+        if (!meta) { console.warn(`[fred] ${s.label} 주기 미확인 — 추측하지 않고 직전 값 유지`); keep(); continue; }
+
+        const { value, prev } = convert(obs, s.transform, meta.freq);
         out.push({
           key: s.key, label: s.label, value, prev, unit: s.unit,
-          period: periodLabel(obs[0].date, freq),
-          updated: String(meta?.seriess?.[0]?.last_updated ?? "").slice(0, 19),
+          period: periodLabel(obs[0].date, meta.freq),
+          updated: meta.updated,
           imp: s.imp, upIsHawkish: s.upIsHawkish
         });
+        fresh++;
       }
-      if (!out.length) { failUntil = Date.now() + FAIL_MS; return cache?.data ?? []; }
+
+      // 하나도 새로 못 받았으면 실패로 보고 백오프 (옛 값은 그대로 쓴다)
+      if (!fresh) { failUntil = Date.now() + FAIL_MS; return cache?.data ?? []; }
+      // 부분 성공이어도 캐시를 갱신한다 — 유지된 행이 다음 호출에서도 살아남아야 한다
       cache = { at: Date.now(), data: out };
       return out;
     } catch {
@@ -173,11 +209,15 @@ export async function getMacroReleases(days = 14): Promise<MacroRelease[]> {
     if (seen.has(s.releaseId)) continue;   // 고용/실업률처럼 같은 릴리즈를 공유한다
     seen.add(s.releaseId);
 
-    // 주기가 일간·주간이면 '예정 발표'라는 개념이 성립하지 않는다 → 일정에서 제외
-    const meta = await fred(`/series?series_id=${s.series}`);
-    const freq = String(meta?.seriess?.[0]?.frequency_short ?? "M").toUpperCase();
-    if (freq === "D" || freq === "W") {
-      console.warn(`[fred] ${s.label}(${s.series}) 은 ${freq} 주기 — 일정 목록에서 제외`);
+    // 주기가 일간·주간이면 '예정 발표'라는 개념이 성립하지 않는다 → 일정에서 제외.
+    // ★ 여기서도 추측하면 안 된다. `?? "M"` 이면 메타 호출이 한 번 실패했을 때
+    //   DFF(일간)가 월간으로 오인돼 "Fed Funds Rate 07-27" 이 5★로 되살아난다 —
+    //   시청자는 "오늘 연준 결정"으로 읽지만 실제 FOMC 는 7/29 였다.
+    //   모르면 이번 회차에서 빼는 게 맞다. 일정 한 줄이 비는 것보다 오보가 나쁘다.
+    const meta = await seriesMeta(s.series);
+    if (!meta) { console.warn(`[fred] ${s.label} 주기 미확인 — 이번 일정에서 제외`); continue; }
+    if (meta.freq === "D" || meta.freq === "W") {
+      console.warn(`[fred] ${s.label}(${s.series}) 은 ${meta.freq} 주기 — 일정 목록에서 제외`);
       continue;
     }
     // ★ include_release_dates_with_no_data + realtime 범위를 **미래로** 열어야
