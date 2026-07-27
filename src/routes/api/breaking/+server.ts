@@ -2,6 +2,7 @@ import type { RequestHandler } from "./$types";
 import { getMarketNews, getCompanyNews, WATCHLIST } from "$lib/server/finnhub";
 import { classifyAlert } from "$lib/server/alertverify";
 import { getMovers } from "$lib/server/movers";
+import { getWireNews } from "$lib/server/newswire";
 import { futuresSession } from "$lib/market-hours";
 
 // ============================================================
@@ -19,6 +20,14 @@ import { futuresSession } from "$lib/market-hours";
 //  가격 급변은 뉴스보다 먼저 일어나고, 우리가 직접 측정하므로 지연이 5분 안쪽이다.
 //  "왜 움직였는지"는 모르지만 "얼마나 이례적으로 움직였는지"는 정확히 말할 수 있다 —
 //  그 사실만 방송한다. 원인을 지어내지 않는다.
+//
+//  ── 그 다음: 소스를 실제로 고쳤다 (newswire.ts) ──────
+//  위 진단은 "Finnhub 로는 불가능하다"까지였고, 소스를 바꾸면 되는 문제였다.
+//  프로덕션 IP 에서 무료 RSS 를 직접 재 보니 전부 뚫린다:
+//     구글뉴스 최신 4분 · MarketWatch 5분 · CNBC 8분 · CNBC Tech 11분
+//  (Finnhub 는 같은 시각 최신 598분, 45분 이내 0건)
+//  그래서 `level≥4 AND 45분 이내` 가 **드디어 도달 가능한 조건**이 됐다.
+//  z-score 사이렌은 그대로 둔다 — 가격이 뉴스보다 먼저 움직이므로 서로 보완한다.
 // ============================================================
 
 /** 이 배수 미만은 "평소 변동" 이라 방송할 사건이 아니다 */
@@ -44,15 +53,19 @@ const NOISE =
   /(earnings call (transcript|highlights)|announces timing|should (you|investors)|buy,? sell,? or hold|prediction:|why we keep|is (it|now) time to|things to watch|here'?s what)/i;
 
 export const GET: RequestHandler = async () => {
-  const [market, ...batches] = await Promise.all([
+  const [market, wire, ...batches] = await Promise.all([
     getMarketNews(20),
+    getWireNews(40),
     ...WATCHLIST.map((t) => getCompanyNews(t, 2))
   ]);
   const nowSec = Math.floor(Date.now() / 1000);
 
   // 1) id dedupe
+  //    ★ 와이어를 맨 앞에 둔다. 위 주석의 "45분 이내 0건" 은 Finnhub 얘기이고,
+  //      와이어는 실측 최신 2~11분이라 `level≥4 AND 45분 이내` 가 **드디어 도달 가능**해졌다.
+  //      가격 z-score 사이렌은 그대로 둔다 — 뉴스보다 먼저 움직이는 신호라 서로 보완한다.
   const seen = new Set<string>();
-  let merged = [...market, ...batches.flat()].filter((n) => {
+  let merged = [...wire, ...market, ...batches.flat()].filter((n) => {
     if (seen.has(n.id)) return false;
     seen.add(n.id);
     return true;

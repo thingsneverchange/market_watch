@@ -1,0 +1,318 @@
+<?xml version="1.0" encoding="UTF-8"?><rss xmlns:metadata="http://search.cnbc.com/rss/2.0/modules/siteContentMetadata" version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel>
+    <atom:link rel="self" type="application/rss+xml" href="https://www.cnbc.com/id/19854910/device/rss/rss.html"/>
+    <language>en-us</language>
+    <ttl>60</ttl>
+    <title>Tech</title>
+    <feed_asset>
+      <id>19854910</id>
+      <type>franchise</type>
+      <subtype>section</subtype>
+      <seo>https://www.cnbc.com/technology/</seo>
+    </feed_asset>
+    <lastBuildDate>Mon, 27 Jul 2026 14:31 GMT</lastBuildDate>
+    <pubDate>Mon, 27 Jul 2026 14:31 GMT</pubDate>
+    <link>https://www.cnbc.com/technology/</link>
+    <description><![CDATA[Business news related to the technology industry, including Apple, Amazon, Microsoft, Google, and Facebook, plus consumer electronics, start-ups, cryptocurrency, media, advertising, streaming, venture capital, antitrust and regulation.]]></description>
+    <item>
+      <link>https://www.cnbc.com/2026/07/27/altman-trump-china-open-weight-ai.html</link>
+      <guid isPermaLink="false">108340446</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340446</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Sam Altman to meet with Trump administration, Senators this week. Here&apos;s what he plans to say</title>
+      <description><![CDATA[Altman will preview the capabilities of the company's upcoming family of AI models and answer questions about cybersecurity and open-weight models.]]></description>
+      <pubDate>Mon, 27 Jul 2026 14:33:10 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/27/5-things-to-know-before-the-stock-market-opens.html</link>
+      <guid isPermaLink="false">108340240</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340240</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Oil prices cool, AI&apos;s &apos;distillation&apos; debate, Ford&apos;s &apos;Nike shoe drop&apos; and more in Morning Squawk</title>
+      <description><![CDATA[Here are five key things investors need to know to start the trading day.]]></description>
+      <pubDate>Mon, 27 Jul 2026 12:34:48 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/27/nvidia-ai-initiative-openai-cyber-attack.html</link>
+      <guid isPermaLink="false">108340345</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340345</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Nvidia, SpaceX, Microsoft launch AI safety initiative as OpenAI cyberattack fallout continues</title>
+      <description><![CDATA[Microsoft, SpaceX, Palantir, alongside dozens of other tech companies from the U.S. and Europe, have joined the Open Secure AI Alliance.]]></description>
+      <pubDate>Mon, 27 Jul 2026 11:32:45 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/27/cxmt-china-market-debut-chipmaker-ipo.html</link>
+      <guid isPermaLink="false">108339586</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339586</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Chipmaker CXMT’s 466% market debut surge makes it the most valuable China-listed company</title>
+      <description><![CDATA[The Hefei-based company raised 57.92 billion yuan ($8.6 billion) after pricing its IPO at 8.66 yuan per share.]]></description>
+      <pubDate>Mon, 27 Jul 2026 14:19:43 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/25/here-are-4-forces-that-drove-a-tough-week-for-stocks.html</link>
+      <guid isPermaLink="false">108339906</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339906</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Here are 4 forces that drove a tough week for stocks</title>
+      <description><![CDATA[Investors navigated everything from escalating tensions in the Middle East to key tech earnings reports to healthcare developments.]]></description>
+      <pubDate>Sat, 25 Jul 2026 19:56:55 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/25/hat-is-distillation-and-why-is-everyone-so-obsessed-with-it-this-week.html</link>
+      <guid isPermaLink="false">108339871</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339871</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>From Silicon Valley to DC, the tech world is suddenly obsessed with one concept in AI: Distillation </title>
+      <description><![CDATA[Distillation has long been a topic for AI wonks, but it's become a hot-button issue of late as techies and lawmakers debate how it should be regulated.]]></description>
+      <pubDate>Sat, 25 Jul 2026 14:03:03 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/25/finland-sand-battery-renewable-energy-storage.html</link>
+      <guid isPermaLink="false">108337782</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108337782</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Finland’s radical answer to renewable energy’s biggest headache: The world’s largest sand battery</title>
+      <description><![CDATA[A small Finnish town has turned to the world's largest commercial sand battery to tackle a major hurdle in the energy transition: intermittency.]]></description>
+      <pubDate>Mon, 27 Jul 2026 08:46:51 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/25/nvidia-locks-down-memory-from-sk-hynix-as-part-of-500-billion-ai-deal.html</link>
+      <guid isPermaLink="false">108340134</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340134</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Nvidia locks down memory supply from SK Hynix as part of $500 billion AI deal </title>
+      <description><![CDATA[Nvidia is aggressively securing supply of high-bandwidth memory, an essential component for its GPUs and systems.]]></description>
+      <pubDate>Sat, 25 Jul 2026 08:49:00 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/spacex-launches-massive-starship-rocket-in-first-test-flight-since-ipo.html</link>
+      <guid isPermaLink="false">108340147</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340147</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>SpaceX launches massive Starship rocket in first test flight since IPO</title>
+      <description><![CDATA[Elon Musk's rocket maker is conducting the first test fight for its massive Starship rocket since the company's IPO last month.]]></description>
+      <pubDate>Sat, 25 Jul 2026 02:17:11 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/uber-and-waymo-to-end-exclusivity-arrangement-in-atlanta-and-austin.html</link>
+      <guid isPermaLink="false">108340076</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108340076</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Uber and Waymo to end exclusivity arrangement in Atlanta and Austin</title>
+      <description><![CDATA[In Atlanta and Austin, Texas, Waymo driverless rides will be available on platforms other than Uber starting in 2028.]]></description>
+      <pubDate>Fri, 24 Jul 2026 21:48:45 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/tesla-tsla-spacex-spcx-stock-starship-test-flight-musk-bad-week.html</link>
+      <guid isPermaLink="false">108339461</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339461</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Musk&apos;s bad week: Tesla suffers worst slump since 2022, SpaceX drops ahead of Starship test flight</title>
+      <description><![CDATA[Tesla shares plunged almost 18% this week after the company missed on earnings and turned cash flow negative.]]></description>
+      <pubDate>Fri, 24 Jul 2026 21:57:01 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/bond-market-anxiety-ai-capex-spending.html</link>
+      <guid isPermaLink="false">108339929</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339929</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Bond market anxiety is growing over AI capex budgets</title>
+      <description><![CDATA[Google, Amazon and Meta are seeing credit spreads widen as fixed-income investors demand more reward on companies they lend to.]]></description>
+      <pubDate>Fri, 24 Jul 2026 20:07:36 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/1-hyperscaler-megacap-down-3-to-go-alphabet-raises-the-stakes-on-ai-spending.html</link>
+      <guid isPermaLink="false">108339855</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339855</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>1 hyperscaler megacap down, 3 to go. Alphabet raises the stakes on AI spending</title>
+      <description><![CDATA["Capex trends are going to be the number one focus," Club portfolio director Jeff Marks said Friday ahead of next week's Big Tech earnings.]]></description>
+      <pubDate>Fri, 24 Jul 2026 19:41:08 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/moodys-ai-spending-credit-quality-amazon-meta-alphabet.html</link>
+      <guid isPermaLink="false">108339874</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339874</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Moody&apos;s says &apos;unprecedented&apos; AI spending threatens credit quality of Amazon, Meta, Alphabet and others</title>
+      <description><![CDATA[Moody's said AI spending is forcing even the world's most cash-rich corporations to lean heavily on debt, stock sales and off-balance-sheet moves.]]></description>
+      <pubDate>Fri, 24 Jul 2026 22:43:56 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/trump-tariffs-eu-trade-google-apple-tech.html</link>
+      <guid isPermaLink="false">108339961</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339961</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Trump threatens EU with &apos;substantial TARIFF&apos; for &apos;ROBBING&apos; U.S. tech giants</title>
+      <description><![CDATA[Trump on Truth Social railed against the European Union's new fine on Google and prior penalties against U.S. tech giants Apple, Meta and Amazon.]]></description>
+      <pubDate>Fri, 24 Jul 2026 19:39:50 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/anthropic-claude-opus-5-ai-fable-5-cost.html</link>
+      <guid isPermaLink="false">108339320</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339320</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Anthropic&apos;s new AI model rivals Fable 5 and is cheaper as businesses fret about costs</title>
+      <description><![CDATA[Anthropic said Claude Opus 5 is its best performing and its most cost-effective offering.]]></description>
+      <pubDate>Fri, 24 Jul 2026 17:20:47 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/nvidia-microsoft-meta-open-weight-ai-models.html</link>
+      <guid isPermaLink="false">108339789</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339789</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Nvidia, Microsoft, Meta warn against &apos;premature restrictions&apos; of open-weight models</title>
+      <description><![CDATA[Chinese open-weight models are gaining steam against leading offerings from American companies. OpenAI and Anthropic did not sign the letter.]]></description>
+      <pubDate>Fri, 24 Jul 2026 17:55:37 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/5-things-to-know-before-the-stock-market-opens.html</link>
+      <guid isPermaLink="false">108339542</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339542</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Oil spurs a sell-off, Trump&apos;s new tariffs, Intel earnings and more in Morning Squawk</title>
+      <description><![CDATA[Here are five key things investors need to know to start the trading day.]]></description>
+      <pubDate>Fri, 24 Jul 2026 12:20:08 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/china-ai-open-source-apec.html</link>
+      <guid isPermaLink="false">108339076</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339076</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>U.S., other nations back open-source AI with &apos;strong security&apos; at China summit</title>
+      <description><![CDATA[The APEC statement is the first to include open-source cooperation at a minister level, said Li Lecheng, China's industry and information technology minister.]]></description>
+      <pubDate>Fri, 24 Jul 2026 02:42:21 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/24/cxmt-china-ipo-listing-chip-memory.html</link>
+      <guid isPermaLink="false">108339589</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339589</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>China&apos;s largest memory chipmaker sparks fears of a cash drain as it readies for public debut</title>
+      <description><![CDATA[CXMT is stoking fears that its blockbuster stock market debut could pull cash from China's equities.]]></description>
+      <pubDate>Fri, 24 Jul 2026 02:08:13 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/amazon-makes-sellers-label-ai-generated-people-in-images-after-ny-law.html</link>
+      <guid isPermaLink="false">108339558</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339558</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Amazon cracks down on use of AI images by sellers after New York law</title>
+      <description><![CDATA[A recently enacted New York law mandates that companies disclose when an ad includes a "synthetic performer" in place of a human actor.]]></description>
+      <pubDate>Fri, 24 Jul 2026 00:36:42 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/oracle-wins-10-year-pentagon-software-contract-worth-up-to-7-billion.html</link>
+      <guid isPermaLink="false">108339454</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339454</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Oracle signs 10-year software contract with Pentagon worth up to $7 billion</title>
+      <description><![CDATA[Oracle will supply on-premises software to the U.S. Department of Defense.]]></description>
+      <pubDate>Fri, 24 Jul 2026 14:12:15 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/intel-intc-earnings-report-q2-2026.html</link>
+      <guid isPermaLink="false">108339258</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339258</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Intel rides AI boom to fastest revenue growth in almost 15 years, but shares sink</title>
+      <description><![CDATA[Intel's revenue jumped 25%, the most robust growth for any period since the third quarter of 2011.]]></description>
+      <pubDate>Fri, 24 Jul 2026 14:05:35 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/open-ai-hugging-face-hack-kill-switch-bill-congress.html</link>
+      <guid isPermaLink="false">108339352</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339352</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>OpenAI&apos;s Hugging Face hack triggers &apos;AI Kill Switch&apos; bill in Congress</title>
+      <description><![CDATA[OpenAI disclosed this week that some of its AI models went rogue and hacked into open-source developer platform Hugging Face.]]></description>
+      <pubDate>Thu, 23 Jul 2026 21:09:48 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/ibms-krishna-argues-that-ai-wont-disrupt-software-unit.html</link>
+      <guid isPermaLink="false">108339377</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339377</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>IBM&apos;s Krishna tries to reassure investors that AI won&apos;t disrupt company&apos;s software unit</title>
+      <description><![CDATA[IBM's CEO highlighted growing mainframe hardware capacity, and said software should "catch back up" within a year.]]></description>
+      <pubDate>Thu, 23 Jul 2026 22:40:53 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/cerebras-stock-gains-on-amd-partnership.html</link>
+      <guid isPermaLink="false">108339392</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339392</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Cerebras stock gains on AMD partnership</title>
+      <description><![CDATA[Cerebras and AMD agreed to work together, pairing their technology for AI systems.]]></description>
+      <pubDate>Thu, 23 Jul 2026 20:33:12 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/jpmorgan-dramatic-jump-in-ai-etfs-despite-rough-quarter.html</link>
+      <guid isPermaLink="false">108338719</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108338719</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>JPMorgan report finds dramatic jump in AI-themed ETFs — despite rough quarter</title>
+      <description><![CDATA[Wall Street is banking heavily on exchange-traded funds that give investors artificial intelligence exposure, according to JPMorgan Asset Management.]]></description>
+      <pubDate>Thu, 23 Jul 2026 17:10:06 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/amazon-microsoft-cloud-gaming.html</link>
+      <guid isPermaLink="false">108338893</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108338893</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Amazon and Microsoft pivot cloud gaming strategies to target different players</title>
+      <description><![CDATA[Amazon is bringing Luna to the Prime Video streaming service, while Microsoft will test an ad-supported streaming of titles that people own.]]></description>
+      <pubDate>Thu, 23 Jul 2026 20:06:50 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/intel-is-down-27percent-from-june-record-highs-how-it-can-reverse-the-slide.html</link>
+      <guid isPermaLink="false">108338732</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108338732</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Intel stock is down 27% from June record highs. How the chipmaker can reverse the slide</title>
+      <description><![CDATA[The report comes at a critical time for optimistic investors like us at the Club.]]></description>
+      <pubDate>Thu, 23 Jul 2026 15:16:21 GMT</pubDate>
+    </item>
+    <item>
+      <link>https://www.cnbc.com/2026/07/23/google-cloud-kurian-revenue-earnings.html</link>
+      <guid isPermaLink="false">108339271</guid>
+      <metadata:type>cnbcnewsstory</metadata:type>
+      <metadata:id>108339271</metadata:id>
+      <metadata:sponsored>false</metadata:sponsored>
+      <title>Google Cloud CEO Kurian says customers are spending 50% more as segment blows away expectations</title>
+      <description><![CDATA[Google Cloud CEO Thomas Kurian told CNBC on Thursday that the company's existing customers are spending "roughly 50% more" than they've already committed.]]></description>
+      <pubDate>Thu, 23 Jul 2026 21:50:11 GMT</pubDate>
+    </item>
+  </channel>
+</rss>

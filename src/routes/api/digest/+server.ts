@@ -1,6 +1,7 @@
 import type { RequestHandler } from "./$types";
 import { getMarketNews, getEarnings, newsTopic, newsThemes, shortHeadline, WATCHLIST, TAPE_TICKERS, INDEX_TICKERS, MAJORS } from "$lib/server/finnhub";
 import { getFeed, fresh } from "$lib/server/marketfeed";
+import { getWireNews } from "$lib/server/newswire";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
@@ -130,9 +131,15 @@ const THEME_NOTE: Record<string, string> = {
 export const GET: RequestHandler = async () => {
   // ★ 시세도 같이 받는다 — 헤드라인이 우리 화면의 값과 모순되는지 반증하기 위해서다.
   //   Finviz 는 49개 선물을 **한 번의 요청**으로 주고 /api/boards 가 이미 캐시를 데워 놨다.
-  const [news, feed, earn, fut, btc] = await Promise.all([
-    getMarketNews(24), getFeed(), getEarnings(3), getFutures(), getBtc()
+  const [fhNews, wire, feed, earn, fut, btc] = await Promise.all([
+    getMarketNews(24), getWireNews(40), getFeed(), getEarnings(3), getFutures(), getBtc()
   ]);
+  // ★ 실시간 와이어를 먼저 놓고 Finnhub 를 뒤에 붙인다.
+  //   Finnhub 무료 general 피드는 실측 최신 598분(10시간)·45분 이내 0건이라
+  //   **오늘 뉴스가 한 건도 안 들어온다**. 와이어(무료 RSS)는 최신 2~11분이다.
+  //   Finnhub 를 빼지는 않는다 — 와이어 5개가 동시에 죽는 날의 바닥으로 남긴다.
+  //   같은 사건이 양쪽에 뜨므로 제목 유사도로 합치고, **이른 쪽(와이어)을 남긴다**.
+  const news = dropNearDuplicates([...wire, ...fhNews], (n) => n.title);
   // 화면에 실제로 띄우는 값과 **같은 출처**를 쓴다. 다른 값으로 반증하면 그 자체가 사고다.
   const livePx = new Map<string, number>();
   for (const k of ["OIL", "GOLD", "NQ", "ES", "YM", "VIX"]) {

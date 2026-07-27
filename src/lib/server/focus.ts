@@ -1,4 +1,5 @@
 import { getQuotes, getMarketNews, getCompanyNews, getEarnings, getMarketCaps, type Quote } from "./finnhub";
+import { getWireNews } from "./newswire";
 import { marketState } from "../market-hours";
 
 // ============================================================
@@ -226,11 +227,18 @@ export async function getMarketFocus(themeKey = "", limit = 5): Promise<FocusBoa
   //   뉴스·실적은 다른 패널이 이미 쓰는 캐시를 그대로 재사용한다 (추가 요청 사실상 0).
   //   실적은 앞으로 10일 + 지난 4일 — "곧 낸다"와 "방금 냈다" 둘 다 관심의 근거다.
   //   시총은 24시간 캐시 + 저우선이라 사실상 공짜다(호출당 6개씩 채워 8분이면 다 찬다).
-  const [news, earn, caps] = await Promise.all([
+  const [fhNews, wire, earn, caps] = await Promise.all([
     getMarketNews(40),
+    getWireNews(40),
     getEarnings(10, 4),
     getMarketCaps(UNIVERSE)
   ]);
+  // ★ 실시간 와이어를 ATTENTION 재료에 합친다.
+  //   아래 주석의 "general 피드엔 회사 이름이 거의 안 나온다"가 여기서도 문제였는데,
+  //   와이어는 CNBC Tech·구글뉴스(반도체) 를 포함해 **회사 이름이 실제로 등장하는**
+  //   기사가 많다. 실측: 반도체 질의 100건 중 상위가 ASML·CXMT·Intel·Micron.
+  //   요청 순증은 0 이다 — digest·breaking 이 이미 데워 둔 같은 캐시를 읽는다.
+  const news = [...wire, ...fhNews];
 
   // ★★ ATTENTION 축이 **계속 0 이었다.**
   //   general 피드는 매크로·지정학 위주라 회사 이름이 거의 안 나온다.
