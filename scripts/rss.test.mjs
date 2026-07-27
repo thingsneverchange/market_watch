@@ -102,6 +102,13 @@ ok("자동 시세기사 차단", isPressRelease("Baker Hughes (NASDAQ:BKR) Share
 ok("등급 자동기사 차단", isPressRelease("Acme Corp Given Average Rating of Hold by Brokerages"));
 ok("지분변동 자동기사 차단", isPressRelease("Vanguard Group Position Boosted by 3.2%"));
 ok("목표가 자동기사 차단", isPressRelease("Micron price target raised to $950 at Citi"));
+// 로펌 집단소송 보도자료 — PR Newswire 를 타고 멀쩡한 매체로 들어와 매체 차단을 비껴간다
+ok("집단소송 보도자료 차단 (실측)",
+  isPressRelease("INVESTOR ALERT: The Hub Group, Inc. (NASDAQ: HUBG) Investors with Substantial Losses Have Opportunity to Lead Class Action"));
+ok("주주 알림 차단", isPressRelease("SHAREHOLDER ALERT: Pomerantz Law Firm Investigates Claims On Behalf of Investors"));
+ok("소송 마감 알림 차단", isPressRelease("DEADLINE REMINDER: Levi & Korsinsky Reminds Shareholders of Lawsuit"));
+ok("진짜 규제 기사는 통과",
+  !isPressRelease("SEC opens investigation into Nvidia chip export practices"));
 ok("진짜 기사는 통과: CXMT",
   !isPressRelease("Chipmaker CXMT's 466% market debut surge makes it the most valuable China-listed company"));
 ok("진짜 기사는 통과: ASML",

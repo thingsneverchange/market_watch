@@ -232,8 +232,13 @@ export function isBlockedPublisher(source: string): boolean {
 
 // 소형주 보도자료·시세 자동기사 — 매체와 무관하게 방송할 사건이 아니다.
 // "(NASDAQ:XXX) Issues …", "Shares Gap Up", "Given Average Rating", "Position Boosted By …"
+//
+// ★ 로펌 집단소송 보도자료가 특히 많다. PR Newswire 를 타고 Morningstar·Yahoo 같은
+//   멀쩡한 매체로 신디케이트되기 때문에 **매체 차단으로는 못 걸린다.** 실측:
+//     "INVESTOR ALERT: The Hub Group, Inc. (NASDAQ: HUBG) Investors with Substantial Losses…"
+//   콜론 뒤 공백(`NASDAQ: HUBG`) 때문에 티커 패턴도 비껴갔다 → 공백을 허용한다.
 const PR_NOISE =
-  /(\((?:NASDAQ|NYSE|AMEX|OTCMKTS):[A-Z.]{1,6}\)\s+(?:issues|announces|declares|schedules|reports|sets|files)|shares? (?:gap|trading) (?:up|down)|stock (?:price )?(?:up|down) \d|given (?:a |an )?(?:average|consensus) rating|price target (?:raised|lowered|set|cut) (?:to|at)|short interest (?:up|down)|(?:position|stake|holdings) (?:boosted|lowered|trimmed|raised) by|buys new (?:shares|stake))/i;
+  /(\((?:NASDAQ|NYSE|AMEX|OTCMKTS):\s?[A-Z.]{1,6}\)\s+(?:issues|announces|declares|schedules|reports|sets|files|investors)|investor alert|shareholder (?:alert|rights|investigation|deadline)|class action|securities fraud|law offices of|deadline reminder|encourages investors|investors with (?:substantial )?losses|contact the firm|shares? (?:gap|trading) (?:up|down)|stock (?:price )?(?:up|down) \d|given (?:a |an )?(?:average|consensus) rating|price target (?:raised|lowered|set|cut) (?:to|at)|short interest (?:up|down)|(?:position|stake|holdings) (?:boosted|lowered|trimmed|raised) by|buys new (?:shares|stake))/i;
 
 /** 자동생성 시세·보도자료 기사인가 (방송할 사건이 아니다) */
 export function isPressRelease(headline: string): boolean {
