@@ -56,6 +56,16 @@ export type MarketBrief = {
   }[];
 };
 
+/**
+ * **지금 시장이 무엇에 꽂혀 있는가** — 규칙으로는 못 잡는 것.
+ *  규칙 기반(시총 × 실적임박 × 섹터)은 어느 날이든 메가캡 목록을 낸다.
+ *  시장이 실제로 붙들고 있는 건 "메모리 사이클이 끝나는가", "스페이스엑스 상장설"
+ *  같은 **논쟁**이지 티커 목록이 아니다. ticker 는 null 이 정상이다(비상장·대표주 없음).
+ */
+export type MarketFocus = {
+  items: { label: string; ticker: string | null; why: string; heat: number }[];
+};
+
 /** 최근 7일 거시 지표 결과 + 시장 반응. 무료 경제 캘린더가 없어 Claude 가 채운다. */
 export type MacroRecap = {
   events: {
@@ -77,6 +87,7 @@ export type Feed = {
     earnings_note?: FeedItem<EarningsNote>;
     earnings_recap?: FeedItem<EarningsRecap>;
     market_brief?: FeedItem<MarketBrief>;
+    market_focus?: FeedItem<MarketFocus>;
     macro_recap?: FeedItem<MacroRecap>;
   };
 };

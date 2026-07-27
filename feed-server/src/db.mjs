@@ -29,6 +29,9 @@ export const KINDS = {
   market_brief: { maxAgeMs: 4 * 3600_000, label: "TODAY BRIEF" },
   // 라이브/예정 방송 후보 (연준 회견·정부 이벤트·실적콜). 사람이 /control 에서 골라 송출한다.
   live_videos: { maxAgeMs: 3 * 3600_000, label: "LIVE VIDEOS" },
+  // 지금 시장이 무엇에 꽂혀 있는가. 논쟁의 주제는 하루 단위로 바뀌므로 6시간.
+  //  (top_story 와 같은 이유로 **생성 주기보다 길게** 잡는다 — 정규장 120분 / 프리·애프터 480분)
+  market_focus: { maxAgeMs: 9 * 3600_000, label: "MARKET FOCUS" },
   // 최근 7일 거시 지표 결과 + 시장 반응. 하루 1회만 생성하므로 신선도 기준도 넉넉하게.
   macro_recap: { maxAgeMs: 30 * 3600_000, label: "MACRO RECAP" }
 };

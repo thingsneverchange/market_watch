@@ -41,21 +41,31 @@ BUDGET="${DAILY_LLM_BUDGET:-$BUDGET_DEFAULT}"
 #  REG = 정규장 / EXT = 프리·애프터 / OFF = 밤·주말
 #
 #  배분 근거 (평일 기준 합계 ≈ 20):
-#    top_story 8 + market_brief 5 + earnings_recap 3 + live_videos 2 + key_event 1 + macro_recap 1
+#    top_story 8 + market_focus 5 + market_brief 3 + earnings_recap 1 + live_videos 1
+#    + key_event 1 + macro_recap 1  = 20
+#  ※ market_focus 를 넣으면서 brief·recap·videos 에서 4회를 빼 왔다.
+#    "지금 시장이 무엇에 꽂혀 있나"가 이 방송에서 가장 자주 바뀌는 정보다.
 interval_for() { # interval_for KIND SLOT → 분 (0 = 안 함)
   case "$1:$2" in
     top_story:REG)      echo 110 ;;   # 장중 4회
     top_story:EXT)      echo 200 ;;   # 프리·애프터 3회
     top_story:OFF)      echo 360 ;;   # 밤 1회
-    market_brief:REG)   echo 130 ;;   # 장중 3회
-    market_brief:EXT)   echo 285 ;;   # 2회
+    # ★ 지금 시장이 무엇에 꽂혀 있나 — 규칙으로는 메가캡 목록밖에 안 나온다.
+    #   "메모리 사이클이 끝나는가" 같은 **논쟁**은 판단이라 LLM 이 해야 한다.
+    #   장중에 자주 본다 — 화두는 장중에 바뀐다.
+    market_focus:REG)   echo 120 ;;   # 장중 4회
+    market_focus:EXT)   echo 480 ;;   # 프리·애프터 1회
+    market_focus:OFF)   echo 0   ;;
+    market_brief:REG)   echo 200 ;;   # 장중 2회 (market_focus 에 자리를 내줬다)
+    market_brief:EXT)   echo 400 ;;   # 1회
     market_brief:OFF)   echo 0   ;;
     # 실적은 발표가 몰리는 프리마켓·애프터마켓에만 의미가 있다.
     # 새벽 3시에 20분마다 다시 만들 이유가 없었다.
     earnings_recap:REG) echo 0   ;;
-    earnings_recap:EXT) echo 240 ;;   # 3회
+    #  반응률 검증이 디스크에 남게 되면서(verifylog) 자주 만들 이유가 줄었다
+    earnings_recap:EXT) echo 480 ;;   # 1회
     earnings_recap:OFF) echo 0   ;;
-    live_videos:REG)    echo 195 ;;   # 장중 2회 (라이브 스트림은 장중에만 열린다)
+    live_videos:REG)    echo 390 ;;   # 장중 1회 (라이브 스트림은 장중에만 열린다)
     live_videos:EXT)    echo 0   ;;
     live_videos:OFF)    echo 0   ;;
     key_event:REG)      echo 0   ;;

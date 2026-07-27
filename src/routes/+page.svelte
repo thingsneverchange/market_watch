@@ -842,7 +842,10 @@
               {#each focusRows as m}
                 {@const px = m.rx ? m.rx.pct : m.pct}
                 {@const stale = m.rx ? !m.rx.live : !impact.live}
-                <div class="im-item">
+                <!-- ★ Claude 가 고른 항목은 **티커가 없을 수 있다** —
+                     "MEMORY CYCLE" 처럼 논쟁 자체가 주제이거나, 스페이스엑스처럼 비상장이다.
+                     그때는 티커 칸을 넓게 써서 주제 이름을 그대로 크게 보여준다. -->
+                <div class="im-item" class:theme={m.isTheme}>
                   <span class="im-tk">
                     {m.ticker}
                     <!-- 실적 결과 배지 — MOVERS 에서 넘어온 정보 -->
@@ -1546,6 +1549,13 @@
   .im-pct.d { color: #ff5c5c; }
   /* 정지된 값 — 헤더 스트립(.idx .v.closed)과 같은 투명도를 쓴다 */
   .im-pct.closed { opacity: 0.45; }
+  /* 주제 행 — 티커가 없다 ("MEMORY CYCLE" 처럼 논쟁 자체가 주제이거나 비상장).
+     한 줄 높이를 유지해야 한다 — 좌측 컬럼은 1080p 에 딱 맞춰져 있어 행이 커지면 넘친다.
+     막대를 빼고 그 자리를 이름·설명에 준다. */
+  .im-item.theme { grid-template-columns: minmax(0, max-content) 1fr 92px; }
+  .im-item.theme .im-tk { font-size: 16px; letter-spacing: 0.03em; }
+  .im-item.theme .im-why { color: #8a919b; letter-spacing: 0.01em; }
+  .im-item.theme .im-bar { display: none; }
   /* 검증 안 된 값 — 리캡(LLM)이 준 숫자가 실제와 정반대였던 사고가 있었다 */
   .im-pct.unv { color: #a08a4a; }
   /* 등락률 + 검증 상태를 오른쪽 한 칸에 세로로 쌓는다 */
