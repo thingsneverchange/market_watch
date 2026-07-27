@@ -99,6 +99,8 @@
   let minis: {
     key: string; label: string; pct: number; price: string; abs: string | null;
     spark: number[]; base: number | null;
+    /** 지금 이 선물이 거래 중인가 (Globex 는 매일 17–18시 ET 쉬고 주말엔 멈춘다) */
+    live?: boolean;
   }[] = [];
 
   // 데이터 신선도 — "내가 fetch 한 시각"이 아니라 "소스가 준 마지막 체결 시각"
@@ -978,8 +980,10 @@
           <div class="ss-card">
             <div class="ss-top">
               <span class="ss-name">{m.label}</span>
-              <!-- 어느 구간의 차트인지 명시 — 등락률과 창이 다르면 시청자가 오해한다 -->
-              <span class="ss-tf">24H</span>
+              <!-- 어느 구간의 차트인지 명시 — 등락률과 창이 다르면 시청자가 오해한다.
+                   ★ Globex 가 쉬는 동안(매일 17–18시 ET·주말)은 이 값이 멈춰 있다.
+                     "24H" 만 찍으면 항상 도는 것처럼 읽힌다. -->
+              <span class="ss-tf">{m.live === false ? "CLOSED" : "24H"}</span>
             </div>
             <!-- 시세는 별도 줄에 크게. 포인트 등락을 %와 나란히 둔다. -->
             <div class="ss-quote" class:u={m.pct >= 0} class:d={m.pct < 0}>
@@ -1196,11 +1200,14 @@
     <div class="tape-vp">
     <div class="track">
       {#each [...boards.tape, ...boards.tape, ...boards.tape] as t}
-        <span class="mq-item">
+        <!-- ★ 정지된 값은 헤더 스트립과 **같은 방식**으로 흐리게.
+             주식은 정규장에만 움직이는데(무료 티어는 확장시간 미갱신) 여기만 원색이라
+             62시간 묵은 금요일 종가가 실시간과 구분되지 않았다. -->
+        <span class="mq-item" class:closed={t.live === false}>
           <span class="mq-k">{t.k}</span>
           <span class="mq-v">{t.v}</span>
           <span class="mq-p" class:u={t.pct >= 0} class:d={t.pct < 0}>
-            {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%
+            {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%{#if t.live === false}<span class="stale-mark">·{lastSessionTag}</span>{/if}
           </span>
         </span>
         <span class="mq-sep">·</span>
@@ -1552,6 +1559,8 @@
     display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
   .ss-top { display: flex; align-items: center; gap: 2px; flex-shrink: 0; }
   .ss-name { font-size: 12px; font-weight: 700; color: #8a919b; letter-spacing: 0.03em; }
+  /* 정지된 테이프 항목 — 헤더 스트립(.idx .v.closed)과 같은 투명도 */
+  .mq-item.closed { opacity: 0.45; }
   .ss-tf { margin-left: 6px; font-size: 9px; font-weight: 800; color: #6b7280;
     border: 1px solid #2b3240; border-radius: 3px; padding: 0 3px; letter-spacing: 0.04em; }
   .ss-quote { display: flex; align-items: baseline; gap: 10px; flex-shrink: 0;

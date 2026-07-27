@@ -100,9 +100,12 @@ export const GET: RequestHandler = async () => {
   const top = [...indexSlots, ...crossSlots];
 
   // ── 하단 테이프 = 대형주/워치리스트 + 크로스에셋 ──
+  //  ★ 개별 주식은 **정규장에만** 움직인다 (무료 티어는 확장시간 시세를 갱신하지 않는다).
+  //    live 를 안 실으면 화면이 62시간 묵은 금요일 종가를 실시간과 같은 밝기로 찍는다.
+  //    헤더 스트립은 이미 이걸 구분하는데 테이프만 안 하고 있었다 — 같은 값, 다른 규칙.
   const tape = TAPE_TICKERS.map((t) => by.get(t)).filter((q): q is Quote => !!q);
   const tapeRows = [
-    ...tape.map((q) => ({ k: q.ticker, v: fmt(q.price), pct: q.changePct })),
+    ...tape.map((q) => ({ k: q.ticker, v: fmt(q.price), pct: q.changePct, live: regularOpen })),
     ...crossSlots
   ];
 
@@ -139,9 +142,11 @@ export const GET: RequestHandler = async () => {
           abs: f.changeAbs === null ? null : fmt(Math.abs(f.changeAbs)),
           spark: sample(f.spark),
           // 전일 정산가 = 차트의 "보합선". 이게 있어야 25시간 곡선과 등락률이 같은 얘기를 한다
-          base: f.prevClose
+          base: f.prevClose,
+          // 선물이라 Globex 시계를 따른다 (매일 17–18시 ET 휴식, 주말 정지)
+          live: futOpen
         }
-      : { key, label, pct: 0, price: "—", abs: null, spark: [] as number[], base: null };
+      : { key, label, pct: 0, price: "—", abs: null, spark: [] as number[], base: null, live: false };
   });
 
   return new Response(
