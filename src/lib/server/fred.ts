@@ -115,6 +115,20 @@ function convert(obs: Obs[], t: Transform, freq: string): { value: number | null
            prev:  c !== null && d ? r((c / d - 1) * 100) : null };
 }
 
+/**
+ * 관측 기간을 **그 시리즈의 주기에 맞게** 표기한다.
+ *  FRED 는 분기 시리즈를 그 분기의 **첫 달**로 날짜를 찍는다. 그대로 잘라 쓰면
+ *  실질GDP 1분기가 "2026-01"(=1월)로 보인다 — 값은 맞는데 표기가 거짓말을 한다.
+ *  일간 시리즈(Fed Funds)는 반대로 월까지만 찍으면 어느 날 값인지 사라진다.
+ */
+function periodLabel(date: string, freq: string): string {
+  const [y, m] = date.split("-");
+  if (freq === "Q") return `Q${Math.floor((Number(m) - 1) / 3) + 1} ${y}`;
+  if (freq === "A") return y;
+  if (freq === "D" || freq === "W") return date;   // 날짜 그대로 (일간·주간)
+  return `${y}-${m}`;                              // 월간
+}
+
 /** 주요 거시 지표의 **실제 발표치** (연준 원본). 실패하면 마지막 값. */
 export async function getMacroReadings(): Promise<MacroReading[]> {
   const now = Date.now();
@@ -135,7 +149,7 @@ export async function getMacroReadings(): Promise<MacroReading[]> {
         const { value, prev } = convert(obs, s.transform, freq);
         out.push({
           key: s.key, label: s.label, value, prev, unit: s.unit,
-          period: obs[0].date.slice(0, 7),
+          period: periodLabel(obs[0].date, freq),
           updated: String(meta?.seriess?.[0]?.last_updated ?? "").slice(0, 19),
           imp: s.imp, upIsHawkish: s.upIsHawkish
         });

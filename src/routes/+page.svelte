@@ -694,7 +694,9 @@
         <div class="panel today">
           <div class="lbl">TODAY<span class="src-hint">events · impact</span></div>
           <div class="td-list">
-            {#each brief as b}
+            <!-- ★ MARKET FOCUS 와 같이 뜨면 좌측이 넘친다(실측). 브리핑은 Claude 가
+                 중요도 순으로 주므로 위 2건이 가장 중요한 것이다. -->
+            {#each brief.slice(0, impact.names.length ? 2 : 3) as b}
               {@const st = b.startET ? Date.parse(b.startET) : NaN}
               {@const durMs = (b.durationMin ?? 90) * 60000}
               {@const liveNow = Number.isFinite(st) && nowMs >= st && nowMs < st + durMs}
@@ -762,10 +764,16 @@
           <div class="panel mlink">
             <div class="lbl">
               MARKET FOCUS
-              <span class="src-hint">news · catalyst · theme</span>
+              <!-- ★ 오른쪽 등락률이 **언제 값인지** 밝힌다.
+                   순위 기준(뉴스·촉매·테마)은 24시간 유효하지만 등락률은 현물 시세라
+                   장 밖엔 직전 세션 종가에서 멈춰 있다. 헤더 스트립은 이미 이걸
+                   흐림+태그로 구분하는데 이 패널만 안 하고 있었다. -->
+              <span class="src-hint">
+                news · catalyst · theme{impact.live ? "" : ` · px ${lastSessionTag}`}
+              </span>
             </div>
             <div class="im-list">
-              {#each impact.names as m}
+              {#each impact.names.slice(0, brief.length ? 4 : 5) as m}
                 <div class="im-item">
                   <span class="im-tk">{m.ticker}</span>
                   <span class="im-why" class:cat={m.earnDays != null && m.earnDays >= -3 && m.earnDays <= 7}>
@@ -776,7 +784,11 @@
                     <span class="im-fill" style="width:{focusWidth(m.score)}%"></span>
                   </span>
                   <!-- 가격은 확인용이라 오른쪽 끝. 장 밖이면 직전 세션 값이다(헤더 배지가 말한다) -->
-                  <span class="im-pct" class:u={(m.pct ?? 0) >= 0} class:d={(m.pct ?? 0) < 0}>
+                  <!-- 정지된 값은 헤더 스트립과 **같은 방식**으로 흐리게 처리한다.
+                       화면 안에서 규칙이 다르면 그것대로 혼란이다. -->
+                  <span class="im-pct" class:u={(m.pct ?? 0) >= 0} class:d={(m.pct ?? 0) < 0}
+                        class:closed={!impact.live}
+                        title={impact.live ? "" : "Market closed — last session's close"}>
                     {m.pct == null ? "—" : `${m.pct >= 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(2)}%`}
                   </span>
                 </div>
@@ -785,8 +797,11 @@
           </div>
         {/if}
 
-        <!-- 직전 TOP STORY — 이력이 쌓였을 때만 -->
-        {#if prevStories.length}
+        <!-- 직전 TOP STORY — 이력이 쌓였을 때만.
+             TODAY 브리핑이 있으면 자리를 내준다. 좌측 우선순위는
+             TOP STORY > TODAY > 헤드라인 > MARKET FOCUS > 지난 스토리 다.
+             (예전엔 자리가 없어도 렌더돼서 높이 2px 짜리 빈 상자가 남았다) -->
+        {#if prevStories.length && !brief.length}
           <div class="panel mlink stories">
             <div class="lbl">EARLIER TOP STORIES<span class="src-hint">last {prevStories.length}</span></div>
             <div class="ps-list">
@@ -910,7 +925,9 @@
         <!-- 지표 발표 일정 — 출처가 FRED(연준)라 날짜가 확정치다 -->
         {#if macroReleases.length}
           <div class="ke-grp">DATA</div>
-          {#each macroReleases.slice(0, 3) as rel}
+          <!-- ★ 실적 반응(MOVERS)이 들어오면 우측 3패널이 940px를 넘긴다(실측).
+               UPCOMING 이 가장 크므로 여기서 자리를 낸다 — 가장 가까운 일정이 가장 중요하다. -->
+          {#each macroReleases.slice(0, reactions.length ? 2 : 3) as rel}
             <div class="ke-item">
               <div class="ke-el">
                 <span class="ke-stars">{stars(rel.imp)}</span>
@@ -938,7 +955,7 @@
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
         {#if earningsEvents.length}
           <div class="ke-grp">EARNINGS</div>
-          {#each earningsEvents as ev (ev.ticker + ev.time.getTime())}
+          {#each earningsEvents.slice(0, reactions.length ? 2 : 3) as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -966,7 +983,9 @@
       {#if macroReadings.length}
         <div class="panel econ">
           <div class="lbl">📊 US ECONOMY<span class="src-hint">latest actual · FRED</span></div>
-          {#each macroReadings.slice(0, 4) as m}
+          <!-- ★ 우측도 자리가 유한하다. 실적 반응(MOVERS)이 들어오면 아래 패널이
+               통째로 화면 밖으로 밀린다(실측 339px 초과) → 반응이 있을 땐 지표를 줄인다. -->
+          {#each macroReadings.slice(0, reactions.length ? 3 : 4) as m}
             {@const hotter = m.prev != null && m.value != null && m.value > m.prev}
             <div class="rx-row">
               <div class="rx-l">
@@ -1066,7 +1085,10 @@
 
         {#if reactions.length}
         <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings · recent first</span></div>
-        {#each reactions.slice(0, 4) as r}
+        <!-- ★ 1건만 둔다. 우측 3패널이 1080p 안에 들어와야 하는데 이 행은 2줄 구조라
+             64~81px 로 가장 무겁다. 개별 종목은 좌측 MARKET FOCUS 가 이미 다루므로,
+             여기는 **검증된 반응 1건**만 남기고 자리를 지표·일정에 넘긴다. -->
+        {#each reactions.slice(0, 1) as r}
           <div class="rx-row">
             <div class="rx-l">
               <div class="rx-tk">
@@ -1367,7 +1389,9 @@
     font-variant-numeric: tabular-nums; white-space: nowrap; flex-shrink: 0; }
   .td-live { margin-left: auto; font-size: 12px; font-weight: 900; color: #ff5c5c;
     letter-spacing: 0.06em; animation: pulse 1.2s infinite; white-space: nowrap; flex-shrink: 0; }
-  .td-impact { font-size: 13.5px; color: #9aa3ad; font-weight: 600; line-height: 1.35; margin-top: 2px; }
+  /* 영향 문구가 길면 패널이 아래를 밀어낸다 → 두 줄까지만 */
+  .td-impact { font-size: 13.5px; color: #9aa3ad; font-weight: 600; line-height: 1.35; margin-top: 2px;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
   /* news — 별점 스캔용: 태그 대신 ★, 한 줄, 공간 절약 */
   .news-list { flex: 1; overflow: hidden; padding: 4px 10px 8px; display: flex; flex-direction: column; gap: 4px; }
@@ -1453,7 +1477,7 @@
   .ps-src { font-size: 11px; font-weight: 700; color: #565d68; letter-spacing: 0.02em; }
 
   /* 시장의 관심 종목 — [티커] [왜] [관심도 막대] [등락률] */
-  .im-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 10px; }
+  .im-list { padding: 0 16px 7px; display: flex; flex-direction: column; gap: 10px; }
   .im-item { display: grid; grid-template-columns: 64px 128px 1fr 78px;
     gap: 10px; align-items: center; font-variant-numeric: tabular-nums; }
   .im-tk { font-size: 19px; font-weight: 800; color: #e8edf4; letter-spacing: 0.01em; }
@@ -1466,6 +1490,8 @@
   .im-pct { font-size: 17px; font-weight: 800; text-align: right; }
   .im-pct.u { color: #39d98a; }
   .im-pct.d { color: #ff5c5c; }
+  /* 정지된 값 — 헤더 스트립(.idx .v.closed)과 같은 투명도를 쓴다 */
+  .im-pct.closed { opacity: 0.45; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }

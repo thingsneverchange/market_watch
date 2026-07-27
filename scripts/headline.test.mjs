@@ -16,15 +16,24 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SRV = join(ROOT, "src/lib/server");
 
-const headlineSrc = readFileSync(join(SRV, "headline.ts"), "utf8")
-  .replace(/export /g, "")
-  .replace(/\(text: string\): boolean/, "(text)")
-  .replace(/\(removed: string\): boolean/, "(removed)");
+// ★ 타입 주석을 **한 곳에서 일반적으로** 벗긴다.
+//   예전엔 시그니처마다 개별 치환을 걸어 뒀는데, headline.ts 에 함수를 하나 추가할
+//   때마다 여기가 조용히 깨졌다(실측: ASSET_KEYS 상수 추가 → 테스트 전체 실행 불가).
+//   테스트 하네스가 대상 코드보다 먼저 깨지면 방어선 역할을 못 한다.
+// ★ headline.ts 는 **그대로 import 한다.** Node 23+ 의 타입 스트리핑이 처리한다.
+//   예전엔 정규식으로 타입 주석을 벗겼는데, 함수를 하나 추가할 때마다 여기가 조용히
+//   깨졌다(실측: ASSET_KEYS 상수 하나 추가 → 테스트 전체가 실행 불가).
+//   **테스트 하네스가 대상 코드보다 먼저 깨지면 방어선 역할을 못 한다.**
+const { isFragment, safeToDrop, contradictsLive } =
+  await import(pathToFileURL(join(SRV, "headline.ts")).href);
 
+// shortHeadline 만은 본문을 떼어 쓴다 — finnhub.ts 는 $env/static/private 를 import 해서
+// 테스트 환경에서 통째로 로드할 수 없다. 의존 함수는 인자로 주입한다.
 const finnhubSrc = readFileSync(join(SRV, "finnhub.ts"), "utf8");
 const a = finnhubSrc.indexOf("export function shortHeadline");
 const b = finnhubSrc.indexOf("\nfunction mapNews", a);
@@ -33,9 +42,9 @@ const shortSrc = finnhubSrc
   .replace("export function", "function")
   .replace(/\(title: string\): string/, "(title)");
 
-const { shortHeadline, isFragment } = new Function(
-  `${headlineSrc}\n${shortSrc}\nreturn { shortHeadline, isFragment };`
-)();
+const shortHeadline = new Function(
+  "isFragment", "safeToDrop", `${shortSrc}\nreturn shortHeadline;`
+)(isFragment, safeToDrop);
 
 let pass = 0, fail = 0;
 const ok = (name, cond, detail = "") => {
@@ -114,6 +123,34 @@ for (const t of [
   "In a first, the ECB signals a pause",
   "On Wall Street, banks lead the rebound"
 ]) ok(`통과: "${t}"`, !isFragment(t));
+
+// ============================================================
+//  화면의 실시간 시세와 모순되는 기사
+//
+//  실측 사고 — 같은 화면에 동시에 떠 있었다:
+//    헤드라인   "Oil near $100 puts fed and peers in interest-rate spotlight" (27시간 전, 5★)
+//    시세 스트립  OIL  84.32  −5.63%
+//  기사가 나온 시점엔 맞는 말이었다. 지금은 아니고, 시청자는 둘을 동시에 본다.
+// ============================================================
+const LIVE = new Map([["OIL", 84.32], ["GOLD", 4092], ["NQ", 28688.5], ["BTC", 65140]]);
+
+console.log("\n=== 시세 모순 — 제외해야 하는 것 ===");
+for (const t of [
+  "Oil near $100 puts fed and peers in interest-rate spotlight",   // ★ 실제 사고
+  "Bitcoin holds above $90,000 as risk appetite returns"
+]) ok(`제외: "${t}"`, !!contradictsLive(t, LIVE));
+
+console.log("\n=== 시세 모순 — 통과해야 하는 것 (멀쩡한 기사를 지우면 안 된다) ===");
+for (const [t, why] of [
+  ["Oil falls to $84 as US and Iran pause strikes", "지금 값과 일치"],
+  ["Gold tops $4,000 on safe-haven bid", "지금 값과 일치"],
+  ["Nasdaq futures rise above 28,000", "지금 값과 일치"],
+  ["Oil slides from $100 after ceasefire report", "과거 기준점 — 지금 값과 달라도 맞는 말"],
+  ["Oil could hit $120 if Hormuz closes", "전망 — 반증 대상이 아니다"],
+  ["Analysts see gold at $5,000 next year", "전망"],
+  ["Copper near $12,000 a tonne on supply squeeze", "우리가 값을 모르는 자산 → 판정 안 함"],
+  ["Iran says it will halt strikes as long as US bombing pause holds", "숫자 없음"]
+]) ok(`통과(${why}): "${t.slice(0, 44)}"`, !contradictsLive(t, LIVE));
 
 console.log(`\n${fail === 0 ? "✅" : "❌"}  통과 ${pass} / 실패 ${fail}\n`);
 process.exit(fail === 0 ? 0 : 1);

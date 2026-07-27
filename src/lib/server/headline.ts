@@ -103,3 +103,72 @@ const ESSENTIAL = new RegExp([
 export function safeToDrop(removed: string): boolean {
   return !ESSENTIAL.test(String(removed || ""));
 }
+
+// ============================================================
+//  헤드라인이 **우리 화면의 실시간 값과 모순되는지** 검사한다
+//
+//  실측 사고 — 같은 화면에 이 둘이 동시에 떠 있었다:
+//    헤드라인  "Oil near $100 puts fed and peers in interest-rate spotlight"  (27시간 전, 5★)
+//    시세 스트립  OIL  84.32  −5.63%
+//  기사가 나온 시점엔 맞는 말이었다. 지금은 아니다. 시청자는 둘을 **동시에** 본다.
+//
+//  나이로 거르는 것과는 다른 문제다. 27시간 된 기사라도 여전히 유효할 수 있고,
+//  반대로 3시간 된 기사가 급변한 시세에 무효화될 수도 있다.
+//  기준은 시간이 아니라 **우리가 반증할 수 있느냐**여야 한다.
+//  값을 아는 자산에 대해서만 판정한다 — 모르면 아무 말도 하지 않는다.
+// ============================================================
+
+/** 헤드라인이 말하는 자산 → 우리가 실시간으로 아는 값의 키 */
+const ASSET_KEYS: [RegExp, string][] = [
+  [/\b(?:oil|crude|brent|wti)\b/i, "OIL"],
+  [/\bgold\b/i, "GOLD"],
+  [/\b(?:bitcoin|btc)\b/i, "BTC"],
+  [/\b(?:nasdaq|ndx)\b/i, "NQ"],
+  [/\bs\s?&\s?p\s?500\b/i, "ES"],
+  [/\bdow\b/i, "YM"],
+  [/\bvix\b/i, "VIX"]
+];
+
+/**
+ * **현재 상태를 단정하는** 수치 표현만 본다.
+ *  "from $100"(과거 기준점) · "could hit $120"(전망) 은 지금 값과 달라도 틀린 게 아니다.
+ */
+const LEVEL_CLAIM =
+  /\b(?:near|around|above|below|over|under|tops?|hits?|breaches?|crosses?|holds?|stays? at|steady at|at)\s+\$?(\d[\d,]*(?:\.\d+)?)/i;
+
+/** 전망·가정 어법이 섞여 있으면 현재 단정이 아니다 */
+const FORWARD =
+  /\b(?:could|may|might|would|forecast\w*|expects?|expected|sees?|target\w*|risk of|projected|outlook|toward|towards|if|unless|should)\b/i;
+
+/** 이보다 벌어지면 "지금은 틀린 말"로 본다. 넉넉히 잡는다 — 멀쩡한 기사를 지우면 안 된다. */
+const MAX_DIVERGENCE = 0.08;
+
+export type Contradiction = { asset: string; claimed: number; live: number; gap: number };
+
+/**
+ * 헤드라인이 주장하는 가격 수준이 지금 값과 크게 어긋나는가.
+ *
+ * @param live 자산키 → 현재가. 우리가 화면에 띄우고 있는 값 그대로여야 한다.
+ * @returns 모순이면 상세, 아니면 null (판정 불가도 null — 모르면 주장하지 않는다)
+ */
+export function contradictsLive(
+  headline: string, live: Map<string, number>
+): Contradiction | null {
+  const s = String(headline || "");
+  if (FORWARD.test(s)) return null;              // 전망·가정문은 반증 대상이 아니다
+
+  const hit = ASSET_KEYS.find(([re]) => re.test(s));
+  if (!hit) return null;                          // 우리가 값을 모르는 자산
+  const now = live.get(hit[1]);
+  if (!Number.isFinite(now) || !now) return null;
+
+  const m = s.match(LEVEL_CLAIM);
+  if (!m) return null;
+  const claimed = Number(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(claimed) || claimed <= 0) return null;
+
+  const gap = Math.abs(claimed - now) / claimed;
+  return gap > MAX_DIVERGENCE
+    ? { asset: hit[1], claimed, live: now, gap: Math.round(gap * 1000) / 10 }
+    : null;
+}

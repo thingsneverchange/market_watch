@@ -4,7 +4,9 @@ import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
-import { isFragment } from "$lib/server/headline";
+import { isFragment, contradictsLive } from "$lib/server/headline";
+import { getFutures } from "$lib/server/finviz";
+import { getBtc } from "$lib/server/coingecko";
 import { recordStory, previousStories } from "$lib/server/storylog";
 
 // 이 종목들의 실적은 "시장 전체가 보는 사건"이다 — 발표되면 기존 판단이 낡는다 (INTC 등 대형주 포함)
@@ -126,7 +128,18 @@ const THEME_NOTE: Record<string, string> = {
 };
 
 export const GET: RequestHandler = async () => {
-  const [news, feed, earn] = await Promise.all([getMarketNews(24), getFeed(), getEarnings(3)]);
+  // ★ 시세도 같이 받는다 — 헤드라인이 우리 화면의 값과 모순되는지 반증하기 위해서다.
+  //   Finviz 는 49개 선물을 **한 번의 요청**으로 주고 /api/boards 가 이미 캐시를 데워 놨다.
+  const [news, feed, earn, fut, btc] = await Promise.all([
+    getMarketNews(24), getFeed(), getEarnings(3), getFutures(), getBtc()
+  ]);
+  // 화면에 실제로 띄우는 값과 **같은 출처**를 쓴다. 다른 값으로 반증하면 그 자체가 사고다.
+  const livePx = new Map<string, number>();
+  for (const k of ["OIL", "GOLD", "NQ", "ES", "YM", "VIX"]) {
+    const f = fut.get(k === "OIL" ? "CL" : k === "GOLD" ? "GC" : k === "VIX" ? "VX" : k);
+    if (f?.price) livePx.set(k, f.price);
+  }
+  if (btc?.price) livePx.set("BTC", btc.price);
   const nowSec = Date.now() / 1000;
 
   // 예전에는 level 내림차순으로만 정렬해서 "LIVE HEADLINES" 상단에
@@ -141,7 +154,23 @@ export const GET: RequestHandler = async () => {
   //   Finnhub 의 general 피드는 한 사건을 매체 수만큼 준다. 전부 유효한 기사라
   //   기존 필터(level/matched)는 하나도 못 걸렀고, 화면엔 같은 뉴스가 연달아 세 줄 떴다.
   //   정렬 **뒤에** 거르므로, 남는 건 그중 점수가 가장 높은 대표 기사다.
-  const ranked = dropNearDuplicates(sorted, (n) => n.title);
+  const deduped = dropNearDuplicates(sorted, (n) => n.title);
+
+  // ★ 우리 화면의 시세와 **정면으로 어긋나는** 기사를 뺀다.
+  //   실측 사고 — 같은 화면에 이 둘이 동시에 떠 있었다:
+  //     헤드라인   "Oil near $100 puts fed and peers in interest-rate spotlight" (27시간 전, 5★)
+  //     시세 스트립  OIL  84.32  −5.63%
+  //   기사가 나온 시점엔 맞는 말이었다. 지금은 아니고, 시청자는 둘을 동시에 본다.
+  //   나이로 거르는 것과 다르다 — 27시간 기사도 여전히 유효할 수 있고, 3시간 기사가
+  //   급변한 시세에 무효화될 수도 있다. 기준은 시간이 아니라 **반증 가능성**이다.
+  const ranked = deduped.filter((n) => {
+    const bad = contradictsLive(n.title, livePx);
+    if (bad) {
+      console.warn(`[digest] 시세와 모순돼 제외: "${n.title.slice(0, 60)}" ` +
+        `(${bad.asset} 주장 ${bad.claimed} vs 현재 ${bad.live}, 괴리 ${bad.gap}%)`);
+    }
+    return !bad;
+  });
 
   // ★ TOP STORY 도 헤드라인 목록과 **같은 관련성 기준**을 통과한 것 중에서 고른다.
   //   예전엔 ranked[0] 을 그대로 썼는데, decay 는 신선도를 크게 쳐서 방금 올라온
@@ -282,7 +311,10 @@ export const GET: RequestHandler = async () => {
   //   관련 기사가 3건뿐이면 3건만 보여준다. 채우는 것보다 안 틀리는 게 낫다.
   //   (signal 이 아예 비었을 때만 최후로 pool 을 쓴다 — 화면이 통째로 비는 건 막는다)
   const list = (signal.length ? signal : pool)
-    .slice(0, brief && brief.length ? 5 : 7)
+    // ★ 좌측 컬럼은 1080p 고정이라 자리가 유한하다. TODAY 브리핑이 뜨면 패널이 하나 늘어
+    //   전체가 넘치고 **아래 패널이 화면 밖으로 잘렸다**(실측 199px 초과).
+    //   잘린 패널은 없는 것만 못하다 → 브리핑이 있을 땐 헤드라인을 줄여 자리를 낸다.
+    .slice(0, brief && brief.length ? 4 : 7)
     .map((n) => ({ ...n, topic: newsTopic(n.title, n.ticker), short: shortHeadline(n.title) }));
 
   // ── 지배 주제 집계 ────────────────────────────────────
