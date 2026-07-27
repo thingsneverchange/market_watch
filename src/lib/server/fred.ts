@@ -163,6 +163,14 @@ let relCache: { at: number; data: MacroRelease[] } | null = null;
  * 주요 지표의 **다음 발표일**.
  * FRED 의 releases/dates 는 노이즈가 많아서(Coinbase·Dow Jones 등 일일 갱신물)
  * 우리가 쓰는 릴리즈 id 로만 좁힌다.
+ *
+ * ★ 일간·주간 시리즈는 **여기 넣지 않는다.**
+ *   실측 사고: "Fed Funds Rate 07-27" 이 UPCOMING 에 5★로 떴다. 시청자는 당연히
+ *   "오늘 연준 결정"으로 읽지만, releaseId 18 은 "H.15 Selected Interest Rates" —
+ *   매일 나오는 금리 통계다(DFF 주기 = Daily). 실제 FOMC 결정은 7/29 였다.
+ *   매일 발표되는 통계에 '다음 발표일'은 이벤트가 아니다. 스펙에 하드코딩하지 않고
+ *   **시리즈 주기로 판정**한다 — 나중에 지표를 추가해도 같은 실수가 반복되지 않는다.
+ *   (FOMC 일정을 주는 무료 소스가 없으므로 없는 걸 지어내지 않고 그냥 뺀다)
  */
 export async function getMacroReleases(days = 14): Promise<MacroRelease[]> {
   const now = Date.now();
@@ -176,6 +184,14 @@ export async function getMacroReleases(days = 14): Promise<MacroRelease[]> {
   for (const s of FRED_SPECS) {
     if (seen.has(s.releaseId)) continue;   // 고용/실업률처럼 같은 릴리즈를 공유한다
     seen.add(s.releaseId);
+
+    // 주기가 일간·주간이면 '예정 발표'라는 개념이 성립하지 않는다 → 일정에서 제외
+    const meta = await fred(`/series?series_id=${s.series}`);
+    const freq = String(meta?.seriess?.[0]?.frequency_short ?? "M").toUpperCase();
+    if (freq === "D" || freq === "W") {
+      console.warn(`[fred] ${s.label}(${s.series}) 은 ${freq} 주기 — 일정 목록에서 제외`);
+      continue;
+    }
     // ★ include_release_dates_with_no_data + realtime 범위를 **미래로** 열어야
     //   '예정' 발표일이 나온다. 이걸 빼면 과거 발표일만 돌아와 목록이 빈다(실측).
     const j = await fred(

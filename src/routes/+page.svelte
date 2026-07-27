@@ -244,6 +244,19 @@
     .filter(Boolean)
     .join(" · ");
 
+  /**
+   * 정지된 값 옆에 붙일 **마지막 거래일** 표시 ("FRI" 등).
+   *  헤더 폭이 빠듯해서 "PREV CLOSE" 같은 긴 문구는 못 넣는다. 요일 세 글자면
+   *  "이건 지금 값이 아니다"가 전달되고, 얼마나 묵었는지도 같이 읽힌다.
+   *  기준은 dataAsOf(소스가 준 마지막 체결 시각)다 — 내 시계가 아니다.
+   */
+  $: lastSessionTag = (() => {
+    if (dataAsOf == null) return "PREV";
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York", weekday: "short"
+    }).format(new Date(dataAsOf)).toUpperCase();
+  })();
+
   /** 막대 길이 = 목록 안 1위 대비 관심도 비율. 절대 점수가 아니라 서열을 보여 준다 */
   function focusWidth(s: number): number {
     const max = Math.max(...impact.names.map((m: any) => m.score ?? 0), 0.001);
@@ -584,13 +597,18 @@
         <span class="sesh-k">{SESSION_LABEL[marketSession] ?? marketSession}</span>
         <span class="sesh-s">{showingFutures ? "futures" : "cash"}</span>
       </div>
+      <!-- ★ 이 한 줄에는 세션 시계가 다른 값들이 섞여 있다 (선물 / 미국 ETF / 암호화폐).
+           실측 사고: 월요일 새벽에 "NASDAQ FUT +1.49%" 옆에 "SOXX −4.40%" 가 나란히 떴는데
+           앞은 실시간, 뒤는 **금요일 종가(47시간 전)** 였다. 화면이 구분을 안 하니
+           둘 다 지금 값으로 읽힌다. 자기 시장이 닫힌 값은 흐리게 + 마지막 거래일을 붙인다. -->
       {#each headerLabels as k}
         {@const t = boards.top.find((x) => x.k === k)}
         <div class="idx">
-          <span class="k">{k}</span>
+          <span class="k" class:closed={t && !t.live}>{k}</span>
           {#if t}
-            <span class="v" class:u={t.pct >= 0} class:d={t.pct < 0}>
-              {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%
+            <span class="v" class:u={t.pct >= 0} class:d={t.pct < 0} class:closed={!t.live}
+                  title={t.live ? "" : "Market closed — last session's close"}>
+              {t.pct > 0 ? "+" : ""}{Number(t.pct).toFixed(2)}%{#if !t.live}<span class="stale-mark">·{lastSessionTag}</span>{/if}
             </span>
           {:else}
             <span class="v miss" title="No quote">—</span>
@@ -1161,6 +1179,12 @@
   .upd.prev { color: #9aa3ad; background: #12151b; border-color: #23272f; }
   .upd.prev .upd-dot { background: #6b7280; }
   .idx .v.miss { color: #6b7280; }
+  /* ★ 자기 시장이 닫힌 값 — 살아 있는 값과 같은 밝기로 두면 지금 시세로 읽힌다.
+       색(빨강/초록)은 유지해 방향은 계속 보이게 하고, 밝기만 낮춘다. */
+  .idx .v.closed { opacity: 0.45; }
+  .idx .k.closed { opacity: 0.55; }
+  .stale-mark { margin-left: 3px; font-size: 9px; font-weight: 800; letter-spacing: 0.04em;
+    color: #6b7280; vertical-align: 1px; }
 
   /* body grid: 뉴스 | 차트(주인공) | 워치리스트 */
   .grid { flex: 1; display: grid; grid-template-columns: 440px 1fr 380px; gap: 14px; padding: 14px; overflow: hidden; }
@@ -1184,7 +1208,11 @@
     font-size: 16px; font-weight: 800; }
   .dm-age { color: #c7cdd6; }
   .dm-src { color: #8a919b; font-weight: 700; }
-  .driver-txt { padding: 4px 18px 20px; font-size: 27px; font-weight: 800; line-height: 1.2; }
+  /* ★ 3줄에서 끊는다. 서버가 더 이상 길이로 문장을 자르지 않으므로(자르다 뜻이
+       바뀌는 사고가 반복됐다) 길이 제어는 전적으로 여기가 맡는다. */
+  .driver-txt { padding: 4px 18px 20px; font-size: 27px; font-weight: 800; line-height: 1.2;
+    display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden; }
   .drv-src { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.04em;
     background: #12181f; border: 1px solid #1c2430; padding: 1px 6px; border-radius: 4px; }
   .drv-age { margin-left: auto; font-size: 11px; font-weight: 700; color: #6b7280; letter-spacing: 0; }

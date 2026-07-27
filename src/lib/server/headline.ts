@@ -59,3 +59,47 @@ export function isFragment(text: string): boolean {
 
   return false;
 }
+
+// ============================================================
+//  절단이 **뜻을 바꾸는지** 검사한다
+//
+//  근본 원인 정리 — 지금까지 헤드라인 사고 7건이 전부 같은 실수였다:
+//    "문장을 잘라내고, 잘린 결과를 원래 주장인 것처럼 방송했다."
+//  그때마다 패턴 규칙을 하나 덧붙였고(클릭유도 꼬리 → 종속절 → 전치사 → 숫자),
+//  새 문장이 오면 또 뚫렸다. 규칙을 더 쌓는 건 답이 아니다.
+//
+//  기준을 뒤집는다: 자르는 게 기본이 아니라, **지워도 주장이 안 바뀌는 것만** 자른다.
+//  아래 표현이 잘려나가는 쪽에 있으면 절단을 거부한다 —
+//  이들은 전부 주절의 주장을 **제한**하는 말이라, 지우면 더 센 주장이 된다.
+//
+//  실측 사고:
+//    "Iran says it will halt strikes as long as US bombing pause holds"
+//      → "Iran says it will halt strikes"        무조건 중단으로 읽힌다.
+//        정작 외신 논조는 "tactical rather than genuine" 이고, 조건부라는 게 뉴스의 핵심이었다.
+//    "Britain would be target …, Iran's Revolutionary Guards say"
+//      → "Britain would be target …"             혁명수비대의 주장이 사실 진술로 바뀐다.
+// ============================================================
+const ESSENTIAL = new RegExp([
+  // 조건 — 지우면 무조건 진술이 된다
+  "as long as", "so long as", "only if", "unless", "provided", "pending",
+  "subject to", "contingent", "\\bif\\b", "in case",
+  // 부정·반박
+  "\\bnot\\b", "\\bno\\b", "never", "denie[sd]", "deny", "reject(?:s|ed)?",
+  "declin(?:e|es|ed)", "dismiss(?:es|ed)?", "without",
+  // 완화·추정 — 확정처럼 읽히면 안 된다
+  "reportedly", "allegedly", "\\bmay\\b", "\\bmight\\b", "\\bcould\\b",
+  "expected to", "\\bset to\\b", "likely", "unlikely", "\\bif so\\b",
+  // 귀속 — 누구의 주장인가
+  "\\bsays?\\b", "\\bsaid\\b", "according to", "warn(?:s|ed)?",
+  "claim(?:s|ed)?", "\\btold\\b", "sources? say"
+].join("|"), "i");
+
+/**
+ * `removed` 를 지워도 `kept` 가 원문과 같은 주장인가.
+ *
+ * false 면 호출부는 **절단을 포기하고 원문을 쓴다.** 길어서 두 줄이 되는 것보다
+ * 조건이 사라져 더 센 주장이 되는 게 훨씬 나쁘다 — 후자는 오보다.
+ */
+export function safeToDrop(removed: string): boolean {
+  return !ESSENTIAL.test(String(removed || ""));
+}

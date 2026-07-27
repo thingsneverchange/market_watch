@@ -9,7 +9,7 @@
 //       그래서 응답의 t(마지막 체결 시각)를 asOf 로 실어 보내 화면이 나이를 표시하게 한다.
 // ============================================================
 import { FINNHUB_API_KEY } from "$env/static/private";
-import { isFragment } from "./headline";
+import { isFragment, safeToDrop } from "./headline";
 
 const BASE = "https://finnhub.io/api/v1";
 
@@ -589,55 +589,60 @@ export function newsThemes(headline: string, ticker?: string): string[] {
 }
 
 /**
- * 헤드라인을 **핵심 한 구절**로 압축한다. 방송 글랜스는 문장을 정독하는 게 아니라 스캔이다.
- *  · 끝의 출처(" - Reuters" 등)는 이미 따로 표기 → 제거
- *  · 첫 종속절 경계(콤마 / — / as·after·amid·while·despite·following …)에서 컷 → 핵심 사실만
- *  · "…" 를 쓰지 않는다 (단어 경계에서 깔끔히 끝냄)
+ * 방송용 헤드라인.
+ *
+ * ★ 설계 원칙이 뒤집혔다 (근본 원인 수정).
+ *   예전 판은 "짧게 만드는 것"이 목적이라 **일단 자르고** 예외를 규칙으로 덧붙였다.
+ *   그 방식으로 사고가 7건 났고, 전부 같은 종류였다 —
+ *   *문장을 잘라내고, 잘린 결과를 원래 주장인 것처럼 방송했다.*
+ *     · 클릭유도 꼬리, · 종속절만 남김, · 전치사로 끝남, · 숫자 반토막,
+ *     · 조건절 삭제("as long as…"), · 귀속 삭제("…Guards say")
+ *   새 문장 패턴이 올 때마다 또 뚫렸다. 규칙을 더 쌓는 건 답이 아니었다.
+ *
+ *   그리고 애초에 **자를 이유가 없었다**: 화면(.n-tit)은 이미 line-clamp 로 두 줄에서
+ *   끊는다. 길이는 레이아웃이 이미 풀고 있던 문제였고, 서버의 60자 절단은
+ *   순수하게 사고만 만들어 냈다.
+ *
+ *   이제 하는 일은 셋뿐이고, 전부 **지워도 주장이 안 바뀌는 것**이다:
+ *     1) 출처 접미사 (" - Reuters")   — 화면에 따로 표기된다
+ *     2) 문장 끝 클릭유도 꼬리         — 마침표 뒤라 원문 주장 밖이다
+ *     3) 부수 종속절                   — 단, safeToDrop() 을 통과할 때만
+ *   길이 때문에 자르는 일은 하지 않는다.
  */
 export function shortHeadline(title: string): string {
   let s = (title || "").trim();
-  // 출처 접미사 제거: " - Reuters" / " | CNBC" / " – Bloomberg"
+  // 1) 출처 접미사 제거: " - Reuters" / " | CNBC" / " – Bloomberg"
   s = s.replace(/\s*[-–—|]\s*[A-Z][A-Za-z.&' ]{1,24}$/, "").trim();
-  // ★ 문장 뒤에 붙는 유도 문구를 통째로 버린다.
+  // 2) 문장 뒤에 붙는 유도 문구를 통째로 버린다 (마침표 뒤 = 원문 주장의 바깥).
   //   "…test a market on edge next week. Here's what's ahead" → 앞 문장만 남긴다.
-  //   기사 제목은 클릭을 유도하려고 쓰인 것이라 그대로 두면 방송에 정보가 아니라
-  //   광고 문구가 나간다.
   s = s.replace(/[.!?]\s+(?:here'?s|what to|things to|a look at)\b.*$/i, "").trim();
-  // 축약이 실패했을 때 돌아갈 원문 (출처 접미사만 떼어낸 상태)
+  // 축약이 위험하다고 판단되면 돌아갈 원문 (출처 접미사만 떼어낸 상태)
   const full = s;
 
-  // 첫 종속절 경계에서 컷 (핵심 주절만 남긴다). 너무 앞이면(주어 잘림) 무시.
-  const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying|on)\s/i);
+  // 3) 부수 종속절 컷. 너무 앞이면(주어 잘림) 건드리지 않는다.
+  //   ※ 경계 목록에서 "on" 을 뺐다. 이건 절 경계가 아니라 거의 항상 전치사구다.
+  //     실측: "…could test a market on edge next week" → "…could test a market" (뜻이 깨진다)
+  //           "Oil falls on report China pushing…"      → "Oil falls"           (더 심하다)
+  const m = s.match(/,\s|\s[—–]\s|\s(?:as|after|amid|while|despite|following|as it|saying)\s/i);
   if (m && m.index != null && m.index > 22) {
-    // ★ 이 컷은 **주절이 앞에 온다**고 가정한다. 종속절이 먼저 오는 헤드라인엔 정반대다.
-    //   실측 사고 — 방송 최상단에 이 문장이 나갔다:
-    //     원문 "After Trump calls off bombing, Iran signals it will halt strikes as long as US does"
-    //     결과 "After Trump calls off bombing"          ← 배경만 남고 뉴스가 통째로 사라졌다
-    //   문법적으로도 미완성이고("그래서 뭐?"), 정작 시장이 볼 내용은 콤마 뒤에 있었다.
-    //   → 앞이 종속절이면 **뒤(주절)를 살린다.**
-    const lead = /^(?:after|as|amid|while|when|before|since|once|though|although|because|until|unless|despite|following|ahead of|now that|with)\b/i;
+    const head = s.slice(0, m.index).trim();
     const tail = s.slice(m.index + m[0].length).trim();
-    s = lead.test(s) && tail.length >= 20
-      ? tail.charAt(0).toUpperCase() + tail.slice(1)   // "oil gives back gains" → "Oil gives…"
-      : s.slice(0, m.index).trim();
+    // ★ 안전성 판정은 **경계어를 포함해서** 한다.
+    //   경계어를 빼고 보면 "as long as …" 가 "long as …" 로 넘어와 조건절을 못 알아본다.
+    //   실측: "Iran says it will halt strikes | as long as US bombing pause holds" 가
+    //         그대로 잘려서 무조건 중단으로 방송됐다.
+    const removed = s.slice(m.index);
+    // 종속절이 **앞**에 오는 헤드라인은 이 컷이 정반대로 동작한다.
+    //   "After Trump calls off bombing, Iran signals…" → 배경만 남고 뉴스가 사라졌다(실측).
+    const leadSub = /^(?:after|as|amid|while|when|before|since|once|though|although|because|until|unless|despite|following|ahead of|now that|with)\b/i;
+    if (leadSub.test(s) && tail.length >= 20) {
+      s = tail.charAt(0).toUpperCase() + tail.slice(1);   // 주절을 살린다
+    } else if (safeToDrop(removed)) {
+      s = head;
+    }
+    // safeToDrop 실패 → 자르지 않는다. 조건·부정·완화·귀속이 뒤에 있으면
+    // 그걸 지운 문장은 원문보다 **더 센 주장**이 된다 (실측: "Iran says it will halt strikes").
   }
-  // 그래도 길면 단어 경계로 자른다 (말줄임표 없이)
-  const MAX = 60;
-  let truncated = false;
-  if (s.length > MAX) {
-    const sp = s.lastIndexOf(" ", MAX);
-    s = s.slice(0, sp > 22 ? sp : MAX).trim();
-    truncated = true;
-  }
-  // ★ 잘린 끝에 남은 기능어를 떼어낸다.
-  //   "…halts Israeli push at" 처럼 전치사로 끝나면 문장이 허공에 뜬다(실측).
-  //   단어 경계로 자르는 것만으로는 이게 안 잡힌다 — 자른 자리가 마침 전치사 뒤였을 뿐이다.
-  s = s.replace(/\s+(?:at|in|on|of|for|to|with|from|by|and|or|the|a|an|as|its|his|her|their|that|than|into|over|under)$/i, "");
-  // ★ 잘라내면서 **숫자가 반토막 나는 건 더 나쁘다** — 문장이 어색한 게 아니라 값이 틀린다.
-  //   "surges past $30 billion" → "surges past $30" 은 300억을 30으로 읽게 만든다.
-  //   단위(billion/%/points…)가 떨어져 나간 경우이므로 숫자째 버린다.
-  //   자르지 않은 문장은 건드리지 않는다 — 원문이 숫자로 끝나는 건 정상이다.
-  if (truncated) s = s.replace(/\s+(?:to|at|past|above|below|near|by)?\s*[$€£]?[\d][\d.,]*[%]?$/i, "");
   s = s.replace(/[,\-–—:;]+$/, "").trim();
 
   // ★ 마지막 관문 — 축약 결과가 여전히 미완성이면 **축약을 포기하고 원문을 쓴다.**

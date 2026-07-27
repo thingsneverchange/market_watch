@@ -2,7 +2,7 @@ import type { RequestHandler } from "./$types";
 import { getQuotes, INDEX_TICKERS, TAPE_TICKERS, type Quote } from "$lib/server/finnhub";
 import { getFutures } from "$lib/server/finviz";
 import { getBtc } from "$lib/server/coingecko";
-import { marketState } from "$lib/market-hours";
+import { marketState, futuresSession } from "$lib/market-hours";
 
 // ============================================================
 //  헤더 스트립 + 하단 테이프
@@ -28,10 +28,17 @@ function fmt(n: number) {
   const d = Math.abs(n) >= 1000 ? 2 : Math.abs(n) >= 10 ? 2 : 4;
   return n.toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: d });
 }
-type Slot = { k: string; v: string; pct: number };
+// ★ live = 이 값이 **지금 움직이고 있는가**.
+//   헤더 한 줄에 세션 시계가 다른 소스가 섞여 있다:
+//     선물(Globex) · 미국 상장 ETF(NYSE) · 암호화폐(24/7)
+//   실측 사고: 월요일 새벽 헤더가 "NASDAQ FUT +1.49%" 와 "SOXX −4.40%" 를 나란히 띄웠다.
+//   앞은 실시간이고 뒤는 **금요일 종가(47시간 전)** 인데 화면은 아무 구분도 하지 않아,
+//   둘 다 현재값으로 읽혔다. 값마다 자기 세션을 들고 다니게 해서 화면이 구분하게 한다.
+type Slot = { k: string; v: string; pct: number; live: boolean };
 
 export const GET: RequestHandler = async () => {
   const regularOpen = marketState().open;
+  const futOpen = futuresSession().open;
 
   const ALL = [...new Set([...INDEX_TICKERS, ...TAPE_TICKERS, "SOXX"])];
   const [fin, fut, btcFallback] = await Promise.all([
@@ -40,7 +47,8 @@ export const GET: RequestHandler = async () => {
     getBtc()
   ]);
   const by = new Map(fin.map((q) => [q.ticker, q]));
-  const slot = (k: string, price: number, pct: number): Slot => ({ k, v: fmt(price), pct });
+  const slot = (k: string, price: number, pct: number, live: boolean): Slot =>
+    ({ k, v: fmt(price), pct, live });
   const F = (k: string) => fut.get(k);
 
   // ── 지수 3슬롯 ──────────────────────────────
@@ -50,7 +58,7 @@ export const GET: RequestHandler = async () => {
   if (regularOpen) {
     for (const t of ["SPY", "QQQ", "DIA"]) {
       const q = by.get(t);
-      if (q) indexSlots.push(slot(LABEL[t] ?? t, q.price, q.changePct));
+      if (q) indexSlots.push(slot(LABEL[t] ?? t, q.price, q.changePct, regularOpen));
     }
   } else {
     // 나스닥을 맨 앞에 — 이 방송이 가장 주시하는 지수다
@@ -61,9 +69,9 @@ export const GET: RequestHandler = async () => {
     ];
     for (const [fk, label, fallbackTicker] of pairs) {
       const f = F(fk);
-      if (f) { indexSlots.push(slot(label, f.price, f.changePct)); continue; }
+      if (f) { indexSlots.push(slot(label, f.price, f.changePct, futOpen)); continue; }
       const q = by.get(fallbackTicker); // 선물이 안 오면 현물(전일 종가)로라도
-      if (q) indexSlots.push(slot(LABEL[fallbackTicker] ?? fallbackTicker, q.price, q.changePct));
+      if (q) indexSlots.push(slot(LABEL[fallbackTicker] ?? fallbackTicker, q.price, q.changePct, regularOpen));
     }
   }
 
@@ -71,23 +79,23 @@ export const GET: RequestHandler = async () => {
   //  금·원유는 이제 **진짜 선물 가격**이다 (ETF 프록시 GLD/USO 가 아니라).
   const crossSlots: Slot[] = [];
   const qSOXX = by.get("SOXX");
-  if (qSOXX) crossSlots.push(slot("SOXX", qSOXX.price, qSOXX.changePct));
+  if (qSOXX) crossSlots.push(slot("SOXX", qSOXX.price, qSOXX.changePct, regularOpen));
 
-  const gc = F("GC"); if (gc) crossSlots.push(slot("GOLD", gc.price, gc.changePct));
-  const cl = F("CL"); if (cl) crossSlots.push(slot("OIL", cl.price, cl.changePct));
+  const gc = F("GC"); if (gc) crossSlots.push(slot("GOLD", gc.price, gc.changePct, futOpen));
+  const cl = F("CL"); if (cl) crossSlots.push(slot("OIL", cl.price, cl.changePct, futOpen));
 
   // ★ BTC 는 **CoinGecko 현물이 우선**이다.
   //   Finviz 의 "BTC" 는 CME 비트코인 **선물**이라 주말·야간 정비시간에 멈춘다.
   //   실측(토요일): Finviz $64,070 −0.23% 가 30초 뒤에도 완전히 동일한 반면
   //   CoinGecko 현물은 $64,364 +0.36% 로 계속 갱신됐다 — 값도 부호도 달랐다.
   //   24시간 스트림에서 "비트코인이 안 움직인다"는 건 사고다. 현물을 쓴다.
-  if (btcFallback) crossSlots.push(slot("BTC", btcFallback.price, btcFallback.changePct));
+  if (btcFallback) crossSlots.push(slot("BTC", btcFallback.price, btcFallback.changePct, true));
   else {
     const fb = F("BTC");   // 코인게코가 죽었을 때만 선물로 폴백
-    if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct));
+    if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct, futOpen));
   }
 
-  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX", vx.price, vx.changePct));
+  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX", vx.price, vx.changePct, futOpen));
 
   const top = [...indexSlots, ...crossSlots];
 
