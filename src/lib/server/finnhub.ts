@@ -9,7 +9,7 @@
 //       그래서 응답의 t(마지막 체결 시각)를 asOf 로 실어 보내 화면이 나이를 표시하게 한다.
 // ============================================================
 import { FINNHUB_API_KEY } from "$env/static/private";
-import { isFragment, safeToDrop } from "./headline";
+import { isFragment, safeToDrop, isColumnBrand } from "./headline";
 
 const BASE = "https://finnhub.io/api/v1";
 
@@ -443,6 +443,9 @@ export function scoreNews(headline: string): NewsScore {
   //   이 L2 로 내려갔는데도 matched=true 라서 TOP STORY 후보로 살아남았다.
   //   전망·잡기사는 **분류에 실패한 것으로 처리**해야 필터가 실제로 막는다.
   if (PREVIEW.test(t)) { level = Math.min(level, 2); matched = false; }
+  // 고정 칼럼(코너물)은 등급을 깎지 않는다 — 내용은 유효할 수 있다.
+  // 다만 matched 를 지워 **TOP STORY 최상단 자리에서만** 뺀다 (COLUMN 주석 참고).
+  if (isColumnBrand(headline || "")) matched = false;
 
   // 스포츠·연예·인도적 기사는 어떤 키워드가 걸렸든 L2 상한.
   // ("Spain beat Argentina to win World Cup" 이 관세 발표보다 높은 등급을 받던 문제)

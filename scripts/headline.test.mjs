@@ -29,7 +29,7 @@ const SRV = join(ROOT, "src/lib/server");
 //   예전엔 정규식으로 타입 주석을 벗겼는데, 함수를 하나 추가할 때마다 여기가 조용히
 //   깨졌다(실측: ASSET_KEYS 상수 하나 추가 → 테스트 전체가 실행 불가).
 //   **테스트 하네스가 대상 코드보다 먼저 깨지면 방어선 역할을 못 한다.**
-const { isFragment, safeToDrop, contradictsLive } =
+const { isFragment, safeToDrop, contradictsLive, isColumnBrand } =
   await import(pathToFileURL(join(SRV, "headline.ts")).href);
 
 // shortHeadline 만은 본문을 떼어 쓴다 — finnhub.ts 는 $env/static/private 를 import 해서
@@ -158,6 +158,32 @@ for (const [t, why] of [
   ["Gold climbs at 20 bps on the session", "bps 는 가격이 아니다"],
   ["Dow adds over 400 points", "points 는 가격이 아니다"]
 ]) ok(`통과(${why}): "${t.slice(0, 44)}"`, !contradictsLive(t, LIVE));
+
+// ============================================================
+//  통신사 고정 칼럼은 TOP STORY 최상단 자리를 못 받는다
+//
+//  실측 사고: 화면 최상단에 "Morning Bid: Markets dare to hope" 가 올라갔다.
+//  로이터의 매일 나가는 시황 칼럼 제목이다 — 무슨 일이 있었는지 아무것도 말하지 않고,
+//  같은 제목이 매일 새 기사로 다시 들어온다. 시청자가 알고 싶은 건 사건이지 코너 이름이 아니다.
+//  ※ 등급(level)은 깎지 않는다. 내용 자체는 유효할 수 있으므로 목록엔 남는다.
+// ============================================================
+console.log("\n=== 고정 칼럼 — TOP STORY 최상단 자격 없음 ===");
+for (const t of [
+  "Morning Bid: Markets dare to hope",            // ★ 실제 사고
+  "Take Five: Markets brace for the Fed",
+  "Instant View: Oil slumps after ceasefire",
+  "Factbox: What the Iran pause means for crude",
+  "Analysis: Why the rally may not hold",
+  "Iran strikes: live updates"
+]) ok(`코너물: "${t.slice(0, 42)}"`, isColumnBrand(t));
+
+console.log("\n=== 일반 기사 — 코너물이 아니다 ===");
+for (const t of [
+  "Oil slides 5% as Iran signals halt to attacks",
+  "Fed holds rates steady as Powell flags inflation risk",
+  "Analysts see gold at $5,000 next year",        // "Analysis:" 와 혼동하면 안 된다
+  "Morning trade volumes hit a record"            // "Morning Bid" 와 혼동하면 안 된다
+]) ok(`일반 기사: "${t.slice(0, 42)}"`, !isColumnBrand(t));
 
 console.log(`\n${fail === 0 ? "✅" : "❌"}  통과 ${pass} / 실패 ${fail}\n`);
 process.exit(fail === 0 ? 0 : 1);

@@ -195,6 +195,9 @@ export const GET: RequestHandler = async () => {
   const sup = rawAi
     ? checkSuperseded({
         generatedAt: rawAi.generatedAt,
+        // ★ 판단의 **내용**을 같이 넘긴다. 안 넘기면 무관한 실적까지 만료 사유가 되어
+        //   좋은 판단이 기사 제목으로 교체된다 (supersede.ts 주석의 실측 사고).
+        text: rawAi.payload.text,
         events: earn.map((e) => ({
           ticker: e.ticker,
           ts: earnPendingFrom(e.date, e.hour),

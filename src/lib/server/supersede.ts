@@ -15,6 +15,17 @@ export type SupersedeInput = {
   generatedAt: number;
   /** 실적 등 예정 이벤트 목록 */
   events: { ticker: string; ts: number; important: boolean }[];
+  /**
+   * 그 판단이 **무엇에 관한 것인가** (TOP STORY 문장).
+   *
+   * ★ 없으면 예전처럼 모든 실적이 모든 판단을 만료시킨다 — 그건 너무 넓다.
+   *   실측 사고: "Futures surge as US and Iran pause strikes, oil plunges 5%" 가
+   *   **PayPal 실적** 때문에 만료 처리돼, 그 자리에 로이터 데일리 칼럼 제목
+   *   "Morning Bid: Markets dare to hope" 가 올라갔다.
+   *   페이팔 실적은 미국-이란 유가 국면과 아무 상관이 없다.
+   *   좋은 판단이 무관한 사건에 밀려 더 나쁜 것으로 교체된 셈이다.
+   */
+  text?: string;
   now?: number;
 };
 
@@ -25,14 +36,40 @@ export type SupersedeResult = {
 };
 
 /**
+ * 그 판단이 **실적 이야기인가**.
+ *  실적 발표가 판단을 낡게 만드는 건 그 판단이 실적을 다룰 때뿐이다.
+ *  지정학·유가·연준 이야기는 어느 회사가 실적을 냈든 여전히 유효하다.
+ */
+const EARNINGS_TOPIC =
+  /\b(earnings|results|guidance|profit|revenue|eps|quarter\w*|beat|miss|report(?:s|ed|ing)?)\b/i;
+
+/**
  * 판단 생성 시각과 지금 사이에 **중요 이벤트가 발생했으면** 그 판단은 낡은 것으로 본다.
  * 몇 분 전에 만들어졌더라도 마찬가지다 — 세상이 그 사이에 바뀌었기 때문이다.
+ *
+ * ★ 단, **관련 있는 사건일 때만**이다.
+ *   판단이 그 종목을 직접 언급했거나, 실적 자체를 다루고 있을 때만 만료시킨다.
+ *   무관한 실적까지 만료 사유로 삼으면, 좋은 판단이 밀려나고 그 자리에
+ *   기사 제목이 올라간다 — 실측된 실패다(위 SupersedeInput.text 주석 참고).
  */
-export function checkSuperseded({ generatedAt, events, now = Date.now() }: SupersedeInput): SupersedeResult {
+export function checkSuperseded(
+  { generatedAt, events, text = "", now = Date.now() }: SupersedeInput
+): SupersedeResult {
   if (!Number.isFinite(generatedAt) || generatedAt <= 0) return { superseded: false, by: [] };
 
+  // text 가 없으면(호출부가 안 넘기면) 예전처럼 전부 만료 — 안전한 기본값
+  const aboutEarnings = !text || EARNINGS_TOPIC.test(text);
+
   const by = events
-    .filter((e) => e.important && Number.isFinite(e.ts) && e.ts > generatedAt && e.ts <= now)
+    .filter((e) => {
+      if (!e.important || !Number.isFinite(e.ts)) return false;
+      if (!(e.ts > generatedAt && e.ts <= now)) return false;
+      // 판단이 그 종목을 직접 말하고 있으면 무조건 만료 (내용이 바로 그것이다)
+      const named = text
+        ? new RegExp(`(?<![\\w-])${e.ticker}(?![\\w-])`, "i").test(text)
+        : false;
+      return named || aboutEarnings;
+    })
     .map((e) => e.ticker);
 
   // 중복 제거하고 최대 4개까지만 (화면 표기용)

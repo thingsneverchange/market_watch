@@ -187,3 +187,24 @@ export function contradictsLive(
     ? { asset: hit[1], claimed, live: now, gap: Math.round(gap * 1000) / 10 }
     : null;
 }
+
+// ============================================================
+//  통신사·매체의 **고정 칼럼 브랜드** 판정
+//
+//  실측 사고: TOP STORY 최상단에 "Morning Bid: Markets dare to hope" 가 올라갔다.
+//   로이터가 매일 내보내는 시황 칼럼의 코너 이름이다. 무슨 일이 있었는지 아무것도
+//   말하지 않고("시장이 희망을 품는다"는 어느 날 아침에나 쓸 수 있다),
+//   같은 제목이 매일 새 기사로 다시 들어온다.
+//   시청자가 TOP STORY 에서 알고 싶은 건 **지금 시장을 움직이는 사건**이지
+//   그 사건을 다룬 칼럼의 이름이 아니다.
+//
+//  ※ 내용 자체는 유효할 수 있으므로 목록에서 지우지는 않는다.
+//    **최상단 자리만** 안 준다 (호출부가 matched 를 지운다).
+// ============================================================
+const COLUMN =
+  /^\s*(?:morning bid|market wrap|markets wrap|daily briefing|take five|breakingviews|instant view|factbox|explainer|analysis|column|live updates?|market talk|the close|opening bell|closing bell|five things|5 things|today'?s markets?)\b|:\s*(?:live updates?|analysis|explainer|factbox)\b/i;
+
+/** 기사가 아니라 **코너 이름**인가 (TOP STORY 최상단 자격 없음) */
+export function isColumnBrand(headline: string): boolean {
+  return COLUMN.test(String(headline || ""));
+}
