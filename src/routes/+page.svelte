@@ -34,6 +34,15 @@
   $: headerLabels = [...indexLabels, ...crossLabels];
 
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
+  // 최근 구간 테이프 읽기 (/api/boards tape30). 전부 서버에서 계산해 평평한 객체로 온다 —
+  // 템플릿에서 {@const} 나 함수 호출이 필요 없어 Svelte 4 의 추적 한계에 걸릴 여지가 없다.
+  let tape30: {
+    tier: "moving" | "quiet" | "closed" | "warming" | "nodata";
+    reason: string; windowMin: number | null;
+    rows: { name: string; pct: number }[];
+    subject: string | null; subjectPct: number | null;
+    shape: string | null; giveback: string | null;
+  } | null = null;
   let digest = {
     driver: { text: "—", sentiment: "neu", source: "", sources: [] as any[], url: "", why: "", confidence: "", epoch: 0, origin: "none", noData: true },
     news: [] as any[]
@@ -432,6 +441,7 @@
       if (Array.isArray(b.indexLabels) && b.indexLabels.length) indexLabels = b.indexLabels;
       if (Array.isArray(b.crossLabels) && b.crossLabels.length) crossLabels = b.crossLabels;
       if (Array.isArray(b.minis)) minis = b.minis;
+      tape30 = b.tape30 ?? null;
       showingFutures = !!b.futures;
       // ★ 신선도는 소스가 준 체결 시각(dataAsOf)이다.
       //   예전 코드는 "내가 fetch 한 시각"을 찍어서, Finnhub 가 429 여도 옛 캐시만 있으면
@@ -904,6 +914,47 @@
 
     <!-- CENTER: 1분봉 차트 (컨트롤러 조종) -->
     <section class="col center">
+      <!-- ★ TAPE READ — "지금 이 테이프가 무엇을 하고 있나".
+           화면의 다른 모든 숫자는 **당일 누적**이라, 나스닥이 장중에 밀려도
+           헤더는 초록색 +0.23% 를 띄운다(실측). 그 자리를 만든 것이다.
+
+           조용해도 사라지지 않는다 — 사라지면 "지난 구간에 대해 화면이 침묵하는 상태"가
+           다시 생긴다. 그게 원래 문제였다. 조용하면 숫자만 보여 주고 QUIET 이라고 쓴다.
+
+           좌우 컬럼이 아니라 여기 두는 이유: 우측은 이미 넘침이 실측돼 두 번 손봤고(1014·1072행),
+           중앙은 바로 아래에 같은 세 지수의 미니차트가 있어 눈이 "최근 30분 → 25시간 곡선"으로 이어진다. -->
+      {#if tape30}
+        <div class="tape30 t-{tape30.tier}">
+          <div class="t30-lab">
+            <span class="t30-k">LAST {tape30.windowMin ?? "—"}M</span>
+            <span class="t30-s">FUT</span>
+          </div>
+          {#if tape30.tier === "moving"}
+            <span class="t30-arrow" class:u={(tape30.subjectPct ?? 0) >= 0} class:d={(tape30.subjectPct ?? 0) < 0}>
+              {(tape30.subjectPct ?? 0) >= 0 ? "▲" : "▼"}
+            </span>
+            <span class="t30-sub">{tape30.subject}</span>
+            <span class="t30-pct" class:u={(tape30.subjectPct ?? 0) >= 0} class:d={(tape30.subjectPct ?? 0) < 0}>
+              {(tape30.subjectPct ?? 0) >= 0 ? "+" : "−"}{Math.abs(tape30.subjectPct ?? 0).toFixed(2)}%
+            </span>
+            {#if tape30.shape}<span class="t30-shape">{tape30.shape}</span>{/if}
+            {#if tape30.giveback}<span class="t30-give">{tape30.giveback}</span>{/if}
+          {:else if tape30.tier === "quiet"}
+            {#each tape30.rows as r}
+              <span class="t30-row">
+                <span class="t30-rn">{r.name}</span>
+                <span class="t30-rp" class:u={r.pct >= 0} class:d={r.pct < 0}
+                  >{r.pct >= 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(2)}%</span>
+              </span>
+            {/each}
+            <span class="t30-quiet">QUIET</span>
+            {#if tape30.giveback}<span class="t30-give">{tape30.giveback}</span>{/if}
+          {:else}
+            <span class="t30-off">—</span>
+            <span class="t30-reason">{tape30.reason}</span>
+          {/if}
+        </div>
+      {/if}
       <!-- 1~4개 차트. 슬롯 수가 곧 배치 (1=전체, 2=좌우, 3=1+2, 4=2x2) -->
       <div class="chart-grid" data-n={slots.length}>
         {#each slots as sl (sl.key)}
@@ -1564,6 +1615,41 @@
   .im-ver.unv { color: #7a6a3a; }
 
   /* 하단 슬림 스파크라인 스트립 */
+  /* ── TAPE READ ─────────────────────────────────────────
+     높이 44px 고정. 어느 상태든 같은 자리를 차지해서 눈이 매번 같은 곳에 떨어진다.
+     ※ 맥동(animation)은 쓰지 않는다 — 이 저장소에서 맥동은 진짜 라이브인 것
+       (.badge.active .dot 등)에만 쓰는 표기이고, 이 값은 5분봉이라 틱이 아니다. */
+  .tape30 { height: 44px; flex-shrink: 0; display: flex; align-items: center; gap: 0 12px;
+    padding: 0 14px; background: #101318; border: 1px solid #1d2128; border-radius: 8px;
+    font-variant-numeric: tabular-nums; overflow: hidden; white-space: nowrap; }
+  .tape30 .t30-lab { display: flex; flex-direction: column; line-height: 1.15;
+    width: 92px; flex-shrink: 0; }
+  .t30-k { font-size: 11px; font-weight: 800; letter-spacing: 0.07em; color: #8a919b; }
+  .t30-s { font-size: 9px; font-weight: 700; letter-spacing: 0.09em; color: #5b6472; }
+
+  .t30-arrow { font-size: 15px; }
+  .t30-sub { font-size: 18px; font-weight: 800; letter-spacing: 0.03em; color: #dfe4ea; }
+  .t30-pct { font-size: 22px; font-weight: 800; }
+  .t30-shape { font-size: 12px; font-weight: 800; letter-spacing: 0.04em; color: #9aa3ad; }
+  .t30-give { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; color: #f5a623;
+    border: 1px solid #4a3a12; background: #1c1708; padding: 2px 7px; border-radius: 4px; }
+
+  .t30-row { display: inline-flex; align-items: baseline; gap: 5px; }
+  .t30-rn { font-size: 11px; font-weight: 700; letter-spacing: 0.05em; color: #7a828d; }
+  .t30-rp { font-size: 15px; font-weight: 800; }
+  .t30-quiet { font-size: 11px; font-weight: 800; letter-spacing: 0.09em; color: #5b6472;
+    margin-left: auto; }
+
+  .t30-off { font-size: 18px; color: #4b5563; }
+  .t30-reason { font-size: 12px; font-weight: 700; letter-spacing: 0.05em; color: #6b7280; }
+
+  /* 움직일 때만 좌측 강조선. 색은 화면의 기존 상승/하락 색을 그대로 쓴다 */
+  .tape30.t-moving { border-color: #2a2f38; box-shadow: inset 3px 0 0 0 #39d98a; }
+  .tape30.t-moving:has(.t30-pct.d) { box-shadow: inset 3px 0 0 0 #ff5c5c; }
+  .tape30 .u { color: #39d98a; }
+  .tape30 .d { color: #ff5c5c; }
+  .tape30.t-closed, .tape30.t-nodata, .tape30.t-warming { opacity: 0.72; }
+
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
   .ss-card { background: #0d0f13; border: 1px solid #191c22; border-radius: 10px; padding: 10px 12px 8px;
     display: flex; flex-direction: column; gap: 6px; overflow: hidden; }

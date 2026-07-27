@@ -118,9 +118,14 @@ export const GET: RequestHandler = async () => {
         if (now - (lastFired.get(m.key) ?? 0) < ALERT_COOLDOWN_MS) continue;
         lastFired.set(m.key, now);
         const dir = m.recentPct >= 0 ? "+" : "−";
+        // ★ "IN 30 MIN" 을 하드코딩하면 안 된다. Finviz 봉 간격이 종목마다 다르다 —
+        //   실측: BTC 31분 · RB 33분 · HO 34분 · VX/NKD 35분 (NQ·ES 등은 정확히 30분).
+        //   실제로 "Bitcoin −0.91% IN 30 MIN" 이 나갔는데 그 구간은 31분이었다.
+        //   구간을 모르면 아예 말하지 않는다 — 틀린 숫자보다 없는 게 낫다.
+        const win = m.windowMin ? ` IN ${m.windowMin} MIN` : "";
         items.unshift({
           id: `mv:${m.key}:${Math.floor(now / ALERT_COOLDOWN_MS)}`,
-          title: `${m.label} ${dir}${Math.abs(m.recentPct).toFixed(2)}% IN 30 MIN · ${m.z}× NORMAL`,
+          title: `${m.label} ${dir}${Math.abs(m.recentPct).toFixed(2)}%${win} · ${m.z}× NORMAL`,
           source: "Market data",
           url: "",
           ticker: "",

@@ -1,6 +1,7 @@
 import type { RequestHandler } from "./$types";
 import { getQuotes, INDEX_TICKERS, TAPE_TICKERS, type Quote } from "$lib/server/finnhub";
 import { getFutures } from "$lib/server/finviz";
+import { getTapeRead } from "$lib/server/tape";
 import { getBtc } from "$lib/server/coingecko";
 import { marketState, futuresSession } from "$lib/market-hours";
 
@@ -152,6 +153,9 @@ export const GET: RequestHandler = async () => {
   return new Response(
     JSON.stringify({
       top, tape: tapeRows, dataAsOf, missing,
+      // 최근 구간 테이프 읽기. 이름이 tape30 인 건 `tape` 를 하단 티커가 이미 쓰기 때문이다.
+      // 이미 받아 둔 fut 를 넘기므로 추가 요청이 없다.
+      tape30: getTapeRead(fut),
       minis,
       indexLabels: indexSlots.map((x) => x.k),
       crossLabels: crossSlots.map((x) => x.k),

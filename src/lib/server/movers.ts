@@ -21,9 +21,20 @@ export type Mover = {
   label: string;
   price: number;
   changePct: number;      // 당일 등락률
-  recentPct: number;      // 최근 K봉(기본 30분) 변동
+  recentPct: number;      // 최근 K봉 변동
   z: number;              // 이례성 점수 (평소 대비 몇 배)
   dir: 1 | -1;
+  /**
+   * 최근 K봉이 **실제로** 덮는 분. null = 알 수 없음.
+   *
+   * ★ 예전엔 이 값을 K×5=30 으로 가정하고 화면에 "IN 30 MIN" 이라고 찍었다.
+   *   그런데 Finviz 의 5분봉은 **종목마다 간격이 다르다**. 실측(2026-07-27 10:5x ET):
+   *     NQ ES YM ER2 CL NG GC SI HG PL ZN ZB ZF DX QA → 5.00분/봉 (30분 맞음)
+   *     BTC 5.22 → 31분 · RB 5.54 → 33분 · HO 5.71 → 34분 · VX 5.90 → 35분 · NKD 5.90 → 35분
+   *   실제로 "Bitcoin −0.91% IN 30 MIN" 이 방송됐는데 그 구간은 31분이었다.
+   *   작은 차이지만 화면이 틀린 숫자를 말한 건 맞다 → 종목별로 실제 구간을 계산해 싣는다.
+   */
+  windowMin: number | null;
 };
 
 const K = 6;              // 최근 6봉 = 30분
@@ -60,6 +71,38 @@ const WATCHED = new Set([
   // 해외 지수선물 (야간 흐름을 읽는 데 쓴다)
   "NKD", "DY", "EX"
 ]);
+
+// ★ 실측으로 확인한 것: 이 목록에 **Finviz 가 주지 않는 키**가 들어 있었다.
+//   응답 키를 전수 확인한 결과 `BZ`(브렌트)와 `ETH` 는 아예 존재하지 않는다.
+//   브렌트는 `QA` 로 온다 — 즉 에너지가 핵심인 지금 국면에서 브렌트가
+//   Auto-Sniper 와 급변 속보에서 **조용히 빠져 있었다**. 없는 키는 아무 오류도
+//   내지 않으므로 알아챌 방법이 없었다.
+for (const k of ["QA"]) WATCHED.add(k);   // 브렌트 (BZ 가 아니다)
+for (const k of ["BZ", "ETH"]) WATCHED.delete(k); // Finviz 미제공 — 목록에 남겨 두면 오해를 부른다
+
+/** 스파크라인 마크의 시각 라벨 → 자정 기준 분 */
+const CLOCK: Record<string, number> = {
+  "12AM": 0, "2AM": 120, "4AM": 240, "6AM": 360, "8AM": 480, "10AM": 600,
+  "12PM": 720, "2PM": 840, "4PM": 960, "6PM": 1080, "8PM": 1200, "10PM": 1320
+};
+
+/**
+ * 이 종목의 봉 하나가 실제 몇 분인가. 시각 마크 두 개의 간격을 봉 수로 나눈다.
+ * 마크가 부족하면 null — **5분이라고 가정하지 않는다**(그 가정이 위 버그를 만들었다).
+ */
+function minutesPerBar(marks: Record<number, string>): number | null {
+  const pts = Object.entries(marks)
+    .map(([i, l]) => ({ i: Number(i), l: String(l) }))
+    .filter((p) => Number.isInteger(p.i) && p.l in CLOCK)
+    .sort((a, b) => a.i - b.i);
+  if (pts.length < 2) return null;
+  const a = pts[pts.length - 2], b = pts[pts.length - 1];
+  const bars = b.i - a.i;
+  if (bars <= 0) return null;
+  const mins = ((CLOCK[b.l] - CLOCK[a.l]) + 1440) % 1440;
+  const mpb = mins / bars;
+  return Number.isFinite(mpb) && mpb > 0 ? mpb : null;
+}
 
 /** 표본 표준편차 */
 function stdev(xs: number[]): number {
@@ -102,7 +145,11 @@ export function score(q: FutQuote): Mover | null {
     // 표시 상한 99 — 변동성이 거의 0 이던 종목이 갑자기 움직이면 z 가 수천까지 튄다.
     // "2378x normal" 은 방송 화면에서 정보가 아니라 오류처럼 보인다.
     z: Math.min(99, Math.round(Math.abs(z) * 10) / 10),
-    dir: r >= 0 ? 1 : -1
+    dir: r >= 0 ? 1 : -1,
+    windowMin: (() => {
+      const mpb = minutesPerBar(q.marks ?? {});
+      return mpb == null ? null : Math.round(mpb * K);
+    })()
   };
 }
 
