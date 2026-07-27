@@ -166,8 +166,14 @@ export function getTapeRead(fut: Map<string, FutQuote>): TapeRead {
     // 같은 방향으로 여전히 플러스(또는 마이너스)인데 폭이 줄어든 경우만 "되돌렸다"고 말한다
     if (Math.sign(dayNow) === Math.sign(dayThen) && Math.abs(dayThen) > 0.1 && Math.abs(dayNow) < Math.abs(dayThen)) {
       const back = Math.round((1 - Math.abs(dayNow) / Math.abs(dayThen)) * 100);
+      // ★ 방향에 따라 말이 완전히 다르다.
+      //   상승분이 줄면 "되돌렸다"(GAVE BACK), 하락분이 줄면 "회복했다"(RECOVERED).
+      //   실측에서 "GAVE BACK 45% OF TODAY'S DROP" 이 나왔는데, 하락폭이 줄어든 걸
+      //   되돌렸다고 쓰면 정반대로 읽힌다.
       if (back >= 20) {
-        giveback = `GAVE BACK ${back}% OF TODAY'S ${dayThen > 0 ? "GAIN" : "DROP"}`;
+        giveback = dayThen > 0
+          ? `GAVE BACK ${back}% OF TODAY'S GAIN`
+          : `RECOVERED ${back}% OF TODAY'S DROP`;
       }
     }
   }
