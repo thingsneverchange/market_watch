@@ -10,7 +10,16 @@ import { dirname } from "node:path";
 
 /** 종류별 신선도 기준 — 이 나이를 넘으면 stale 로 표시하고, 클라이언트가 폴백한다 */
 export const KINDS = {
-  top_story: { maxAgeMs: 90 * 60_000, label: "TOP STORY" },
+  // ★ 유효기간이 **생성 주기보다 길어야** 한다.
+  //   90분이었는데 게이트의 생성 주기는 정규장 110분 / 프리·애프터 200분 / 야간 360분이다.
+  //   다음 판단이 만들어지기도 전에 만료되니, AI 판단이 없는 시간이 절반을 넘었고
+  //   그 자리를 규칙기반 폴백 — 즉 **기사 제목** — 이 채웠다.
+  //   실측: 화면 최상단에 로이터 코너명 "Morning Bid: Markets dare to hope" 가 올라갔고,
+  //   정작 정확한 AI 판단("Futures surge as US and Iran pause strikes, oil plunges 5%")은
+  //   222분 됐다는 이유로 버려져 있었다. 그 문장은 그 시점에도 여전히 사실이었다.
+  //   판단이 낡았는지는 나이만으로 정할 수 없다 → 4시간으로 늘리고,
+  //   오버레이가 **실시간 시세와 모순되는지 반증**해서 쓴다(headline.ts contradictsLive).
+  top_story: { maxAgeMs: 240 * 60_000, label: "TOP STORY" },
   key_event: { maxAgeMs: 18 * 3600_000, label: "NEXT KEY EVENT" },
   // 최근 발표된 종목의 결과(예상 상회/하회) + 시장반응(주가 %). 발표 직후엔 색인이 없어
   // 조금 시차가 있지만, 발표 뒤 몇 시간 유효하면 되므로 8시간.

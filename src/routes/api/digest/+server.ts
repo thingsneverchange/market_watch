@@ -4,7 +4,7 @@ import { getFeed, fresh } from "$lib/server/marketfeed";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
-import { isFragment, contradictsLive } from "$lib/server/headline";
+import { isFragment, contradictsLive, isColumnBrand } from "$lib/server/headline";
 import { getFutures } from "$lib/server/finviz";
 import { getBtc } from "$lib/server/coingecko";
 import { recordStory, previousStories } from "$lib/server/storylog";
@@ -182,7 +182,12 @@ export const GET: RequestHandler = async () => {
   //   헤드라인 목록은 이미 같은 기사를 걸러내고 있었다. **두 곳의 기준이 달랐던 게 문제**다.
   //   관련 기사가 하나도 없으면 억지로 채우지 않는다 (NO NEWS FEED 로 간다).
   const relevant = ranked.filter((n) => n.matched || n.level >= 3);
-  const top = relevant[0] ?? null;
+  // ★ 코너물은 **최상단 자리만** 못 준다 (목록엔 남는다 — 내용은 유효할 수 있다).
+  //   scoreNews 에서 matched 를 지우는 것만으론 부족했다. 위 필터가
+  //   `matched || level >= 3` 이라 등급으로 그냥 통과한다 —
+  //   실측: matched 를 지운 뒤에도 "Morning Bid: Markets dare to hope" 가 계속 최상단이었다.
+  //   TOP STORY 선정은 목록 필터와 **다른 질문**이므로 여기서 따로 거른다.
+  const top = relevant.find((n) => !isColumnBrand(n.title)) ?? null;
 
   // ── TOP STORY ────────────────────────────────────────
   // 1순위: Claude Code 가 만든 판단 (신선할 때만)
@@ -219,7 +224,15 @@ export const GET: RequestHandler = async () => {
   //   여기서 걸러야 하는 이유는 규칙 축약 때와 같다 — 파편은 없는 사실을
   //   주장하는 것처럼 읽힌다(→ headline.ts). 생성 경로라고 예외를 둘 근거가 없다.
   const aiFragment = !!candidate && isFragment(candidate.payload.text);
-  const ai = sup.superseded || lowConfidence || aiFragment ? undefined : candidate;
+  // ★ AI 판단도 **시세와 모순되면** 쓰지 않는다.
+  //   유효기간을 90분 → 4시간으로 늘렸기 때문에(피드서버 db.mjs 주석 참고) 나이만으로는
+  //   부족하다. 나이가 아니라 **반증 가능성**으로 판정한다 — 헤드라인에 쓰는 것과 같은 기준.
+  //   예: "oil plunges 5%" 라고 했는데 유가가 그 사이 반등했으면 그 문장은 이제 틀렸다.
+  const aiContradicts = !!candidate && !!contradictsLive(candidate.payload.text, livePx);
+  if (aiContradicts) {
+    console.warn(`[digest] AI 판단이 시세와 모순돼 보류: "${candidate!.payload.text.slice(0, 60)}"`);
+  }
+  const ai = sup.superseded || lowConfidence || aiFragment || aiContradicts ? undefined : candidate;
 
   // ★ AI 판단의 **근거 출처를 전부** 싣는다.
   //   Claude 가 웹검색으로 3개 기사를 읽고 한 문장을 만들어도 화면엔 sources[0] 한 곳만
@@ -263,6 +276,8 @@ export const GET: RequestHandler = async () => {
           ? "AI 판단이 근거 부족(low)으로 보류됨 — 최신 헤드라인으로 대체"
           : aiFragment
             ? "AI 문장이 미완성이라 보류됨 — 최신 헤드라인으로 대체"
+            : aiContradicts
+              ? "AI 판단이 현재 시세와 어긋나 보류됨 — 최신 헤드라인으로 대체"
             : "",
       confidence: "",
       epoch: top.epoch,
