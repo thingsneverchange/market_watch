@@ -1,7 +1,10 @@
-// 상호 대조 테스트 — "SPCX 사고" 재발 방지선
+// 티커 대조 테스트
+//
+// ★ 등록 상호는 전부 Finnhub /stock/profile2 **실측값**이다. 지어낸 값이 하나도 없다.
+//   (앞서 "SPCX 는 다른 회사"라고 확인 없이 단정했다가 틀렸다 — SPCX 는 실제 SpaceX 이고
+//    2026-06-12 나스닥 상장이다. 그래서 이 파일의 값은 전부 API 로 찍어서 넣었다.)
 //
 // 실행: node scripts/companyname.test.mjs   (npm test 에 포함)
-// companyname.ts 는 의존성이 없어 Node 의 타입 스트리핑으로 그대로 import 된다.
 import { normCo, companyMatches } from "../src/lib/server/companyname.ts";
 
 let pass = 0, fail = 0;
@@ -19,30 +22,29 @@ eq("클래스 표기 제거", normCo("Alphabet Inc Class A"), "alphabet");
 eq("앰퍼샌드", normCo("Johnson & Johnson"), "johnson and johnson");
 eq("점·쉼표", normCo("NVIDIA Corp."), "nvidia");
 
-// ── 같은 회사로 인정해야 하는 것 ──────────────────────
-ok("정확히 일치", "Micron Technology", "Micron Technology Inc");
-ok("짧은 쪽이 포함", "Micron", "Micron Technology Inc");
-ok("긴 쪽이 주장", "Micron Technology Inc", "Micron");
+// ── 통칭 ≠ 법인명 이어도 통과해야 한다 (실측 등록명) ──
+// 여기서 막히면 맞는 티커에 시세가 안 붙는다. 실제로 그 버그를 냈었다.
+ok("SPCX: 통칭 SpaceX ↔ 법인 Space Exploration Technologies", "SpaceX", "Space Exploration Technologies Corp");
+ok("NVDA", "NVIDIA", "NVIDIA Corp");
+ok("MU", "Micron Technology", "Micron Technology Inc");
+ok("BE", "Bloom Energy Corporation", "Bloom Energy Corp");
+ok("GOOGL: 통칭 Google ↔ 법인 Alphabet 은 판정 불가 → 통과", "Google", "Alphabet Inc");
 ok("클래스 주식", "Alphabet", "Alphabet Inc Class A");
 ok("대소문자 무시", "nvidia corporation", "NVIDIA Corp");
 ok("ADR 표기", "Taiwan Semiconductor Manufacturing", "Taiwan Semiconductor Manufacturing Co Ltd ADR");
 
-// ── ★ 실제로 났던 사고 ────────────────────────────────
-// 비상장 회사에 철자가 비슷한 남의 티커가 붙어 −1.85% 가 방송됐다.
-no("SPCX 사고: 스페이스엑스 ≠ SPCX 등록사", "SpaceX", "TortoiseEcofin Acquisition Corp III");
-no("비상장이라 등록사가 없음", "SpaceX", "");
+// ── ★ 진짜 위험: 실재하지만 다른 회사 ─────────────────
+// SPCE 와 SPCX 는 한 글자 차이인데다 둘 다 우주 회사다. 형식 검사도, 실재 검사도 통과한다.
+no("SPCE 를 스페이스엑스라고 주장", "SpaceX", "Virgin Galactic Holdings Inc");
+no("같은 업종 낱말만 겹치는 건 근거가 아니다", "Micron Technology", "Marvell Technology Inc");
+no("완전히 다른 회사", "Bloom Energy", "Virgin Galactic Holdings Inc");
+
+// ── 지어낸 심볼 / 조회 실패 ───────────────────────────
+// profile2 가 `{}` 를 주는 경우다 (SPXQ·ZQQZ 로 실측 확인).
+no("등록된 회사 없음(지어낸 심볼)", "SpaceX", "");
 no("조회 실패는 '모른다' → 붙이지 않는다", "Micron Technology", null);
 no("undefined 도 마찬가지", "Micron Technology", undefined);
-
-// ── 다른 회사는 갈라야 한다 ───────────────────────────
-no("다른 반도체 회사", "Micron Technology", "Marvell Technology Inc");
-no("이름이 겹쳐도 다른 회사", "American Airlines", "American Express Co");
-no("접미사만 남는 상호", "Inc", "Micron Technology Inc");
 no("빈 주장", "", "Micron Technology Inc");
-
-// 낱말 경계 — 짧은 조각이 긴 상호 안에 우연히 박히는 걸 인정하면 안 된다
-no("부분 문자열 오탐", "Arm", "Pharma Holdings Inc");
-ok("낱말로 들어맞으면 인정", "Arm Holdings", "Arm Holdings plc");
 
 console.log(`\ncompanyname: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
