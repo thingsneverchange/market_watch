@@ -309,6 +309,18 @@
     const tm = window.setInterval(loadMovers, 20000);
     return () => { window.clearInterval(t); window.clearInterval(tm); };
   });
+
+  // ── 탭 ────────────────────────────────────────────
+  //  섹션이 10개까지 늘어 폰에서 한참 스크롤해야 원하는 걸 찾았다.
+  //  방송 중엔 빠르게 눌러야 하므로 성격별로 나눈다.
+  const TABS = [
+    { k: "charts", icon: "📊", label: "Charts" },
+    { k: "alert",  icon: "🚨", label: "Alert" },
+    { k: "media",  icon: "🎥", label: "Media" },
+    { k: "feed",   icon: "🔄", label: "Feed" }
+  ] as const;
+  let tab: (typeof TABS)[number]["k"] = "charts";
+
 </script>
 
 <svelte:head><title>MARKETWATCH · CONTROL</title>
@@ -320,6 +332,18 @@
     {#if status}<div class="flash">{status}</div>{/if}
   </header>
 
+
+  <!-- ★ 섹션이 10개까지 늘어 폰에서 한참 스크롤해야 원하는 걸 찾았다.
+       방송 중에는 빠르게 눌러야 하므로 성격별로 나눈다. -->
+  <nav class="tabs">
+    {#each TABS as t}
+      <button class="tab" class:on={tab === t.k} on:click={() => (tab = t.k)}>
+        {t.icon}<span>{t.label}</span>
+      </button>
+    {/each}
+  </nav>
+
+  {#if tab === "charts"}
   <section>
     <h2>📊 Charts <span class="h2sub">— {activeKeys.length}/{MAX_SLOTS} on air · tap to add or remove · “only” to show just that one</span></h2>
 
@@ -428,7 +452,10 @@
       {/each}
     </div>
   </section>
+  {/if}
 
+
+  {#if tab === "feed"}
   <section>
     <h2>🔄 Brief updates <span class="h2sub">— how often Claude refreshes TODAY</span></h2>
     <div class="grid cad">
@@ -441,7 +468,10 @@
     <div class="mhint">Auto = 10 min during the session, 30 min pre/after, 2 h overnight &amp; weekends.
       Force a faster cadence when weekends matter (e.g. geopolitical risk).</div>
   </section>
+  {/if}
 
+
+  {#if tab === "media"}
   <section>
     <h2>🎥 Live Video</h2>
     {#if liveVideo}
@@ -528,7 +558,10 @@
     </div>
     <div class="mhint">Audio plays on the broadcast screen (captured by OBS), not here.</div>
   </section>
+  {/if}
 
+
+  {#if tab === "alert"}
   <section>
     <h2>🚨 Manual Alert</h2>
     <textarea bind:value={headline} placeholder="Alert headline…" rows="2"
@@ -541,11 +574,22 @@
     </div>
     <div class="row">
       <button class="btn send" on:click={sendBreaking}>Send Alert</button>
-      <button class="btn clear" on:click={clearBreaking}>Clear</button>
     </div>
     {#if lastBreaking}<div class="last">Last: {lastBreaking}</div>{/if}
   </section>
 
+  <section>
+    <h2>⛔ On-air alert <span class="h2sub">— stays up until you close it</span></h2>
+    <!-- ★ 속보는 이제 자동으로 사라지지 않는다(예전엔 12초).
+         24시간 무인 방송에서 12초만 스치면 시청자 절반은 못 본다.
+         새 속보가 오면 이전 것을 밀어내고, 내리는 건 여기서 한다.
+         자동 속보(뉴스·시장급변)는 서버가 내용을 모르므로 "지금 떠 있는 걸 지워라"를
+         시퀀스로 보낸다 — 그래서 이 버튼 하나가 자동·수동 둘 다 내린다. -->
+    <button class="btn kill" on:click={clearBreaking}>Close breaking news</button>
+    <div class="hint">Applies to auto alerts (news · market moves) too.</div>
+  </section>
+
+  {/if}
   <footer>Overlay updates within 1.5s</footer>
 </div>
 
@@ -557,6 +601,20 @@
   .ttl span{color:#6b7280;font-weight:500}
   .flash{font-size:13px;font-weight:700;color:#39d98a;background:#0d1712;border:1px solid #16281d;padding:6px 10px;border-radius:999px}
   section{margin-bottom:22px}
+  /* 탭 — 손가락으로 누르는 크기(44px+)를 지킨다 */
+  .tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:18px;
+    position:sticky;top:52px;background:#0a0b0e;padding:4px 0;z-index:4}
+  .tab{border:1px solid #23272f;background:#12151b;color:#8a919b;border-radius:12px;
+    padding:11px 4px;font-size:12px;font-weight:800;cursor:pointer;transition:.12s;
+    display:flex;flex-direction:column;align-items:center;gap:3px;
+    -webkit-tap-highlight-color:transparent}
+  .tab span{font-size:11px;letter-spacing:.03em}
+  .tab:active{transform:scale(.96)}
+  .tab.on{background:#1d2b22;border-color:#2f6b48;color:#4ade80}
+  /* 방송 중 급하게 누르는 버튼 — 폭 전체를 준다 */
+  .kill{width:100%;background:#1e1013;border-color:#4a1f26;color:#ff8a8a;font-size:16px;padding:18px}
+  .kill:active{background:#2a151a}
+  .hint{margin-top:8px;font-size:12px;color:#6b7280;font-weight:600}
   h2{font-size:14px;font-weight:800;color:#8a919b;letter-spacing:.04em;margin:0 0 10px}
   .h2sub{font-weight:600;color:#4b5563;letter-spacing:0}
   .grid.cad{grid-template-columns:repeat(5,1fr)}

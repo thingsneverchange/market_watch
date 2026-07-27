@@ -75,7 +75,11 @@
   // ---- 속보 토스트 (단일 소유자) ----
   // 예전에는 전역 변수 1개 + writer 2개(자동/수동) + 추적되지 않는 setTimeout N개 구조라
   // 두 번째 속보가 무음·조기소멸했고, 새로고침하면 유령 속보가 사이렌과 함께 재방송됐다.
-  const BREAKING_MS = 12000;
+  // ★ 속보는 **끌 때까지 남는다.**
+  //   예전엔 12초 뒤 자동으로 사라졌다. 24시간 무인 방송에서 진행자가 화면을 안 볼 때
+  //   속보가 12초만 스치고 지나가면 시청자 절반은 못 본다.
+  //   새 속보가 오면 이전 것을 밀어내고(둘이 겹치면 읽을 수 없다), 내리는 건 /control 에서 한다.
+  const AUTO_DISMISS_MS = 0;   // 0 = 자동 소멸 없음
   type Toast = { seq: number; headline: string; level: number; manual: boolean; silent: boolean; ageSec: number };
   let breakingData: Toast | null = null;
   let toastTimer: ReturnType<typeof setTimeout> | null = null;
@@ -85,6 +89,8 @@
   let breakingBooted = false;                   // 첫 로드 땐 밀린 뉴스 폭탄 억제
   let manualBooted = false;
   let lastManualBreakingId = 0;
+  // /control 의 "속보 내리기". 자동 속보는 서버가 내용을 모르므로 **시퀀스**로 받는다.
+  let lastClearSeq: number | null = null;
 
   // 하단 미니차트 = **지수 선물 3종(NQ·ES·YM)**, 자체 SVG 렌더.
   //  TradingView 무료 임베드는 선물을 아예 못 그린다(실측) → 24시간 스트림에서 정작 중요한
@@ -286,9 +292,45 @@
     }).format(new Date(dataAsOf)).toUpperCase();
   })();
 
+  /**
+   * MARKET FOCUS + MOVERS 병합.
+   *  둘 다 **개별 종목** 이야기인데 화면 양끝에 떨어져 있었다. 게다가 겹친다 —
+   *  실적을 방금 낸 종목은 FOCUS 에 "REPORTED 3D AGO" 로도 뜨고 MOVERS 에도 뜬다.
+   *  하나로 합치면 "왜 보고 있나(촉매)" 와 "그래서 어떻게 됐나(검증된 반응)" 가 한 줄에 붙는다.
+   *
+   *  반응이 있는 종목은 그 값을 쓴다 — 그쪽은 발표일 기준으로 **검증된** 수치이고,
+   *  FOCUS 의 pct 는 단순 당일 등락이라 정보량이 다르다.
+   */
+  $: focusRows = (() => {
+    const rx = new Map(reactions.map((r: any) => [r.ticker, r]));
+    const rows = impact.names.map((n: any) => ({ ...n, rx: rx.get(n.ticker) ?? null }));
+    // FOCUS 점수에는 못 들었지만 실적 반응이 잡힌 종목도 데려온다 (그게 MOVERS 의 값어치다).
+    // ★ 뒤에 붙이기만 하면 잘라낼 때 **항상 밀려난다**(실측: INTC·GOOGL 이 한 번도 안 떴다).
+    //   점수를 줘서 같이 줄 세운다. 값은 임의가 아니라 focus.ts 의 척도를 그대로 쓴다 —
+    //   "방금 실적을 냈다"는 촉매 0.75 × 가중 0.35 ≈ 0.26. 즉 예정 실적보다는 아래,
+    //   테마만으로 든 종목보다는 위. 실제로 그 정도의 관심이다.
+    const have = new Set(rows.map((r) => r.ticker));
+    for (const r of reactions) {
+      if (have.has(r.ticker)) continue;
+      rows.push({ ticker: r.ticker, score: 0.26, reason: "REPORTED", hits: 0, earnDays: -1,
+        earnHour: "", themeFace: false, pct: r.pct, rel: null, rx: r });
+    }
+    const cap = brief.length ? 4 : 5;
+    const ranked = rows.sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+    // ★ 실적 반응은 **자리를 보장**한다.
+    //   점수만으로 줄 세우면 예정 실적(0.35+)이 항상 이겨서 반응 행이 한 칸도 못 든다
+    //   (실측: INTC −7.9% VERIFIED 가 계속 잘렸다).
+    //   앞을 보는 정보(예정)와 뒤를 확인한 정보(검증된 반응)는 성격이 달라 서로 대체가 안 된다.
+    //   → 반응이 있으면 최소 1칸을 남긴다.
+    const withRx = ranked.filter((r) => r.rx);
+    if (!withRx.length) return ranked.slice(0, cap);
+    const rest = ranked.filter((r) => !r.rx).slice(0, cap - 1);
+    return [...rest, withRx[0]].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
+  })();
+
   /** 막대 길이 = 목록 안 1위 대비 관심도 비율. 절대 점수가 아니라 서열을 보여 준다 */
   function focusWidth(s: number): number {
-    const max = Math.max(...impact.names.map((m: any) => m.score ?? 0), 0.001);
+    const max = Math.max(...focusRows.map((m: any) => m.score ?? 0), 0.001);
     return Math.max(8, Math.round(((s ?? 0) / max) * 100));
   }
 
@@ -426,8 +468,10 @@
     // 진행자가 띄운 수동 속보를 자동 속보가 덮지 않는다 (방송 사고 방지)
     if (breakingData?.manual && !manual) return;
     if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = null;
+    // 새 속보가 이전 것을 **대체**한다. 쌓지 않는다 — 둘이 겹치면 어느 쪽도 못 읽는다.
     breakingData = { seq: ++toastSeq, headline, level, manual, silent, ageSec };
-    toastTimer = setTimeout(dismissToast, BREAKING_MS);
+    if (AUTO_DISMISS_MS > 0) toastTimer = setTimeout(dismissToast, AUTO_DISMISS_MS);
   }
   function dismissToast() {
     if (toastTimer) clearTimeout(toastTimer);
@@ -510,6 +554,16 @@
       if (v?.id !== video?.id) video = v;
       videoPlaying = !!j.videoPlaying;
       if (j.music) music = j.music; // 배경음악 상태 (재생/볼륨/곡이동)
+    }
+
+    // ★ 속보 내리기 — 종류(자동/수동)를 불문하고 지금 떠 있는 걸 내린다.
+    //   첫 폴링에서는 현재 시퀀스를 기준선으로만 잡는다(과거 클릭이 재생되면 안 된다).
+    if (typeof j.breakingClearSeq === "number") {
+      if (lastClearSeq === null) lastClearSeq = j.breakingClearSeq;
+      else if (j.breakingClearSeq !== lastClearSeq) {
+        lastClearSeq = j.breakingClearSeq;
+        dismissToast();
+      }
     }
 
     if (!manualBooted) {
@@ -773,23 +827,38 @@
               </span>
             </div>
             <div class="im-list">
-              {#each impact.names.slice(0, brief.length ? 4 : 5) as m}
+              {#each focusRows as m}
+                {@const px = m.rx ? m.rx.pct : m.pct}
+                {@const stale = m.rx ? !m.rx.live : !impact.live}
                 <div class="im-item">
-                  <span class="im-tk">{m.ticker}</span>
+                  <span class="im-tk">
+                    {m.ticker}
+                    <!-- 실적 결과 배지 — MOVERS 에서 넘어온 정보 -->
+                    {#if m.rx?.result === "beat"}<span class="e-res beat">BEAT</span>
+                    {:else if m.rx?.result === "miss"}<span class="e-res miss">MISS</span>
+                    {:else if m.rx?.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
+                  </span>
                   <span class="im-why" class:cat={m.earnDays != null && m.earnDays >= -3 && m.earnDays <= 7}>
-                    {m.reason}
+                    {m.rx?.tag || m.reason}
                   </span>
                   <span class="im-bar">
                     <!-- 막대 = 이 목록 안에서의 관심도 서열. 숫자보다 먼저 읽힌다 -->
                     <span class="im-fill" style="width:{focusWidth(m.score)}%"></span>
                   </span>
-                  <!-- 가격은 확인용이라 오른쪽 끝. 장 밖이면 직전 세션 값이다(헤더 배지가 말한다) -->
-                  <!-- 정지된 값은 헤더 스트립과 **같은 방식**으로 흐리게 처리한다.
-                       화면 안에서 규칙이 다르면 그것대로 혼란이다. -->
-                  <span class="im-pct" class:u={(m.pct ?? 0) >= 0} class:d={(m.pct ?? 0) < 0}
-                        class:closed={!impact.live}
-                        title={impact.live ? "" : "Market closed — last session's close"}>
-                    {m.pct == null ? "—" : `${m.pct >= 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(2)}%`}
+                  <!-- ★ 검증 여부를 숨기지 않는다. 리캡(LLM)이 준 숫자가 실제와 정반대였던
+                       사고가 있었다 (INTC: 리캡 "+3.4%" vs 실제 −7.89%).
+                       정지된 값은 헤더 스트립과 같은 방식으로 흐리게 처리한다. -->
+                  <span class="im-px">
+                    <span class="im-pct" class:u={(px ?? 0) >= 0} class:d={(px ?? 0) < 0}
+                          class:closed={stale} class:unv={m.rx && !m.rx.verified}
+                          title={stale ? "Market closed — last session's close" : ""}>
+                      {#if m.rx?.live}<span class="live-pip"></span>{/if}{px == null ? "—" : `${px >= 0 ? "+" : "−"}${Math.abs(px).toFixed(2)}%`}
+                    </span>
+                    {#if m.rx}
+                      <span class="im-ver" class:unv={!m.rx.verified}>
+                        {m.rx.live ? "LIVE" : m.rx.verified ? "VERIFIED" : "UNVERIFIED"}
+                      </span>
+                    {/if}
                   </span>
                 </div>
               {/each}
@@ -927,7 +996,7 @@
           <div class="ke-grp">DATA</div>
           <!-- ★ 실적 반응(MOVERS)이 들어오면 우측 3패널이 940px를 넘긴다(실측).
                UPCOMING 이 가장 크므로 여기서 자리를 낸다 — 가장 가까운 일정이 가장 중요하다. -->
-          {#each macroReleases.slice(0, reactions.length ? 2 : 3) as rel}
+          {#each macroReleases.slice(0, 3) as rel}
             <div class="ke-item">
               <div class="ke-el">
                 <span class="ke-stars">{stars(rel.imp)}</span>
@@ -955,7 +1024,7 @@
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
         {#if earningsEvents.length}
           <div class="ke-grp">EARNINGS</div>
-          {#each earningsEvents.slice(0, reactions.length ? 2 : 3) as ev (ev.ticker + ev.time.getTime())}
+          {#each earningsEvents.slice(0, 2) as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -985,7 +1054,7 @@
           <div class="lbl">📊 US ECONOMY<span class="src-hint">latest actual · FRED</span></div>
           <!-- ★ 우측도 자리가 유한하다. 실적 반응(MOVERS)이 들어오면 아래 패널이
                통째로 화면 밖으로 밀린다(실측 339px 초과) → 반응이 있을 땐 지표를 줄인다. -->
-          {#each macroReadings.slice(0, reactions.length ? 3 : 4) as m}
+          {#each macroReadings.slice(0, 4) as m}
             {@const hotter = m.prev != null && m.value != null && m.value > m.prev}
             <div class="rx-row">
               <div class="rx-l">
@@ -1083,49 +1152,14 @@
              ※ 비었을 땐 그룹 헤더째 감춘다. "No macro release" 두 줄이 패널의 절반을
                 차지하면서, 정작 진짜 드라이버가 들어갈 자리를 먹고 있었다. -->
 
-        {#if reactions.length}
-        <div class="rx-grp">MOVERS<span class="rx-sub">post-earnings · recent first</span></div>
-        <!-- ★ 1건만 둔다. 우측 3패널이 1080p 안에 들어와야 하는데 이 행은 2줄 구조라
-             64~81px 로 가장 무겁다. 개별 종목은 좌측 MARKET FOCUS 가 이미 다루므로,
-             여기는 **검증된 반응 1건**만 남기고 자리를 지표·일정에 넘긴다. -->
-        {#each reactions.slice(0, 1) as r}
-          <div class="rx-row">
-            <div class="rx-l">
-              <div class="rx-tk">
-                {r.ticker}
-                {#if r.result === "beat"}<span class="e-res beat">BEAT</span>
-                {:else if r.result === "miss"}<span class="e-res miss">MISS</span>
-                {:else if r.result === "inline"}<span class="e-res inline">IN LINE</span>{/if}
-              </div>
-              {#if r.tag}<div class="rx-tag">{r.tag}</div>{/if}
-            </div>
-            <div class="rx-r">
-              <!-- ★ 검증 여부를 숨기지 않는다.
-                   리캡(LLM)이 준 숫자가 실제와 정반대였던 사고가 있었다
-                   (INTC: 리캡 "+3.4%" vs 실제 −7.89%). 실시세로 확인된 값만
-                   평상 표기하고, 확인 못 한 값은 "~" 와 흐린 색으로 구분한다. -->
-              <div class="rx-pct" class:u={r.pct >= 0} class:d={r.pct < 0} class:unv={!r.verified}>
-                {#if r.live}<span class="live-pip"></span>{/if}{r.pct > 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%
-              </div>
-              <!-- ★ 등락률만으로는 "시장을 움직인 종목"을 못 가린다.
-                   GOOGL −6% 가 TSLA −14.5% 보다 시장에 더 큰 사건이다(시총이 3배).
-                   시총 변화액을 같이 띄워 규모를 분리한다. -->
-              {#if r.impactB != null}
-                <div class="rx-imp" class:u={r.impactB >= 0} class:d={r.impactB < 0}>
-                  {r.impactB >= 0 ? "+" : "−"}${Math.abs(r.impactB) >= 1000
-                    ? (Math.abs(r.impactB) / 1000).toFixed(1) + "T"
-                    : Math.abs(r.impactB) + "B"}
-                </div>
-              {/if}
-              <div class="rx-when" class:unv={!r.verified}>
-                {r.live ? "LIVE" : r.verified ? "VERIFIED" : "UNVERIFIED"}
-              </div>
-            </div>
-          </div>
-        {/each}
-        {/if}
+        <!-- ※ MOVERS 그룹은 좌측 MARKET FOCUS 로 옮겼다.
+             둘 다 **개별 종목** 이야기인데 화면 양끝에 떨어져 있었고, 게다가 겹쳤다 —
+             실적을 방금 낸 종목은 FOCUS 에 "REPORTED 3D AGO" 로도, MOVERS 에도 떴다.
+             합치니 "왜 보고 있나(촉매)" 와 "그래서 어떻게 됐나(검증된 반응)" 가 한 줄에 붙는다.
+             덤으로 우측이 1080p 안에 여유 있게 들어와 지표·일정 칸을 되돌릴 수 있었다.
+             MARKET DRIVER 는 이제 **시장 전체 이야기**만 담는다 — 주제와 거시 결과. -->
         <!-- 셋 다 없을 때만 빈 상태를 말한다 (드라이버가 있으면 패널은 이미 제 역할을 한다) -->
-        {#if !theme && pastMacro.length === 0 && reactions.length === 0}
+        {#if !theme && pastMacro.length === 0}
           <div class="empty">No driver data</div>
         {/if}
       </div>
@@ -1478,9 +1512,12 @@
 
   /* 시장의 관심 종목 — [티커] [왜] [관심도 막대] [등락률] */
   .im-list { padding: 0 16px 7px; display: flex; flex-direction: column; gap: 10px; }
-  .im-item { display: grid; grid-template-columns: 64px 128px 1fr 78px;
+  /* ★ 실적 배지(BEAT)와 검증 라벨(VERIFIED)이 들어가면서 그 행만 27→53px 로 튀었다.
+     행 높이가 들쭉날쭉하면 좌측 컬럼이 넘친다 → 칸 너비를 넉넉히 주고 줄바꿈을 막는다. */
+  .im-item { display: grid; grid-template-columns: 96px 104px 1fr 92px;
     gap: 10px; align-items: center; font-variant-numeric: tabular-nums; }
-  .im-tk { font-size: 19px; font-weight: 800; color: #e8edf4; letter-spacing: 0.01em; }
+  .im-tk { font-size: 19px; font-weight: 800; color: #e8edf4; letter-spacing: 0.01em;
+    white-space: nowrap; display: flex; align-items: baseline; gap: 5px; }
   /* 왜 여기 있는지. 촉매(실적)는 색을 줘서 "곧 뭔가 있다"를 먼저 보이게 한다 */
   .im-why { font-size: 11px; font-weight: 800; color: #7a828d; letter-spacing: 0.04em;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1492,6 +1529,12 @@
   .im-pct.d { color: #ff5c5c; }
   /* 정지된 값 — 헤더 스트립(.idx .v.closed)과 같은 투명도를 쓴다 */
   .im-pct.closed { opacity: 0.45; }
+  /* 검증 안 된 값 — 리캡(LLM)이 준 숫자가 실제와 정반대였던 사고가 있었다 */
+  .im-pct.unv { color: #a08a4a; }
+  /* 등락률 + 검증 상태를 오른쪽 한 칸에 세로로 쌓는다 */
+  .im-px { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.02; }
+  .im-ver { font-size: 8px; font-weight: 800; letter-spacing: 0.05em; color: #5b6472; line-height: 1.2; }
+  .im-ver.unv { color: #7a6a3a; }
 
   /* 하단 슬림 스파크라인 스트립 */
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }

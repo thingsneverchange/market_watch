@@ -101,6 +101,13 @@ export type ControlState = {
   // 라인 / 캔들
   chartStyle: "line" | "candle";
   breaking: { id: number; headline: string; level: number; at: number } | null; // 수동 속보
+  /**
+   * 속보 내리기 신호. 누를 때마다 +1.
+   * ★ 자동 속보(뉴스·시장급변)는 오버레이가 자체 판단으로 띄우므로 서버가 그 내용을 모른다.
+   *   그래서 "무엇을 지워라"가 아니라 **"지금 떠 있는 걸 지워라"**를 시퀀스로 보낸다.
+   *   오버레이는 이 값이 바뀌면 종류를 불문하고 현재 토스트를 내린다.
+   */
+  breakingClearSeq: number;
   video: VideoState;            // 송출 중인 영상 (null = 차트 표시)
   // 배경음악 — 오디오는 방송 화면(오버레이)에서 나야 OBS 가 잡는다.
   // 그래서 플레이어는 오버레이에 **숨겨서** 두고, 조작만 여기서 한다.
@@ -168,6 +175,7 @@ const state: ControlState = {
   chartSniper: typeof saved.chartSniper === "boolean" ? saved.chartSniper : false,
   chartStyle: saved.chartStyle === "candle" ? "candle" : "line",
   breaking: null,   // 지나간 속보를 되살리지 않는다
+  breakingClearSeq: 0,
   video: null,      // 끝난 생중계를 되살리지 않는다
   music: {
     playing: typeof saved.music?.playing === "boolean" ? saved.music.playing : false,
@@ -254,6 +262,8 @@ export function pushBreaking(headline: string, level = 5) {
 
 export function clearBreaking() {
   state.breaking = null;
+  // 자동 속보까지 내리려면 시퀀스를 올려야 한다 (위 breakingClearSeq 주석 참고)
+  state.breakingClearSeq++;
   state.version++;
   state.updatedAt = Date.now();
   return state;
