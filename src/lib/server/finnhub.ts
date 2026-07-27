@@ -568,6 +568,39 @@ export async function getMarketCaps(tickers: string[]): Promise<Map<string, numb
   return out;
 }
 
+// ── 티커 → 거래소 등록 상호 ──────────────────────────
+//  왜 필요한가: LLM 이 준 티커를 그대로 믿고 시세를 붙이면 **다른 회사 등락률이
+//  그 주제의 것처럼 방송된다.** 실제로 "SPACEX SHARE UNLOCK" 에 SPCX(전혀 다른 종목)가
+//  붙어 −1.85% 를 송출했다. 스페이스엑스는 비상장이라 애초에 티커가 있을 수 없다.
+//  형식 검사로는 못 막는다 — 철자가 그럴듯하면 다 통과한다.
+//  그래서 **거래소에 등록된 상호**를 받아 와 LLM 이 주장한 상호와 대조한다.
+//  시총과 같은 /stock/profile2 응답을 쓰지만 캐시는 따로 둔다
+//  (시총 스윕은 6개씩 저우선으로 도는 별도 리듬이라, 여기서 그 순번을 뺏으면 안 된다).
+const nameCache = new Map<string, { at: number; name: string | null; ttl: number }>();
+
+/** 티커 → 거래소 등록 상호. 확인 못 하면 null(= "아직 모른다", "없다"가 아니다). */
+export async function getCompanyNames(tickers: string[]): Promise<Map<string, string | null>> {
+  const out = new Map<string, string | null>();
+  const now = Date.now();
+  const todo: string[] = [];
+  for (const t of tickers) {
+    const hit = nameCache.get(t);
+    if (hit && now - hit.at < hit.ttl) out.set(t, hit.name);
+    else todo.push(t);
+  }
+  // 대조할 티커는 한 화면에 3~5개뿐이다. 전부 받아도 예산에 부담이 없다.
+  await Promise.all(todo.slice(0, 8).map(async (t) => {
+    const j = await fhFetch(`/stock/profile2?symbol=${encodeURIComponent(t)}`, CAP_TTL, true);
+    // 상장 폐지·미상장 심볼은 profile2 가 **빈 객체**를 준다. 그것도 유효한 답이다
+    // ("이 심볼에 회사가 없다") — 단, 요청 자체가 실패한 것과는 구분해야 한다.
+    const name = j ? (typeof j.name === "string" && j.name.trim() ? j.name.trim() : "") : null;
+    nameCache.set(t, { at: now, name, ttl: j ? CAP_TTL : CAP_FAIL_TTL });
+    out.set(t, name);
+  }));
+  for (const t of tickers) if (!out.has(t)) out.set(t, null);
+  return out;
+}
+
 export function newsTopic(headline: string, ticker?: string): string {
   if (ticker) return ticker.toUpperCase();
   for (const [re, tag] of TOPIC_RULES) if (re.test(headline || "")) return tag;

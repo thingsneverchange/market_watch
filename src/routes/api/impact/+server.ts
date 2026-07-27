@@ -1,7 +1,8 @@
 import type { RequestHandler } from "./$types";
 import { getMarketFocus } from "$lib/server/focus";
 import { getFeed, fresh } from "$lib/server/marketfeed";
-import { getQuotes } from "$lib/server/finnhub";
+import { getQuotes, getCompanyNames } from "$lib/server/finnhub";
+import { companyMatches } from "$lib/server/companyname";
 import { marketState } from "$lib/market-hours";
 
 // "지금 시장이 보고 있는 것".
@@ -22,8 +23,27 @@ export const GET: RequestHandler = async ({ url }) => {
   const items = ai?.payload.items ?? [];
   if (!items.length) return json({ ...board, origin: "rule" });
 
+  // ── 티커 대조 ──────────────────────────────────────
   // 티커가 붙은 항목에만 시세를 얹는다. 없으면 안 얹는다 — 엉뚱한 종목에 붙이면 오보다.
-  const tickers = [...new Set(items.map((i) => i.ticker).filter((t): t is string => !!t))];
+  //
+  // ★ LLM 이 준 티커를 그대로 믿지 않는다. 실제로 "SPACEX SHARE UNLOCK"(비상장!) 에
+  //   SPCX 라는 남의 종목이 붙어 −1.85% 가 방송됐다. 철자만 그럴듯하면 형식 검사는 통과한다.
+  //   그래서 거래소 등록 상호를 받아 LLM 이 주장한 상호(co)와 대조하고,
+  //   **다르거나 확인이 안 되면 티커를 버린다**. 그 항목은 시세 없는 주제 행으로 나간다.
+  //   (항목 자체를 떨어뜨리지는 않는다 — 주제는 멀쩡한데 대표주만 틀린 경우가 많다)
+  const claimed = items.filter((i) => i.ticker && i.co) as { ticker: string; co: string }[];
+  const regNames = claimed.length
+    ? await getCompanyNames([...new Set(claimed.map((i) => i.ticker))])
+    : new Map<string, string | null>();
+
+  const okTicker = new Map<string, string>(); // label 기준으로 "이 티커는 써도 된다"
+  for (const i of items) {
+    if (!i.ticker || !i.co) continue;
+    if (companyMatches(i.co, regNames.get(i.ticker) ?? null)) okTicker.set(i.label, i.ticker);
+    else console.warn(`[impact] 티커 폐기: ${i.label} — ${i.ticker} 는 "${regNames.get(i.ticker) ?? "확인 불가"}", LLM 주장은 "${i.co}"`);
+  }
+
+  const tickers = [...new Set(okTicker.values())];
   const px = new Map(
     (tickers.length ? await getQuotes(tickers, 150_000, true) : []).map((q) => [q.ticker, q.changePct])
   );
@@ -32,16 +52,19 @@ export const GET: RequestHandler = async ({ url }) => {
     origin: "ai",
     live: marketState().open,
     benchPct: board.benchPct,
-    names: items.slice(0, 5).map((i) => ({
-      ticker: i.ticker ?? i.label,     // 티커가 없으면 주제 이름이 곧 그 자리다
-      isTheme: !i.ticker,
-      label: i.label,
-      score: i.heat / 5,
-      reason: i.why,
-      hits: 0, earnDays: null, earnHour: "", themeFace: false,
-      pct: i.ticker ? (px.get(i.ticker) ?? null) : null,
-      rel: null
-    }))
+    names: items.slice(0, 5).map((i) => {
+      const t = okTicker.get(i.label) ?? null;
+      return {
+        ticker: t ?? i.label,        // 티커가 없으면 주제 이름이 곧 그 자리다
+        isTheme: !t,
+        label: i.label,
+        score: i.heat / 5,
+        reason: i.why,
+        hits: 0, earnDays: null, earnHour: "", themeFace: false,
+        pct: t ? (px.get(t) ?? null) : null,
+        rel: null
+      };
+    })
   });
 };
 

@@ -13,7 +13,7 @@
 		"preview": "vite preview --host",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"test": "node scripts/headline.test.mjs && node scripts/fredmath.test.mjs"
+		"test": "node scripts/headline.test.mjs && node scripts/fredmath.test.mjs && node scripts/companyname.test.mjs"
 	},
 	"devDependencies": {
 		"@sveltejs/adapter-auto": "^3.3.1",

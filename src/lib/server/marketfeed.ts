@@ -63,7 +63,10 @@ export type MarketBrief = {
  *  같은 **논쟁**이지 티커 목록이 아니다. ticker 는 null 이 정상이다(비상장·대표주 없음).
  */
 export type MarketFocus = {
-  items: { label: string; ticker: string | null; why: string; heat: number }[];
+  // co: 티커를 주장할 때 함께 오는 정식 상호. 화면이 거래소 등록명과 대조해
+  //     다르면 티커를 버린다(엉뚱한 회사 시세가 붙는 사고 방지).
+  // src: 그 주제를 확인한 기사 URL. 없으면 피드 서버가 애초에 거절한다.
+  items: { label: string; ticker: string | null; co?: string | null; why: string; heat: number; src?: string }[];
 };
 
 /** 최근 7일 거시 지표 결과 + 시장 반응. 무료 경제 캘린더가 없어 Claude 가 채운다. */
