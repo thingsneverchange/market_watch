@@ -1,5 +1,5 @@
 import { scoreNews, type NewsItem } from "./finnhub";
-import { isFragment, isColumnBrand } from "./headline";
+import { isFragment, isColumnBrand, isBlockedPublisher, isPressRelease } from "./headline";
 import { isNearDuplicate } from "./dedupe";
 import { parseRss } from "./rss";
 
@@ -109,6 +109,7 @@ export async function getWireNews(limit = 40): Promise<NewsItem[]> {
       // 방송 게이트: 잘린 문장과 칼럼 브랜드("Morning Bid", "Market Wrap")는 사건이 아니다.
       // ※ 지금 화면을 채우고 있던 6건 중 하나가 바로 "Morning Bid: …" 였다.
       .filter((n) => !isFragment(n.title) && !isColumnBrand(n.title))
+      .filter((n) => !isBlockedPublisher(n.source) && !isPressRelease(n.title))
       .sort((a, b) => b.epoch - a.epoch);
 
     // 같은 사건이 여러 매체에 뜬다. 최신순으로 훑으며 이미 담은 것과 비슷하면 버린다.

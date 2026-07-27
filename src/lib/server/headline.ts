@@ -208,3 +208,34 @@ const COLUMN =
 export function isColumnBrand(headline: string): boolean {
   return COLUMN.test(String(headline || ""));
 }
+
+// ============================================================
+//  실시간 와이어(newswire.ts) 전용 게이트
+//
+//  구글 뉴스 검색은 최신성이 뛰어난 대신 **SEO·자동생성 사이트를 길게 끌고 온다.**
+//  와이어를 붙이자마자 화면에 이런 게 올라왔다 (실측, 2026-07-27):
+//    "Northeast Bancorp (NASDAQ:NBN) Issues Quarterly Earnings Results" — MarketBeat
+//    그 외 GuruFocus · TechStock² · The Times of India
+//  틀린 정보는 아니지만, 방송 화면의 출처로 나가면 신뢰도가 깎인다.
+//
+//  ※ 허용목록이 아니라 **차단목록**으로 간다.
+//    허용목록은 처음 보는 매체의 진짜 특종을 통째로 버린다 —
+//    실제로 이번 반도체 국면의 1보는 The Information 이었고, 그건 허용목록에 없었을 것이다.
+// ============================================================
+const BLOCKED_PUBLISHER =
+  /(marketbeat|gurufocus|zacks|tipranks|simply wall|investorplace|insider monkey|24\/7 wall|talkmarkets|etf daily|defense world|stocktwits|techstock|the times of india|financial world|american banking|modern readers|ledger gazette|dispatch tribunal)/i;
+
+/** 알려진 콘텐츠밀·자동생성 매체인가 */
+export function isBlockedPublisher(source: string): boolean {
+  return BLOCKED_PUBLISHER.test(String(source || ""));
+}
+
+// 소형주 보도자료·시세 자동기사 — 매체와 무관하게 방송할 사건이 아니다.
+// "(NASDAQ:XXX) Issues …", "Shares Gap Up", "Given Average Rating", "Position Boosted By …"
+const PR_NOISE =
+  /(\((?:NASDAQ|NYSE|AMEX|OTCMKTS):[A-Z.]{1,6}\)\s+(?:issues|announces|declares|schedules|reports|sets|files)|shares? (?:gap|trading) (?:up|down)|stock (?:price )?(?:up|down) \d|given (?:a |an )?(?:average|consensus) rating|price target (?:raised|lowered|set|cut) (?:to|at)|short interest (?:up|down)|(?:position|stake|holdings) (?:boosted|lowered|trimmed|raised) by|buys new (?:shares|stake))/i;
+
+/** 자동생성 시세·보도자료 기사인가 (방송할 사건이 아니다) */
+export function isPressRelease(headline: string): boolean {
+  return PR_NOISE.test(String(headline || ""));
+}

@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseRss, unescapeXml, tagText } from "../src/lib/server/rss.ts";
+import { isBlockedPublisher, isPressRelease } from "../src/lib/server/headline.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => readFileSync(join(here, "fixtures", n + ".xml"), "utf8");
@@ -82,6 +83,40 @@ eq("link 없으면 버린다",
 eq("닫는 태그 없어도 안 죽는다",
   parseRss("<item><title>a</title><pubDate>Mon, 27 Jul 2026 13:00:00 GMT</pubDate><link>http://x</link>", "X").length, 1);
 eq("undefined", parseRss(undefined, "X").length, 0);
+
+// ── 와이어 게이트 (콘텐츠밀 · 자동생성 기사) ──────────
+// 실측: 와이어를 붙이자마자 이 매체·제목들이 방송 화면에 올라왔다.
+ok("MarketBeat 차단", isBlockedPublisher("MarketBeat"));
+ok("GuruFocus 차단", isBlockedPublisher("GuruFocus"));
+ok("TechStock² 차단", isBlockedPublisher("TechStock²"));
+ok("The Times of India 차단", isBlockedPublisher("The Times of India"));
+ok("Reuters 통과", !isBlockedPublisher("Reuters"));
+ok("CNBC 통과", !isBlockedPublisher("CNBC"));
+ok("The Information 통과 (이번 반도체 1보)", !isBlockedPublisher("The Information"));
+ok("Yahoo Finance 통과", !isBlockedPublisher("Yahoo Finance"));
+ok("빈 매체명 통과", !isBlockedPublisher(""));
+
+ok("소형주 보도자료 차단",
+  isPressRelease("Northeast Bancorp (NASDAQ:NBN) Issues Quarterly Earnings Results"));
+ok("자동 시세기사 차단", isPressRelease("Baker Hughes (NASDAQ:BKR) Shares Gap Up After Strong Earnings"));
+ok("등급 자동기사 차단", isPressRelease("Acme Corp Given Average Rating of Hold by Brokerages"));
+ok("지분변동 자동기사 차단", isPressRelease("Vanguard Group Position Boosted by 3.2%"));
+ok("목표가 자동기사 차단", isPressRelease("Micron price target raised to $950 at Citi"));
+ok("진짜 기사는 통과: CXMT",
+  !isPressRelease("Chipmaker CXMT's 466% market debut surge makes it the most valuable China-listed company"));
+ok("진짜 기사는 통과: ASML",
+  !isPressRelease("ASML and U.S. chip stocks sink on report of China's DUV breakthrough"));
+ok("진짜 실적 기사는 통과",
+  !isPressRelease("Alphabet beats on earnings but capex guidance spooks investors"));
+
+// 실제 피드에 게이트를 걸어 무엇이 남는지 확인한다 (전멸하면 게이트가 과하다)
+{
+  const items = parseRss(fixture("googlenews-semi"), "Google News");
+  const kept = items.filter((i) => !isBlockedPublisher(i.source) && !isPressRelease(i.title));
+  ok("게이트가 실제 피드를 전멸시키지 않는다", kept.length >= items.length * 0.5,
+    `${kept.length}/${items.length} 통과`);
+  ok("게이트 후에도 CXMT 기사가 남는다", kept.some((i) => /CXMT|466%/i.test(i.title)));
+}
 
 console.log(`\nrss: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);
