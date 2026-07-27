@@ -125,8 +125,10 @@
   //  어떤 소스로 그릴지는 **서버가 정해서** 내려준다(mode: "tv" | "fut").
   //  클라이언트마다 시각이 달라 화면이 엇갈리는 것을 막기 위해서다.
   type Slot = { key: string; label: string; note: string; mode: "tv" | "fut" | "nv";
+    /** 지금 그리는 게 무슨 상품인가 — "FUT" / "ETF" / "INDEX" / "SPOT" (서버가 정한다) */
+    instrument?: string;
     tvSymbol: string; futKey: string; nvCode?: string; sniper?: boolean; why?: string };
-  let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut",
+  let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut", instrument: "FUT",
     tvSymbol: "NASDAQ:QQQ", futKey: "NQ", nvCode: "" }];
   let chartStyle: "line" | "candle" = "line";
   // TradingView 렌더에 실패한 슬롯 — 자체 렌더로 갈아탄다.
@@ -814,6 +816,11 @@
             <div class="chart-head">
               <!-- 선물 모드는 차트 안의 큰 시세 표기가 이름을 담당한다 (중복 방지) -->
               <span class="ch-name">{sl.mode === "tv" ? sl.label : ""}</span>
+              <!-- TradingView 경로는 큰 시세 표기가 없으므로 상품 배지를 여기에 붙인다.
+                   무료 임베드는 지수 원본을 못 그려서 전부 ETF 대체물이다 — 숨기지 않는다. -->
+              {#if sl.mode === "tv" && sl.instrument}
+                <span class="ch-inst">{sl.instrument}</span>
+              {/if}
               {#if sl.sniper}
                 <!-- 자동으로 물어온 슬롯임을 명확히 -->
                 <span class="ch-snipe">◎ SNIPER</span>
@@ -830,8 +837,9 @@
                   {FUT_TF_LABEL[futTf]} · {futSess.label}
                 </span>
               {:else if sl.mode === "nv"}
-                <!-- 지수 원본. 현지 거래소 세션이라 미국 시계로 LIVE 를 주장하지 않는다. -->
-                <span class="ch-meta">INDEX</span>
+                <!-- 상품 표기("INDEX")는 이름 옆 배지가 맡는다 → 여기선 봉 간격만.
+                     세션은 여전히 주장하지 않는다 — 현지 거래소 시계를 우리가 모른다. -->
+                <span class="ch-meta">{FUT_TF_LABEL[futTf]}</span>
               {:else}
                 <span class="ch-meta" class:live={isMarketOpen}>
                   {IV_LABEL[chartInterval] ?? chartInterval} · {marketMsg}
@@ -846,11 +854,13 @@
                 <FuturesChart src={sl.futKey ? "finviz" : "naver"}
                               symbol={sl.futKey || sl.nvCode || ""} tf={futTf} name={sl.label}
                               compact={slots.length > 2} style={chartStyle}
-                              live={fbLamp.live} session={fbLamp.session} />
+                              live={fbLamp.live} session={fbLamp.session}
+                              instrument={sl.futKey ? "FUT" : "INDEX"} />
               {:else if sl.mode === "nv"}
                 <FuturesChart src="naver" symbol={sl.nvCode ?? ""} tf={futTf} name={sl.label}
                               compact={slots.length > 2} style={chartStyle}
-                              live={lamp.live} session={lamp.session} />
+                              live={lamp.live} session={lamp.session}
+                              instrument={sl.instrument ?? "INDEX"} />
               {:else if sl.mode === "fut"}
                 <!-- 임시 슬롯(fv:)은 라벨이 심볼코드("SB")뿐이라 이름을 넘기지 않는다.
                      그러면 차트가 소스가 준 진짜 이름("Sugar")을 쓴다. -->
@@ -858,7 +868,8 @@
                               name={sl.key.startsWith("fv:") ? "" : sl.label}
                               compact={slots.length > 2} style={chartStyle}
                               why={sl.why ?? ""}
-                              live={lamp.live} session={lamp.session} />
+                              live={lamp.live} session={lamp.session}
+                              instrument={sl.instrument ?? "FUT"} />
               {:else}
                 <TVChart symbol={sl.tvSymbol} interval={chartInterval}
                          on:fail={() => { tvFailed = new Set([...tvFailed, sl.key]); }} />
@@ -1405,6 +1416,10 @@
   .chart-card.sniped { border-color: #7a5c12; }
   .ch-snipe { font-size: 10px; font-weight: 800; color: #f0b429; letter-spacing: 0.08em;
     background: #17140c; border: 1px solid #3d3212; padding: 3px 8px; border-radius: 999px;
+    white-space: nowrap; }
+  /* 상품 표기 (TradingView 경로). 자체 렌더 차트는 .fc-inst 가 같은 역할을 한다. */
+  .ch-inst { font-size: 10px; font-weight: 800; color: #7d94b8; letter-spacing: 0.06em;
+    background: #12181f; border: 1px solid #1c2430; padding: 1px 5px; border-radius: 4px;
     white-space: nowrap; }
   .ch-note { font-size: 10px; font-weight: 700; color: #7c6a3a; letter-spacing: 0.04em;
     background: #17140c; border: 1px solid #2b2411; padding: 3px 7px; border-radius: 999px;

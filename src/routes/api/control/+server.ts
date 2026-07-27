@@ -20,6 +20,24 @@ async function withAuto(st: ReturnType<typeof getState>) {
 }
 
 /**
+ * 지금 화면에 그려지는 게 **무슨 상품인가**.
+ *
+ * 같은 "NASDAQ" 이라도 시간대에 따라 완전히 다른 것을 보고 있다:
+ *   장 밖  → NQ **선물** (28,704)
+ *   정규장 → QQQ **ETF** (나스닥100 추종)
+ *   네이버 → 나스닥 종합 **지수 원본**
+ * 값의 자릿수부터 다른데 라벨이 전부 "NASDAQ" 이면 시청자는 같은 걸로 읽는다.
+ * 헤더 스트립은 이미 "NASDAQ FUT" 으로 구분하고 있었는데 정작 메인 차트가 안 했다.
+ */
+function instrumentOf(mode: "tv" | "fut" | "nv", tvSymbol: string): string {
+  if (mode === "fut") return "FUT";
+  if (mode === "nv") return "INDEX";
+  // TradingView 경로 — 지수 원본은 무료 임베드가 못 그려서 전부 ETF 대체물이다.
+  // 암호화폐만 예외로 현물 거래소 심볼이다.
+  return /^(?:BINANCE|COINBASE|BITSTAMP):/i.test(tvSymbol) ? "SPOT" : "ETF";
+}
+
+/**
  * 각 슬롯을 **실제로 그릴 소스**로 확정해서 내려준다.
  * 오버레이가 이 판단을 하면 클라이언트마다 시각이 달라 화면이 엇갈릴 수 있으므로
  * 서버가 한 번만 정한다.
@@ -33,7 +51,7 @@ function resolveSlots(st: ControlState) {
     // "fv:LB" = 프리셋에 없는 Finviz 심볼 (추천 목록에서 바로 띄운 것)
     if (key.startsWith("fv:")) {
       const sym = key.slice(3);
-      return { key, label: sym, note: "", mode: "fut" as const,
+      return { key, label: sym, note: "", mode: "fut" as const, instrument: "FUT",
         tvSymbol: "", futKey: sym, nvCode: "", sniper: false, why: "" };
     }
     const p = CHART_PRESETS.find((x) => x.key === key) ?? CHART_PRESETS[0];
@@ -48,6 +66,7 @@ function resolveSlots(st: ControlState) {
       label: p.label,
       note: p.note ?? "",
       mode,
+      instrument: instrumentOf(mode, p.tv ?? ""),
       tvSymbol: p.tv ?? "",
       futKey: p.fut ?? "",
       nvCode: p.nv ?? "",
@@ -73,6 +92,7 @@ async function withSniper(st: ControlState, slots: ReturnType<typeof resolveSlot
     label: target.label,
     note: "",
     mode: "fut" as const,
+    instrument: "FUT",
     tvSymbol: "",
     futKey: target.key,
     nvCode: "",

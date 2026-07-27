@@ -38,6 +38,12 @@
   export let live = false;
   /** 그 세션이 무엇인지 ("PRE" / "REGULAR" / "AFTER" …). 비면 점만 찍는다. */
   export let session = "";
+  /**
+   * 지금 그리고 있는 게 **무슨 상품인가** ("FUT" / "ETF" / "INDEX" / "SPOT").
+   *  같은 "NASDAQ" 이라도 장 밖엔 NQ 선물(28,704), 정규장엔 QQQ ETF 다.
+   *  값의 자릿수부터 다른데 라벨이 둘 다 "NASDAQ" 이면 같은 걸로 읽힌다.
+   */
+  export let instrument = "";
 
   type Payload = {
     ok: boolean; label?: string; price?: number; changePct?: number;
@@ -219,6 +225,10 @@
     <div class="fc-read" class:sm={compact}>
       <div class="fc-name">
         {title}
+        <!-- ★ 무슨 상품인지 — 이름만으론 구분이 안 된다.
+             장 밖 "NASDAQ" = NQ 선물(28,704), 정규장 "NASDAQ" = QQQ ETF.
+             자릿수부터 다른 값을 같은 이름으로 띄우면 시청자는 같은 걸로 읽는다. -->
+        {#if instrument}<span class="fc-inst">{instrument}</span>{/if}
         <!-- ★ 깜빡이는 점 = "이 숫자는 지금 움직이고 있다".
              큰 숫자가 떠 있으면 시청자는 무조건 실시간으로 읽는데, 야간·주말엔
              얼어 있는 값일 수 있다. 정지 상태에서는 점을 아예 안 그린다 —
@@ -326,6 +336,10 @@
   .fc-name { font-size: 15px; font-weight: 800; letter-spacing: 0.06em;
     color: #8a919b; text-transform: uppercase; margin-bottom: 2px;
     display: flex; align-items: center; gap: 7px; }
+  /* 상품 표기 — 이름 옆 작은 배지. 값이 무엇인지 헷갈리면 안 된다. */
+  .fc-inst { font-size: 10px; font-weight: 800; letter-spacing: 0.06em; color: #7d94b8;
+    background: #12181f; border: 1px solid #1c2430; border-radius: 4px;
+    padding: 1px 5px; line-height: 1.5; }
   /* 라이브 표시 — 방송의 REC 램프와 같은 뜻이다 */
   .fc-live { display: inline-flex; align-items: center; gap: 5px;
     font-size: 11px; font-weight: 800; letter-spacing: 0.08em; color: #ff5c5c; }
