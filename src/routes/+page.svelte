@@ -133,8 +133,10 @@
   type Slot = { key: string; label: string; note: string; mode: "tv" | "fut" | "nv";
     /** 지금 그리는 게 무슨 상품인가 — "FUT" / "ETF" / "INDEX" / "SPOT" (서버가 정한다) */
     instrument?: string;
+    /** 어느 시계로 도는가 — "us-equity" / "globex" / "24-7" / "us-cash" / "local" */
+    clock?: string;
     tvSymbol: string; futKey: string; nvCode?: string; sniper?: boolean; why?: string };
-  let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut", instrument: "FUT",
+  let slots: Slot[] = [{ key: "nq", label: "NASDAQ", note: "", mode: "fut", instrument: "FUT", clock: "us-equity",
     tvSymbol: "NASDAQ:QQQ", futKey: "NQ", nvCode: "" }];
   let chartStyle: "line" | "candle" = "line";
   // TradingView 렌더에 실패한 슬롯 — 자체 렌더로 갈아탄다.
@@ -265,18 +267,26 @@
   //    못 잡는다 — {@const} 는 표현식에 나타난 변수만 추적하므로, 초기값(닫힘)에서
   //    굳어 램프가 영원히 안 켜졌다(실측: ch-meta 는 live 인데 점은 안 떴다).
   function chartLive(
-    mode: string, fs: FuturesSession, session: string, cashOpen: boolean
+    clock: string, fs: FuturesSession, session: string, cashOpen: boolean
   ): { live: boolean; session: string } {
-    if (mode === "fut") {
-      // 선물은 현물이 닫혀 있어도 움직인다. 그때 미국 시계가 어느 구간인지 같이 말해 준다.
+    // 암호화폐 현물 — 쉬지 않는다
+    if (clock === "24-7") return { live: true, session: "24/7" };
+    // 해외 거래소 지수 — 그 시계를 모르므로 아무 주장도 하지 않는다
+    if (clock === "local") return { live: false, session: "" };
+    // 미국 상장 ETF — 정규장에만 움직인다
+    if (clock === "us-cash") return { live: cashOpen, session: cashOpen ? "LIVE" : "" };
+    // 미국 지수 선물 — 현물이 닫혀 있어도 돌므로, 지금이 미국 시계의 어느 구간인지 말해 준다
+    if (clock === "us-equity") {
       const word = session === "PRE" ? "PRE-MKT"
         : session === "OPEN" ? "LIVE"
         : session === "AFTER" ? "AFTER"
         : "OVERNIGHT";
       return { live: fs.open, session: fs.open ? word : "" };
     }
-    if (mode === "nv") return { live: false, session: "" };  // 현지 세션을 모른다 → 주장하지 않는다
-    return { live: cashOpen, session: cashOpen ? "LIVE" : "" };
+    // ★ globex — 원자재·FX·금리·해외지수 선물.
+    //   여기에 미국 현물 세션 문구를 붙이면 말이 안 된다(실측: BITCOIN ● PRE-MKT,
+    //   GOLD ● PRE-MKT). "지금이 미국 프리장인가"는 이 상품들과 아무 상관이 없다.
+    return { live: fs.open, session: fs.open ? "GLOBEX" : "" };
   }
 
   /**
@@ -894,8 +904,8 @@
         {#each slots as sl (sl.key)}
           <!-- 라이브 램프. {@const} 는 블록의 직계 자식이어야 해서 여기서 계산한다.
                fbLamp = TradingView 실패로 자체 렌더에 폴백했을 때의 시계 (그리는 소스 기준) -->
-          {@const lamp = chartLive(sl.mode, futSess, marketSession, isMarketOpen)}
-          {@const fbLamp = chartLive(sl.futKey ? "fut" : "nv", futSess, marketSession, isMarketOpen)}
+          {@const lamp = chartLive(sl.clock ?? "globex", futSess, marketSession, isMarketOpen)}
+          {@const fbLamp = chartLive(sl.futKey ? "globex" : "local", futSess, marketSession, isMarketOpen)}
           <div class="chart-card" class:sniped={sl.sniper}>
             <div class="chart-head">
               <!-- 선물 모드는 차트 안의 큰 시세 표기가 이름을 담당한다 (중복 방지) -->

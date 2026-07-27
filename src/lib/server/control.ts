@@ -27,6 +27,14 @@ export type ChartPreset = {
   nv?: string;
   /** 정직성 표기 — 지수 원본이 아니라 대체물일 때 화면과 컨트롤에 같이 띄운다. */
   note?: string;
+  /**
+   * 정규장이 아니어도 **항상** TradingView 소스를 쓴다. 암호화폐 전용.
+   *  Finviz "BTC" 는 CME **선물**이라 주말·야간 정비시간에 멈춘다
+   *  (실측: 토요일에 30초 뒤에도 값이 완전히 동일했다 — $64,070 −0.23%).
+   *  비트코인은 24시간 거래되는데 화면이 멈춰 있으면 24시간 방송에선 그 자체가 사고다.
+   *  TradingView 가 안 뜨면 기존 폴백이 선물 렌더로 내려가므로 빈 화면은 되지 않는다.
+   */
+  alwaysTv?: boolean;
 };
 
 // 차트 프리셋 — 여기만 고치면 컨트롤러 버튼도 자동으로 바뀐다.
@@ -74,7 +82,7 @@ export const CHART_PRESETS: ChartPreset[] = [
   { key: "si",   label: "SILVER",       fut: "SI" },
   { key: "ng",   label: "NAT GAS",      fut: "NG" },
   { key: "btc",  label: "BITCOIN",      fut: "BTC", tv: "BINANCE:BTCUSDT",
-    note: "CME futures · closed weekends" },
+    alwaysTv: true, note: "spot · 24/7" },
   { key: "dx",   label: "DOLLAR INDEX", fut: "DX" },
   { key: "zn",   label: "10Y NOTE",     fut: "ZN" }
 ];

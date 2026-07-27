@@ -20,6 +20,31 @@ async function withAuto(st: ReturnType<typeof getState>) {
 }
 
 /**
+ * 이 상품이 **어느 시계로 도는가**.
+ *
+ * 실측 사고: 라이브 램프의 세션 문구를 선물 모드 전부에 미국 **현물** 세션으로 붙였다.
+ *   BITCOIN ● PRE-MKT   ← 비트코인엔 프리마켓이 없다 (게다가 24시간 자산이다)
+ *   GOLD ● PRE-MKT / DAX ● PRE-MKT  도 같은 이유로 말이 안 됐다.
+ * "지금이 미국 프리장인가"는 **미국 지수 선물에만** 의미가 있다.
+ *
+ *  us-equity — NQ·ES·YM·ER2·VX. 미국 현물 세션 구간을 말해 주는 게 정보다.
+ *  globex    — 원자재·FX·금리·해외지수 선물. Globex 로 돌지만 미국 현물 세션과 무관하다.
+ *  24-7      — 암호화폐 현물(BINANCE 등). 쉬지 않는다.
+ *  us-cash   — 미국 상장 ETF. 정규장에만 움직인다.
+ *  local     — 해외 거래소 지수. 우리가 그 시계를 모르므로 아무 주장도 하지 않는다.
+ *
+ * ※ 비트코인은 모드에 따라 다르다. Finviz "BTC" 는 **CME 선물**이라 주말에 멈추고
+ *   (프리셋 note 가 이미 그렇게 밝히고 있다), TradingView 쪽은 BINANCE 현물이라 24시간이다.
+ *   그리는 소스 기준으로 판정한다.
+ */
+const US_INDEX_FUT = new Set(["NQ", "ES", "YM", "ER2", "VX"]);
+function clockOf(mode: "tv" | "fut" | "nv", futKey: string, tvSymbol: string): string {
+  if (mode === "nv") return "local";
+  if (mode === "tv") return /^(?:BINANCE|COINBASE|BITSTAMP):/i.test(tvSymbol) ? "24-7" : "us-cash";
+  return US_INDEX_FUT.has(futKey) ? "us-equity" : "globex";
+}
+
+/**
  * 지금 화면에 그려지는 게 **무슨 상품인가**.
  *
  * 같은 "NASDAQ" 이라도 시간대에 따라 완전히 다른 것을 보고 있다:
@@ -51,14 +76,15 @@ function resolveSlots(st: ControlState) {
     // "fv:LB" = 프리셋에 없는 Finviz 심볼 (추천 목록에서 바로 띄운 것)
     if (key.startsWith("fv:")) {
       const sym = key.slice(3);
-      return { key, label: sym, note: "", mode: "fut" as const, instrument: "FUT",
+      return { key, label: sym, note: "", mode: "fut" as const, instrument: "FUT", clock: "globex",
         tvSymbol: "", futKey: sym, nvCode: "", sniper: false, why: "" };
     }
     const p = CHART_PRESETS.find((x) => x.key === key) ?? CHART_PRESETS[0];
     const wantTv = st.chartAuto ? regular : false;
     // 우선순위: (정규장 & TradingView 있음) → tv / 선물 있음 → fut / 그 외 → 네이버 지수
     //  네이버 지수는 지수 **원본**이라 선물이 없는 코스피·상해·항셍의 유일한 길이다.
-    const useTv = wantTv && !!p.tv;
+    // 암호화폐는 정규장 여부와 무관하게 현물 소스를 쓴다 (alwaysTv 주석 참고)
+    const useTv = !!p.tv && (wantTv || !!p.alwaysTv);
     const mode: "tv" | "fut" | "nv" =
       useTv ? "tv" : p.fut ? "fut" : p.nv ? "nv" : p.tv ? "tv" : "fut";
     return {
@@ -67,6 +93,7 @@ function resolveSlots(st: ControlState) {
       note: p.note ?? "",
       mode,
       instrument: instrumentOf(mode, p.tv ?? ""),
+      clock: clockOf(mode, p.fut ?? "", p.tv ?? ""),
       tvSymbol: p.tv ?? "",
       futKey: p.fut ?? "",
       nvCode: p.nv ?? "",
@@ -93,6 +120,7 @@ async function withSniper(st: ControlState, slots: ReturnType<typeof resolveSlot
     note: "",
     mode: "fut" as const,
     instrument: "FUT",
+    clock: US_INDEX_FUT.has(target.key) ? "us-equity" : "globex",
     tvSymbol: "",
     futKey: target.key,
     nvCode: "",
