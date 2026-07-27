@@ -90,6 +90,8 @@ ok("MarketBeat 차단", isBlockedPublisher("MarketBeat"));
 ok("GuruFocus 차단", isBlockedPublisher("GuruFocus"));
 ok("TechStock² 차단", isBlockedPublisher("TechStock²"));
 ok("The Times of India 차단", isBlockedPublisher("The Times of India"));
+ok("simplywall.st 차단 (도메인 표기, 공백 없음)", isBlockedPublisher("simplywall.st"));
+ok("Simply Wall St 차단 (공백 표기)", isBlockedPublisher("Simply Wall St"));
 ok("Reuters 통과", !isBlockedPublisher("Reuters"));
 ok("CNBC 통과", !isBlockedPublisher("CNBC"));
 ok("The Information 통과 (이번 반도체 1보)", !isBlockedPublisher("The Information"));

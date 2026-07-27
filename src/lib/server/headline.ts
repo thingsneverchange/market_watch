@@ -223,7 +223,7 @@ export function isColumnBrand(headline: string): boolean {
 //    실제로 이번 반도체 국면의 1보는 The Information 이었고, 그건 허용목록에 없었을 것이다.
 // ============================================================
 const BLOCKED_PUBLISHER =
-  /(marketbeat|gurufocus|zacks|tipranks|simply wall|investorplace|insider monkey|24\/7 wall|talkmarkets|etf daily|defense world|stocktwits|techstock|the times of india|financial world|american banking|modern readers|ledger gazette|dispatch tribunal)/i;
+  /(marketbeat|gurufocus|zacks|tipranks|simply ?wall|investorplace|insider monkey|24\/7 wall|talkmarkets|etf daily|defense world|stocktwits|techstock|the times of india|financial world|american banking|modern readers|ledger gazette|dispatch tribunal)/i;
 
 /** 알려진 콘텐츠밀·자동생성 매체인가 */
 export function isBlockedPublisher(source: string): boolean {
