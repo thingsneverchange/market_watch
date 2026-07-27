@@ -1,6 +1,19 @@
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+
 // ============================================================
-//  방송 컨트롤 상태 (인메모리)
+//  방송 컨트롤 상태
 //  컨트롤러(/control, 다른 기기)가 바꾸고, 오버레이(/)가 폴링해서 반영
+//
+//  ★ **설정은 디스크에 남는다.**
+//   예전엔 전부 인메모리라 PM2 가 재시작할 때마다(= 배포할 때마다) 차트 선택·봉 간격·
+//   AUTO/SNIPER·음량이 통째로 기본값으로 돌아갔다. 24시간 방송에서 코드를 한 줄 고칠
+//   때마다 방송 세팅이 초기화되는 셈이다.
+//
+//  단, **전부** 저장하지는 않는다. 되살아나면 안 되는 것들이 있다:
+//   · breaking — 지나간 속보가 재시작 때 다시 방송되면 사고다
+//   · video    — 끝난 생중계(연준 회견 등)가 되살아나면 더 심하다
+//   둘 다 "그 순간의 방송 결정"이지 설정이 아니다. 설정만 남긴다.
 // ============================================================
 
 export type ChartPreset = {
@@ -119,22 +132,76 @@ export function parseYouTubeId(input: string): string | null {
   return m ? m[1] : null;
 }
 
-// 모듈 레벨 = dev/프로덕션에서 단일 프로세스 동안 유지됨
+// ── 설정 영속화 ──────────────────────────────────────
+const FILE = ".data/control.json";
+
+/** 재시작 후 되살릴 필드 (= 사람이 정한 방송 세팅). 나머지는 그 순간의 결정이라 제외. */
+type Persisted = Pick<ControlState,
+  "chartKeys" | "chartInterval" | "chartAuto" | "chartSniper" | "chartStyle" | "videoAuto"> & {
+  music: { playing: boolean; volume: number };
+};
+
+function loadPersisted(): Partial<Persisted> {
+  try {
+    const raw = JSON.parse(readFileSync(FILE, "utf8"));
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};   // 파일이 없으면 기본값으로 시작 (에러 아님)
+  }
+}
+
+// 모듈 레벨 = 단일 프로세스 동안 유지 + 설정은 디스크에서 복원
+const saved = loadPersisted();
 const state: ControlState = {
   version: 1,
-  chartKeys: ["nq"],   // 24시간 방송의 기본 = 나스닥 선물 1개
-  chartInterval: "1",
-  chartAuto: true,
-  chartSniper: false,
-  chartStyle: "line",
-  breaking: null,
-  video: null,
-  music: { playing: false, volume: 30, cmdSeq: 0, cmd: "none" },
-  videoAuto: false,
+  // ★ 복원값도 **검증을 거친다.** 파일은 손으로 고칠 수 있고, 프리셋 목록은 코드가 바뀌면
+  //   달라진다. 없어진 차트 키가 되살아나면 빈 슬롯이 방송에 나간다.
+  chartKeys: (() => {
+    const k = (Array.isArray(saved.chartKeys) ? saved.chartKeys : [])
+      .filter((x) => typeof x === "string" &&
+        (CHART_PRESETS.some((p) => p.key === x) || /^fv:[A-Z0-9]{1,4}$/.test(x)))
+      .slice(0, MAX_SLOTS);
+    return k.length ? k : ["nq"];   // 24시간 방송의 기본 = 나스닥 선물 1개
+  })(),
+  chartInterval: INTERVALS.includes(String(saved.chartInterval)) ? String(saved.chartInterval) : "1",
+  chartAuto: typeof saved.chartAuto === "boolean" ? saved.chartAuto : true,
+  chartSniper: typeof saved.chartSniper === "boolean" ? saved.chartSniper : false,
+  chartStyle: saved.chartStyle === "candle" ? "candle" : "line",
+  breaking: null,   // 지나간 속보를 되살리지 않는다
+  video: null,      // 끝난 생중계를 되살리지 않는다
+  music: {
+    playing: typeof saved.music?.playing === "boolean" ? saved.music.playing : false,
+    volume: Number.isFinite(Number(saved.music?.volume))
+      ? Math.max(0, Math.min(100, Math.round(Number(saved.music?.volume)))) : 30,
+    cmdSeq: 0, cmd: "none"
+  },
+  videoAuto: typeof saved.videoAuto === "boolean" ? saved.videoAuto : false,
   videoPlaying: false,
   autoSuppressUntil: 0,
   updatedAt: Date.now()
 };
+
+/**
+ * 설정을 디스크에 쓴다. 상태를 바꾸는 모든 경로가 이걸 부른다.
+ * 못 써도 방송은 계속된다 — 메모리 상태가 정본이고 파일은 재시작 대비 사본이다.
+ */
+function persist(): void {
+  try {
+    mkdirSync(dirname(FILE), { recursive: true });
+    const out: Persisted = {
+      chartKeys: state.chartKeys,
+      chartInterval: state.chartInterval,
+      chartAuto: state.chartAuto,
+      chartSniper: state.chartSniper,
+      chartStyle: state.chartStyle,
+      videoAuto: state.videoAuto,
+      music: { playing: state.music.playing, volume: state.music.volume }
+    };
+    writeFileSync(FILE, JSON.stringify(out), "utf8");
+  } catch {
+    /* 디스크 실패로 방송을 멈출 이유가 없다 */
+  }
+}
 
 // 0 이 아니라 현재 시각으로 시드한다. 모듈이 재적재돼도 id 가 재사용되지 않아
 // 오버레이의 "이미 본 id" 판정이 어긋나지 않는다.
@@ -170,6 +237,7 @@ export function setCharts(keys: string[], interval?: string, auto?: boolean,
   if (style === "line" || style === "candle") state.chartStyle = style;
   state.version++;
   state.updatedAt = Date.now();
+  persist();
   return state;
 }
 
@@ -215,6 +283,7 @@ export function setMusic(patch: { playing?: boolean; volume?: number; cmd?: "nex
   }
   state.version++;
   state.updatedAt = Date.now();
+  persist();
   return state;
 }
 
@@ -242,6 +311,7 @@ export function setVideoAuto(on: boolean) {
   if (on) state.autoSuppressUntil = 0; // 다시 켜면 억제 해제
   state.version++;
   state.updatedAt = Date.now();
+  persist();
   return state;
 }
 

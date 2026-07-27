@@ -28,6 +28,16 @@
   export let src: "finviz" | "naver" = "finviz";
   /** Auto-Sniper 가 물어온 슬롯이면 이유를 표시한다 */
   export let why = "";
+  /**
+   * 이 종목이 **지금 거래되고 있는가**. 이름 옆 점이 깜빡인다.
+   *  화면에 큰 숫자가 떠 있으면 시청자는 당연히 실시간이라고 읽는다.
+   *  실제로는 야간·주말엔 얼어 있는 값일 수 있으므로, "지금 움직이는 중"을
+   *  숫자 자체가 아니라 **별도 신호**로 말한다.
+   *  판단은 화면(부모)이 한다 — 소스마다 세션 시계가 다르다(Globex / NYSE / 거래소).
+   */
+  export let live = false;
+  /** 그 세션이 무엇인지 ("PRE" / "REGULAR" / "AFTER" …). 비면 점만 찍는다. */
+  export let session = "";
 
   type Payload = {
     ok: boolean; label?: string; price?: number; changePct?: number;
@@ -207,7 +217,16 @@
   {#if ready}
     <!-- 큰 시세 오버레이 — 멀리서·폰에서도 "뭐가 몇 포인트 빠졌나"가 바로 읽혀야 한다 -->
     <div class="fc-read" class:sm={compact}>
-      <div class="fc-name">{title}</div>
+      <div class="fc-name">
+        {title}
+        <!-- ★ 깜빡이는 점 = "이 숫자는 지금 움직이고 있다".
+             큰 숫자가 떠 있으면 시청자는 무조건 실시간으로 읽는데, 야간·주말엔
+             얼어 있는 값일 수 있다. 정지 상태에서는 점을 아예 안 그린다 —
+             회색 점은 "꺼짐"이 아니라 "장식"으로 읽혀서 구분이 안 된다. -->
+        {#if live}
+          <span class="fc-live"><span class="fc-dot"></span>{session}</span>
+        {/if}
+      </div>
       <div class="fc-row" class:up class:dn={!up}>
         <span class="fc-price">{priceTxt}</span>
         {#if absTxt}<span class="fc-abs">{absTxt}</span>{/if}
@@ -305,7 +324,22 @@
   /* 큰 시세 표기 — 이 방송의 첫 번째 정보. 폰으로 축소돼도 읽혀야 한다. */
   .fc-read { position: absolute; top: 6px; left: 12px; pointer-events: none; z-index: 2; }
   .fc-name { font-size: 15px; font-weight: 800; letter-spacing: 0.06em;
-    color: #8a919b; text-transform: uppercase; margin-bottom: 2px; }
+    color: #8a919b; text-transform: uppercase; margin-bottom: 2px;
+    display: flex; align-items: center; gap: 7px; }
+  /* 라이브 표시 — 방송의 REC 램프와 같은 뜻이다 */
+  .fc-live { display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; font-weight: 800; letter-spacing: 0.08em; color: #ff5c5c; }
+  .fc-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff3b30;
+    box-shadow: 0 0 6px rgba(255, 59, 48, 0.9); animation: fcpulse 1.6s ease-in-out infinite; }
+  /* 완전히 사라지게 하지 않는다 — 24시간 방송에서 깜빡임이 세면 눈이 피로하다 */
+  @keyframes fcpulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50%      { opacity: 0.35; transform: scale(0.82); }
+  }
+  /* 접근성/저사양: 모션을 끄면 점은 그대로 켜 둔다 (정보가 사라지면 안 된다) */
+  @media (prefers-reduced-motion: reduce) {
+    .fc-dot { animation: none; }
+  }
   .fc-row { display: flex; align-items: baseline; gap: 14px;
     font-variant-numeric: tabular-nums; line-height: 1.05; }
   .fc-price { font-size: 40px; font-weight: 800; color: #e8edf4; letter-spacing: -0.01em; }

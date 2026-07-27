@@ -245,6 +245,33 @@
     .join(" · ");
 
   /**
+   * 차트의 라이브 램프.
+   *  "지금 이 종목이 거래되고 있는가"는 소스마다 시계가 다르다:
+   *    선물(Globex) — 일 18:00 ET ~ 금 17:00 ET, 매일 17–18시만 쉰다 → 프리·애프터에도 살아 있다
+   *    미국 ETF/현물(NYSE) — 정규장에만. 무료 티어는 확장시간 시세를 갱신하지 않는다
+   *    해외 지수(네이버) — 현지 거래소 시계라 우리가 판정할 근거가 없다 → 램프를 켜지 않는다
+   *  ★ 세션 이름은 **미국 현물 기준**으로 붙인다. 시청자가 알고 싶은 건
+   *    "지금이 프리장이냐 정규장이냐"이지 "Globex 가 열렸냐"가 아니다.
+   */
+  //  ★ 세션 값을 **인자로 받는다.** 함수 안에서 futSess 를 읽으면 Svelte 가 의존성을
+  //    못 잡는다 — {@const} 는 표현식에 나타난 변수만 추적하므로, 초기값(닫힘)에서
+  //    굳어 램프가 영원히 안 켜졌다(실측: ch-meta 는 live 인데 점은 안 떴다).
+  function chartLive(
+    mode: string, fs: FuturesSession, session: string, cashOpen: boolean
+  ): { live: boolean; session: string } {
+    if (mode === "fut") {
+      // 선물은 현물이 닫혀 있어도 움직인다. 그때 미국 시계가 어느 구간인지 같이 말해 준다.
+      const word = session === "PRE" ? "PRE-MKT"
+        : session === "OPEN" ? "LIVE"
+        : session === "AFTER" ? "AFTER"
+        : "OVERNIGHT";
+      return { live: fs.open, session: fs.open ? word : "" };
+    }
+    if (mode === "nv") return { live: false, session: "" };  // 현지 세션을 모른다 → 주장하지 않는다
+    return { live: cashOpen, session: cashOpen ? "LIVE" : "" };
+  }
+
+  /**
    * 정지된 값 옆에 붙일 **마지막 거래일** 표시 ("FRI" 등).
    *  헤더 폭이 빠듯해서 "PREV CLOSE" 같은 긴 문구는 못 넣는다. 요일 세 글자면
    *  "이건 지금 값이 아니다"가 전달되고, 얼마나 묵었는지도 같이 읽힌다.
@@ -779,6 +806,10 @@
       <!-- 1~4개 차트. 슬롯 수가 곧 배치 (1=전체, 2=좌우, 3=1+2, 4=2x2) -->
       <div class="chart-grid" data-n={slots.length}>
         {#each slots as sl (sl.key)}
+          <!-- 라이브 램프. {@const} 는 블록의 직계 자식이어야 해서 여기서 계산한다.
+               fbLamp = TradingView 실패로 자체 렌더에 폴백했을 때의 시계 (그리는 소스 기준) -->
+          {@const lamp = chartLive(sl.mode, futSess, marketSession, isMarketOpen)}
+          {@const fbLamp = chartLive(sl.futKey ? "fut" : "nv", futSess, marketSession, isMarketOpen)}
           <div class="chart-card" class:sniped={sl.sniper}>
             <div class="chart-head">
               <!-- 선물 모드는 차트 안의 큰 시세 표기가 이름을 담당한다 (중복 방지) -->
@@ -810,20 +841,24 @@
             <div class="chart-body">
               {#if sl.mode === "tv" && tvFailed.has(sl.key) && (sl.futKey || sl.nvCode)}
                 <!-- TradingView 가 안 뜬 슬롯 → 자체 렌더로 대체.
-                     빈 화면보다 5분봉이라도 나오는 편이 낫다. -->
+                     빈 화면보다 5분봉이라도 나오는 편이 낫다.
+                     ※ 램프는 **실제로 그리는 소스** 기준이다 — 선물로 대체됐으면 선물 시계다. -->
                 <FuturesChart src={sl.futKey ? "finviz" : "naver"}
                               symbol={sl.futKey || sl.nvCode || ""} tf={futTf} name={sl.label}
-                              compact={slots.length > 2} style={chartStyle} />
+                              compact={slots.length > 2} style={chartStyle}
+                              live={fbLamp.live} session={fbLamp.session} />
               {:else if sl.mode === "nv"}
                 <FuturesChart src="naver" symbol={sl.nvCode ?? ""} tf={futTf} name={sl.label}
-                              compact={slots.length > 2} style={chartStyle} />
+                              compact={slots.length > 2} style={chartStyle}
+                              live={lamp.live} session={lamp.session} />
               {:else if sl.mode === "fut"}
                 <!-- 임시 슬롯(fv:)은 라벨이 심볼코드("SB")뿐이라 이름을 넘기지 않는다.
                      그러면 차트가 소스가 준 진짜 이름("Sugar")을 쓴다. -->
                 <FuturesChart symbol={sl.futKey} tf={futTf}
                               name={sl.key.startsWith("fv:") ? "" : sl.label}
                               compact={slots.length > 2} style={chartStyle}
-                              why={sl.why ?? ""} />
+                              why={sl.why ?? ""}
+                              live={lamp.live} session={lamp.session} />
               {:else}
                 <TVChart symbol={sl.tvSymbol} interval={chartInterval}
                          on:fail={() => { tvFailed = new Set([...tvFailed, sl.key]); }} />
