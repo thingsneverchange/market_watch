@@ -15,10 +15,21 @@ module.exports = {
       autorestart: true,
       restart_delay: 3000,
       watch: false,
-      max_memory_restart: "400M",
+      // ★ 400M 이었는데 **실사용보다 낮았다.** 프로덕션이 30초마다 재시작하고 있었다
+      //   (실측: 재시작 232회, out.log 에 "Listening" 이 정확히 30초 간격으로 찍힘).
+      //   방송이 매 30초마다 ~10초씩 끊겼다는 뜻이다.
+      //
+      //   원인은 누수가 아니라 **V8 이 GC 압력 없이 힙을 키운 것**이다. 8GB 머신에서
+      //   기본 old-space 가 수 GB라 Node 는 400M 을 신경 쓸 이유가 없다 —
+      //   실측 RSS 는 기동 10초 만에 344MB → 647MB 로 뛰었다.
+      //   pm2 의 max_memory_restart 는 **V8 에게 알려지지 않는다.** 두 숫자를 맞춰야 한다.
+      //
+      //   → --max-old-space-size 로 V8 이 먼저 GC 하게 만들고, pm2 상한은 그 위에 둔다.
+      //     상한만 올리면 V8 은 여전히 계속 커진다(문제를 미루기만 한다).
+      max_memory_restart: "900M",
       kill_timeout: 10000,
       // 비밀값은 전부 .env 에서 읽는다. 여기 하드코딩 금지.
-      node_args: "--env-file=/home/market-watch/.env",
+      node_args: "--env-file=/home/market-watch/.env --max-old-space-size=384",
       env: {
         NODE_ENV: "production",
         PORT: 6211,
