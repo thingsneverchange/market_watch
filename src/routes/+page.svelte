@@ -758,7 +758,7 @@
 
         <!-- 직전 TOP STORY — 이력이 쌓였을 때만 -->
         {#if prevStories.length}
-          <div class="panel mlink">
+          <div class="panel mlink stories">
             <div class="lbl">EARLIER TOP STORIES<span class="src-hint">last {prevStories.length}</span></div>
             <div class="ps-list">
               {#each prevStories as p}
@@ -1202,6 +1202,11 @@
     background: #0d0f13; border: 1px solid #191c22; border-radius: 12px;
     border-left: 4px solid var(--accent, #6b7280); overflow: hidden;
     min-height: 132px; display: flex; flex-direction: column;
+    /* ★ 절대 줄어들지 않는다. 서버가 길이로 문장을 자르지 않게 되면서 헤드라인이 두세 줄이
+       될 수 있는데, flex 기본값(0 1 auto)이면 아래 패널들에 밀려 눌리고 overflow:hidden 이
+       두 번째 줄을 잘라 먹는다(실측: "…Fed decision looms" 가 상자 밖으로 나갔다).
+       화면에서 가장 중요한 문장이 레이아웃 압력에 지는 건 말이 안 된다. */
+    flex: 0 0 auto;
   }
   .driver.nodata { border-left-color: #ff5c5c; }
   .driver-meta { margin-top: 8px; display: flex; gap: 8px; align-items: baseline;
@@ -1381,6 +1386,10 @@
   .col.left > .news { flex: 0 0 auto; }
   /* 직전 TOP STORY 이력 (영상 없을 때만) */
   .mlink { flex: 0 0 auto; }
+  /* 좌측 컬럼이 넘칠 때 **가장 먼저 양보하는 패널**을 명시한다.
+     TOP STORY > 헤드라인 > MARKET FOCUS > 지난 스토리 순으로 중요하므로 맨 뒤가 줄어든다.
+     정하지 않으면 flex 가 알아서 나누면서 정작 중요한 상자를 눌러 버린다. */
+  .mlink.stories { flex: 0 1 auto; min-height: 0; }
   .ps-list { padding: 0 16px 12px; display: flex; flex-direction: column; gap: 8px; }
   /* 경과시간을 고정폭으로 왼쪽에 세워 세 줄이 시간축처럼 읽히게 한다 */
   .ps-item { display: grid; grid-template-columns: 40px 1fr auto; gap: 10px;
