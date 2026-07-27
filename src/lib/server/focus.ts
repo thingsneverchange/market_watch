@@ -1,4 +1,4 @@
-import { getQuotes, getMarketNews, getEarnings, getMarketCaps, type Quote } from "./finnhub";
+import { getQuotes, getMarketNews, getCompanyNews, getEarnings, getMarketCaps, type Quote } from "./finnhub";
 import { marketState } from "../market-hours";
 
 // ============================================================
@@ -124,6 +124,9 @@ const BENCH = "SPY";
 // 관심도만 갱신되면 되므로 2분대 지연이 문제되지 않는다.
 const QUOTE_TTL_MS = 150_000;
 const NEWS_WINDOW_H = 48;
+/** 종목 뉴스 캐시 — 관심도는 분 단위로 안 바뀌므로 길게 잡아 예산을 아낀다 */
+const NEWS_CACHE_MS = 15 * 60_000;
+const newsCache = new Map<string, { at: number; items: { title: string; epoch: number; level: number }[] }>();
 
 /**
  * 규모 가중 — **같은 사건도 회사 크기에 따라 시장 사건이 되기도, 아니기도 한다.**
@@ -140,6 +143,39 @@ function sizeWeight(capB: number | null): number {
   if (capB >= 80) return 0.6;
   return 0.45;
 }
+
+/**
+ * 섹터 가중 — **이 시장을 실제로 끌고 가는 게 무엇인가**.
+ *
+ * 시가총액만으로는 부족했다. 실측 사고: MARKET FOCUS 에 **V(비자)** 가 올라갔다.
+ *   비자는 시총이 크고 그 주에 실적이 있었지만, 비자 실적으로 나스닥이 움직이지 않는다.
+ *   반면 반도체 한 종목의 가이던스가 지수 전체를 흔든다.
+ *
+ * 이건 취향이 아니라 **지수 집중도**다. 메가캡 테크 8종목이 S&P500 의 3분의 1이고,
+ * 나스닥100 에선 더 크다. 반도체는 지금 시장 서사(AI 설비투자) 자체를 들고 있다.
+ * 반대로 필수소비재는 시총이 커도 지수를 못 움직인다.
+ *
+ * ※ 에너지·방산이 낮게 잡혀 있는 건 평상시 기준이다. 지정학이 드라이버가 되면
+ *   테마 가점(THEME_FACES)이 그때 올려 준다 — 국면에 따라 자동으로 바뀐다.
+ */
+const SECTOR: Record<string, number> = {
+  // 반도체 — 지금 시장 서사를 들고 있는 섹터
+  NVDA: 1, AMD: 1, AVGO: 1, MU: 1, TSM: 1, ARM: 1, MRVL: 1, INTC: 1,
+  QCOM: 0.9, TXN: 0.85, AMAT: 0.9, LRCX: 0.9, KLAC: 0.9, ASML: 0.95, SMCI: 0.85,
+  // 메가캡 테크 — 지수 그 자체
+  AAPL: 1, MSFT: 1, GOOGL: 1, AMZN: 1, META: 1, TSLA: 1,
+  // 소프트웨어 · 플랫폼
+  NFLX: 0.85, ORCL: 0.85, CRM: 0.8, ADBE: 0.8, NOW: 0.75, PLTR: 0.8, UBER: 0.7,
+  // 금융 — 거시 신호는 되지만 지수를 끌지는 않는다
+  JPM: 0.65, BAC: 0.55, GS: 0.6, V: 0.5, MA: 0.5,
+  // 헬스케어
+  LLY: 0.6, UNH: 0.55, JNJ: 0.45, ABBV: 0.45, MRK: 0.45,
+  // 필수소비재 — 시총은 커도 지수를 못 움직인다
+  WMT: 0.5, COST: 0.5, HD: 0.5, PG: 0.35, KO: 0.35,
+  // 에너지 · 방산 — 평상시엔 낮게. 지정학 국면이면 테마 가점이 올려 준다
+  XOM: 0.6, CVX: 0.55, LMT: 0.45, RTX: 0.45, NOC: 0.4
+};
+const sectorWeight = (t: string) => SECTOR[t] ?? 0.6;
 
 export type FocusName = {
   ticker: string;
@@ -196,6 +232,49 @@ export async function getMarketFocus(themeKey = "", limit = 5): Promise<FocusBoa
     getMarketCaps(UNIVERSE)
   ]);
 
+  // ★★ ATTENTION 축이 **계속 0 이었다.**
+  //   general 피드는 매크로·지정학 위주라 회사 이름이 거의 안 나온다.
+  //   실측: 이란 국면 내내 헤드라인 4~6건에 회사명 0건 → 순위가 사실상 실적 일정표였다.
+  //   그런데 Finnhub 는 **종목별 뉴스를 따로 준다**. 그게 더 신선하기까지 하다:
+  //     general 최신 256분 전  vs  NVDA 117분 · MSFT 72분 · GOOGL 136분 (실측)
+  //   안 쓰고 있었을 뿐이다.
+  //
+  //   요청 비용: 후보 종목만, 캐시 15분, 저우선. 분당 1건 미만이라 헤더 예산에 영향이 없다.
+  //   전 종목(46개)을 훑지 않는다 — 그건 예산을 먹고, 어차피 순위에 못 드는 종목이다.
+  const NEWS_PROBE = [
+    // 지수를 끄는 이름들 — 여기 뉴스가 붙으면 그게 곧 시장 이야기다
+    "NVDA", "AAPL", "MSFT", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "AMD", "MU",
+    // 지금 테마의 얼굴들도 같이 본다 (국면에 따라 달라진다)
+    ...(THEME_FACES[themeKey] ?? []).slice(0, 4)
+  ];
+  const probe = [...new Set(NEWS_PROBE)].filter((t) => UNIVERSE.includes(t)).slice(0, 12);
+
+  // ★ 12건을 한 번에 쏘면 저우선 쿼터(분당 16)를 시총 캐시·시세와 나눠 쓰다가 전부 건너뛰어진다.
+  //   실측: 저우선으로 바꾸자마자 hits 가 10 → 0 이 됐다.
+  //   getMarketCaps 와 같은 방식으로 **호출마다 조금씩** 채운다. 15분 캐시라 한 번 차면
+  //   그 뒤로는 요청이 거의 없다 (종목당 분당 0.07건).
+  const now = Date.now();
+  const cutoffAt = now - NEWS_CACHE_MS;
+  const todo = probe.filter((t) => (newsCache.get(t)?.at ?? 0) < cutoffAt).slice(0, 4);
+  await Promise.all(todo.map(async (t) => {
+    try {
+      // ★ 저우선으로 두지 않는다. 실측: lowPriority 로 바꾼 순간 hits 가 10 → 0 이 됐다.
+      //   저우선 쿼터(분당 16)를 시총 캐시(호출당 6)가 먼저 먹어 매번 건너뛰어졌다.
+      //   종목 뉴스는 15분 캐시라 정상 주기에서 **종목당 분당 0.07건**이다 —
+      //   헤더 예산을 위협할 규모가 아닌데 우선순위 때문에 기능이 통째로 죽고 있었다.
+      //   버스트는 우선순위가 아니라 위의 drip(호출당 4건)으로 막는다.
+      const items = await getCompanyNews(t, 2, 60, NEWS_CACHE_MS);
+      // ★ 빈 결과를 15분 캐시하면 안 된다. 예산으로 **건너뛴** 것과 "뉴스가 없다"는
+      //   전혀 다른 사실인데 구분이 안 된다. 실측: META·TSLA·AVGO·AMD·MU 가 전부
+      //   `0` 으로 굳어 관심도가 영원히 0 이었다 (FRED 시총 캐시에서 겪은 것과 같은 실수).
+      //   → 빈 결과는 짧게만 기억해서 곧 다시 시도한다.
+      newsCache.set(t, { at: items.length ? Date.now() : Date.now() - NEWS_CACHE_MS + 60_000, items });
+    } catch { /* 실패해도 나머지로 간다 */ }
+  }));
+  const companyNews = new Map(
+    probe.map((t) => [t, newsCache.get(t)?.items ?? []] as const)
+  );
+
   const cutoff = Date.now() / 1000 - NEWS_WINDOW_H * 3600;
   const recent = news.filter((n) => n.epoch >= cutoff);
 
@@ -215,15 +294,26 @@ export async function getMarketFocus(themeKey = "", limit = 5): Promise<FocusBoa
     const re = NAMES[t];
 
     // ── 1) 관심도: 헤드라인 등장. 중요도(별)로 가중한다.
-    let hits = 0, attnRaw = 0;
+    //   (a) 시장 전체 뉴스에 이름이 나왔나 — 나왔다면 그건 곧 시장 이야기다(가중 2배)
+    //   (b) 그 종목 자체의 뉴스가 얼마나 쏟아지나 — "지금 회자되는 정도"
+    //   두 축을 **따로 센다.** 성격이 다르다:
+    //    marketHits — 시장 전체 뉴스가 이 회사를 말했다 → 그건 곧 시장 이야기다
+    //    flow       — 그 종목에 기사가 얼마나 쏟아지나 → "지금 회자되는 정도"
+    let marketHits = 0, flow = 0, attnRaw = 0;
     if (re) {
       for (const n of recent) {
         if (!re.test(n.title)) continue;
-        hits++;
-        attnRaw += Math.max(1, n.level);
+        marketHits++;
+        attnRaw += Math.max(1, n.level) * 3;   // 시장면에 오른 건 무게가 다르다
       }
     }
-    const attention = Math.min(1, attnRaw / 12);
+    for (const n of companyNews.get(t) ?? []) {
+      if (n.epoch < cutoff) continue;
+      flow++;
+      attnRaw += Math.max(1, n.level) * 0.15;  // 물량은 참고치 — 한 건이 사건은 아니다
+    }
+    const hits = marketHits + flow;
+    const attention = Math.min(1, attnRaw / 24);
 
     // ── 2) 촉매: 실적. 발표 전이 핵심이다 (GOOGL 케이스).
     const e = earnBy.get(t) ?? null;
@@ -243,7 +333,8 @@ export async function getMarketFocus(themeKey = "", limit = 5): Promise<FocusBoa
     //   관심(뉴스)·촉매(실적)·테마 중 하나는 반드시 있어야 목록에 든다.
     if (attention === 0 && catalyst === 0 && !themeFace) continue;
     const base = 0.40 * attention + 0.35 * catalyst + 0.25 * (themeFace ? 1 : 0);
-    const score = base * sizeWeight(caps.get(t) ?? null);
+    // 규모(시총) × 섹터(지수를 끄는 힘). 둘 다 곱해야 "V 가 왜 여기 있나"가 안 생긴다.
+    const score = base * sizeWeight(caps.get(t) ?? null) * sectorWeight(t);
 
     // 왜 화면에 있는지 한 마디 — 기여가 가장 큰 축을 그대로 말한다
     let reason: string;
@@ -255,14 +346,18 @@ export async function getMarketFocus(themeKey = "", limit = 5): Promise<FocusBoa
         reason = `EARNINGS ${DOW[when.getUTCDay()]}`;
       }
     } else if (attention >= 0.35) {
-      reason = `${hits} HEADLINE${hits === 1 ? "" : "S"}`;
+      // ★ "60 HEADLINES" 는 방송에서 뜻이 안 통한다(종목 뉴스 물량의 상한값일 뿐).
+      //   시장면에 오른 건 그 자체가 사건이므로 그걸 우선 말한다.
+      reason = marketHits > 0
+        ? `IN MARKET NEWS ×${marketHits}`
+        : "HEAVY NEWS FLOW";
     } else if (themeFace) {
       reason = `${THEME_WORD[themeKey] ?? themeKey} THEME`;
     } else if (catalyst > 0 && e) {
       const when = new Date(Date.now() + e.days * 864e5);
       reason = `EARNINGS ${DOW[when.getUTCDay()]}`;
     } else {
-      reason = `${hits} HEADLINE${hits === 1 ? "" : "S"}`;
+      reason = marketHits > 0 ? `IN MARKET NEWS ×${marketHits}` : "HEAVY NEWS FLOW";
     }
 
     rows.push({

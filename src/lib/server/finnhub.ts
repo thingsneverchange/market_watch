@@ -708,16 +708,29 @@ export async function getMarketNews(limit = 20): Promise<NewsItem[]> {
 }
 
 // 워치리스트 종목별 기업뉴스
-export async function getCompanyNews(ticker: string, days = 2): Promise<NewsItem[]> {
+/**
+ * 종목별 뉴스.
+ *
+ * @param limit 상한. 기본 10 은 **속보 스캔용**이다(최신 몇 건만 보면 된다).
+ *   ★ "얼마나 회자되는가"를 재려면 이걸 늘려야 한다. 10 에서 자르면 활발한 종목이
+ *     전부 10 으로 포화돼 서로 구분이 안 된다 —
+ *     실측: MSFT·META·AAPL·AMZN·GOOGL 이 모두 hits=10 으로 같았다.
+ *   ※ 상한을 늘려도 **요청 수는 그대로**다(응답 하나를 더 읽을 뿐).
+ * @param ttlMs 캐시. 관심도 집계는 자주 안 바뀌므로 길게 잡아 예산을 아낀다.
+ * @param lowPriority 헤더 시세 예산을 먹지 않게 한다.
+ */
+export async function getCompanyNews(
+  ticker: string, days = 2, limit = 10, ttlMs = 60_000, lowPriority = false
+): Promise<NewsItem[]> {
   const to = new Date();
   const from = new Date(to.getTime() - days * 864e5);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   const j = await fhFetch(
     `/company-news?symbol=${encodeURIComponent(ticker)}&from=${fmt(from)}&to=${fmt(to)}`,
-    60_000
+    ttlMs, lowPriority
   );
   if (!Array.isArray(j)) return [];
-  return j.map((n) => mapNews(n, ticker)).sort((a, b) => b.epoch - a.epoch).slice(0, 10);
+  return j.map((n) => mapNews(n, ticker)).sort((a, b) => b.epoch - a.epoch).slice(0, limit);
 }
 
 // ---- 실적 캘린더 -------------------------------------------

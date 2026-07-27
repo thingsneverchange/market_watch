@@ -30,6 +30,37 @@ const K = 6;              // 최근 6봉 = 30분
 const MIN_ABS_PCT = 0.15; // 이보다 작게 움직였으면 사건이 아니다
 const MIN_SIGMA = 1e-5;   // 죽은 종목의 z 폭발 방지
 
+// ============================================================
+//  ★ 방송에 띄울 가치가 있는 선물만 본다
+//
+//  Finviz 는 49개를 한 번에 주는데, 그중 농산물·축산·목재는 거래가 얇아서
+//  z-score 가 잘 튄다. 그 결과 Auto-Sniper 추천과 급변 속보 상위가 이렇게 찼다:
+//    Cotton, Coffee, Wheat, Lumber, Orange Juice, Feeder Cattle   (실측)
+//  미국 증시 방송을 보는 사람 중에 코코아·옥수수·설탕 선물을 보러 온 사람은 없다.
+//  통계적으로 이례적인 것과 **이 방송의 시청자에게 사건인 것**은 다르다.
+//
+//  남기는 기준: 미국 증시와 인과가 있는 것.
+//   지수선물 — 그 자체가 시장
+//   에너지  — 인플레이션·운송비로 바로 이어진다 (지금 국면의 핵심이기도 하다)
+//   금속    — 금=위험프리미엄, 구리=경기
+//   금리·달러 — 밸류에이션의 할인율
+//   VIX·비트코인 — 위험선호도
+// ============================================================
+const WATCHED = new Set([
+  // 지수선물
+  "NQ", "ES", "YM", "ER2",
+  // 에너지
+  "CL", "BZ", "NG", "RB", "HO",
+  // 금속
+  "GC", "SI", "HG", "PL",
+  // 금리 · 달러
+  "ZN", "ZB", "ZF", "DX",
+  // 변동성 · 크립토
+  "VX", "BTC", "ETH",
+  // 해외 지수선물 (야간 흐름을 읽는 데 쓴다)
+  "NKD", "DY", "EX"
+]);
+
 /** 표본 표준편차 */
 function stdev(xs: number[]): number {
   if (xs.length < 2) return 0;
@@ -80,6 +111,8 @@ export async function getMovers(): Promise<Mover[]> {
   const map = await getFutures("m5");
   const out: Mover[] = [];
   for (const q of map.values()) {
+    // 농산물·축산 등은 아예 후보에서 뺀다 (WATCHED 주석 참고)
+    if (!WATCHED.has(q.key)) continue;
     const m = score(q);
     if (m) out.push(m);
   }
