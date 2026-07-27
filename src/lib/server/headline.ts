@@ -133,8 +133,17 @@ const ASSET_KEYS: [RegExp, string][] = [
  * **현재 상태를 단정하는** 수치 표현만 본다.
  *  "from $100"(과거 기준점) · "could hit $120"(전망) 은 지금 값과 달라도 틀린 게 아니다.
  */
+/**
+ * ★ **퍼센트는 가격이 아니다.**
+ *  실측 사고: "Gold gains over 1% on pause in US-Iran fighting" 에서 `over 1` 을
+ *  가격 주장으로 읽어, 금 $4,100 과 비교해 괴리 409,930% 로 판정하고
+ *  멀쩡한 5★ 헤드라인을 방송에서 지웠다. 반증 장치가 오히려 오보를 만든 셈이다.
+ *  → 숫자 뒤에 %(또는 percent/bps/pt)가 붙으면 수준 주장이 아니다.
+ *  또한 통화기호나 네 자리 이상이 아니면 애초에 가격 수준으로 보지 않는다 —
+ *  "up 3 points" 같은 표현을 가격이라 우길 이유가 없다.
+ */
 const LEVEL_CLAIM =
-  /\b(?:near|around|above|below|over|under|tops?|hits?|breaches?|crosses?|holds?|stays? at|steady at|at)\s+\$?(\d[\d,]*(?:\.\d+)?)/i;
+  /\b(?:near|around|above|below|over|under|tops?|hits?|breaches?|crosses?|holds?|stays? at|steady at|at)\s+(\$|€|£)?(\d[\d,]*(?:\.\d+)?)(?!\s*(?:%|percent|bps|pt\b|point))/i;
 
 /** 전망·가정 어법이 섞여 있으면 현재 단정이 아니다 */
 const FORWARD =
@@ -164,8 +173,14 @@ export function contradictsLive(
 
   const m = s.match(LEVEL_CLAIM);
   if (!m) return null;
-  const claimed = Number(m[1].replace(/,/g, ""));
+  const [, currency, digits] = m;
+  const claimed = Number(digits.replace(/,/g, ""));
   if (!Number.isFinite(claimed) || claimed <= 0) return null;
+
+  // ★ 통화기호가 없고 자릿수도 작으면 **가격 수준 주장이 아니다.**
+  //   "gains over 1", "up at 3" 같은 걸 가격이라 우기면 반증 장치가 오보를 만든다.
+  //   기준은 자의적이지 않다 — 우리가 아는 값의 자릿수와 비슷해야 같은 것을 말한 것이다.
+  if (!currency && claimed < now / 10) return null;
 
   const gap = Math.abs(claimed - now) / claimed;
   return gap > MAX_DIVERGENCE

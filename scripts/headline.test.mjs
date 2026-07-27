@@ -149,7 +149,14 @@ for (const [t, why] of [
   ["Oil could hit $120 if Hormuz closes", "전망 — 반증 대상이 아니다"],
   ["Analysts see gold at $5,000 next year", "전망"],
   ["Copper near $12,000 a tonne on supply squeeze", "우리가 값을 모르는 자산 → 판정 안 함"],
-  ["Iran says it will halt strikes as long as US bombing pause holds", "숫자 없음"]
+  ["Iran says it will halt strikes as long as US bombing pause holds", "숫자 없음"],
+  // ★ 실측 사고: "over 1%" 의 1 을 가격으로 읽어 금 $4,100 과 비교, 괴리 409,930% 로
+  //   판정하고 멀쩡한 5★ 헤드라인을 방송에서 지웠다. 반증 장치가 오보를 만든 셈이다.
+  ["Gold gains over 1% on pause in US-Iran fighting; Fed decision looms", "퍼센트는 가격이 아니다"],
+  ["Oil slides over 5% after ceasefire", "퍼센트는 가격이 아니다"],
+  ["Nasdaq futures up over 1.5% premarket", "퍼센트는 가격이 아니다"],
+  ["Gold climbs at 20 bps on the session", "bps 는 가격이 아니다"],
+  ["Dow adds over 400 points", "points 는 가격이 아니다"]
 ]) ok(`통과(${why}): "${t.slice(0, 44)}"`, !contradictsLive(t, LIVE));
 
 console.log(`\n${fail === 0 ? "✅" : "❌"}  통과 ${pass} / 실패 ${fail}\n`);
