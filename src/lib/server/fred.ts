@@ -1,4 +1,6 @@
 import { env } from "$env/dynamic/private";
+// 변환 로직은 별도 모듈이다 — $env 를 물지 않아야 회귀 테스트가 붙는다 (fredmath.ts 주석 참고)
+import { convert, type Transform, type Obs } from "./fredmath";
 
 // ============================================================
 //  FRED (세인트루이스 연준) — 거시 지표의 **1차 출처**
@@ -23,7 +25,6 @@ const FAIL_MS = 10 * 60_000;
 const TIMEOUT_MS = 8000;
 
 /** 화면에 올릴 지표 정의 — 변환 방식이 지표마다 다르다 */
-type Transform = "yoy" | "mom" | "level" | "delta_k";
 type Spec = {
   key: string;
   label: string;
@@ -64,7 +65,6 @@ export type MacroReading = {
   upIsHawkish: boolean;
 };
 
-type Obs = { date: string; value: string };
 
 let cache: { at: number; data: MacroReading[] } | null = null;
 let failUntil = 0;
@@ -87,32 +87,6 @@ async function fred(path: string): Promise<any | null> {
   } finally {
     clearTimeout(timer);
   }
-}
-
-/** 관측치를 시장이 보는 수치로 변환한다 (지수 레벨 그대로는 방송에 못 쓴다) */
-function convert(obs: Obs[], t: Transform, freq: string): { value: number | null; prev: number | null } {
-  const v = obs.map((o) => Number(o.value)).filter((n) => Number.isFinite(n));
-  const at = (i: number) => (i < v.length ? v[i] : null);
-  const r = (n: number | null) => (n === null ? null : Math.round(n * 100) / 100);
-
-  if (t === "level") return { value: r(at(0)), prev: r(at(1)) };
-  if (t === "delta_k") {
-    const a = at(0), b = at(1), c = at(2);
-    return { value: a !== null && b !== null ? Math.round(a - b) : null,
-             prev:  b !== null && c !== null ? Math.round(b - c) : null };
-  }
-  if (t === "mom") {
-    const a = at(0), b = at(1), c = at(2);
-    return { value: a !== null && b ? r((a / b - 1) * 100) : null,
-             prev:  b !== null && c ? r((b / c - 1) * 100) : null };
-  }
-  // yoy — **시리즈 주기로** 기간 수를 정한다.
-  //  예전엔 배열 길이로 추측해서(>20 이면 12) 분기 시리즈인 GDP 를 12분기(=3년) 전과
-  //  비교했다. 그래서 실질GDP 가 "+7.76% YoY" 로 찍혔다 — 명백히 말이 안 되는 수치다.
-  const step = freq === "Q" ? 4 : freq === "A" ? 1 : freq === "D" || freq === "W" ? 52 : 12;
-  const a = at(0), b = at(step), c = at(1), d = at(step + 1);
-  return { value: a !== null && b ? r((a / b - 1) * 100) : null,
-           prev:  c !== null && d ? r((c / d - 1) * 100) : null };
 }
 
 /**
