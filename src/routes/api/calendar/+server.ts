@@ -5,6 +5,7 @@ import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 import { etDateStr, reactionSessionDate } from "$lib/market-hours";
 import { getLiveReactions } from "$lib/server/livequote";
 import { recordMacro, recentMacro } from "$lib/server/macrolog";
+import { rememberVerified, recallVerified } from "$lib/server/verifylog";
 
 // Finnhub 실적 캘린더는 전 시장(하루 수백 종목)을 알파벳순으로 준다.
 // 필터가 없으면 우측 패널이 아무도 모르는 마이크로캡(ALEX·AMBZ·BCOW…)으로 채워진다.
@@ -153,7 +154,11 @@ export const GET: RequestHandler = async () => {
       //   예전에는 24시간 창 밖이면 null 로 지워서, 이틀 전 발표는 EPS 만 남고
       //   정작 시청자가 제일 궁금해하는 "그래서 얼마나 빠졌는데?"가 안 보였다.
       //   대신 **라이브인지 그날의 스냅샷인지**를 구분해서 라벨로 정직하게 밝힌다.
-      reactionPct: live ? live.changePct : (r?.reactionPct ?? null),
+      //   ★ 단, 폴백은 **검증된 값**으로만 한다. 예전엔 `r?.reactionPct`(리캡 주장)로
+      //     되돌아갔다 — MARKET FOCUS 쪽과 똑같은 사고가 이 목록에도 있었다.
+      //     실측: INTC 가 +10%(리캡) ↔ −7.89%(실제) 로 왕복. 검증값이 없으면 null 이다.
+      reactionPct: live ? live.changePct
+        : recallVerified(e.ticker, reactionSessionDate(e.date, e.hour)),
       reactionWhen: liveFresh
         ? live!.session === "pre" ? "PRE" : live!.session === "post" ? "AH" : "LIVE"
         : normWhen(r?.reactionWhen)
@@ -293,9 +298,30 @@ export const GET: RequestHandler = async () => {
       const rd = reactDay.get(ticker);
       const real = vq && rd && vq.day === rd ? vq.pct : undefined;
       const claimed = r.reactionPct ?? null;
-      const pct = liveNow ? liveNow.changePct : (real ?? claimed);
+
+      // ★★ **검증 못 한 숫자는 방송하지 않는다.**
+      //   예전엔 `real ?? claimed` 라 검증이 실패하면 **리캡(LLM)이 주장한 값**으로
+      //   되돌아갔다. 위 주석이 스스로 못 박은 규칙("리캡에서 계속 쓰는 것은 정성
+      //   정보뿐")을 코드가 어기고 있었다.
+      //   실측(프로덕션, 8초 간격 폴링):
+      //     11:10:15  INTC  +10%      verified=false   ← 리캡 주장
+      //     11:11:09  INTC  −7.8918%  verified=true    ← 실제 시세
+      //   같은 방송에서 17.9%p 부호 반전이 왕복했다. +10% 는 BEAT 배지와 함께 나가
+      //   "인텔 어닝 비트하고 10% 급등"으로 읽힌다. 실제는 −7.89% 다.
+      //
+      //   게다가 정규장이 열리면 quote 의 마지막 세션이 오늘로 넘어가 `vq.day === rd`
+      //   가 **구조적으로 영원히 거짓**이 된다 → 하루 종일 +10% 로 고착된다.
+      //
+      //   그래서 두 가지를 한다:
+      //    1) 검증값을 **기억한다.** 한 번 실측으로 확인한 값은 조회가 실패해도 유지된다
+      //       (원인이 사라진 게 아니라 조회가 흔들린 것뿐이다).
+      //    2) 그래도 없으면 **null** 을 낸다. 화면은 "—" 를 띄운다.
+      //       틀린 숫자보다 빈칸이 낫다 — 리캡이 지어낸 값이 바로 그 사고였다.
+      if (real != null) rememberVerified(ticker, rd!, real);
+      const remembered = recallVerified(ticker, rd);
+      const pct = liveNow ? liveNow.changePct : (real ?? remembered ?? null);
       // 검증됐는가 = 실제 시세에서 나온 숫자인가
-      const verified = liveNow != null || real != null;
+      const verified = liveNow != null || real != null || remembered != null;
       // 리캡 주장과 실제가 크게 어긋나면 남겨둔다 (프롬프트 품질 추적용)
       const claimGap = real != null && claimed != null && Math.abs(real - claimed) > 2
         ? Math.round((claimed - real) * 10) / 10 : null;
