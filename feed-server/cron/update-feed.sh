@@ -2,7 +2,7 @@
 # ============================================================
 #  Claude Code 로 마켓 판단을 생성해 market-feed 에 밀어넣는다.
 #
-#  사용법:  ./update-feed.sh top_story|key_event|earnings_recap
+#  사용법:  ./update-feed.sh top_story|key_event|earnings_recap|market_brief|market_focus|live_videos|macro_recap
 #  cron 예시는 이 파일 맨 아래 주석 참고.
 # ============================================================
 set -uo pipefail
@@ -47,8 +47,8 @@ log() { printf '%s [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "${KIND:-?}" "$*" >
 die() { log "ERROR: $*"; echo "ERROR: $*" >&2; exit 1; }
 
 case "$KIND" in
-  top_story|key_event|earnings_recap|market_brief|live_videos|macro_recap) ;;
-  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief|live_videos|macro_recap" ;;
+  top_story|key_event|earnings_recap|market_brief|market_focus|live_videos|macro_recap) ;;
+  *) die "사용법: $0 top_story|key_event|earnings_recap|market_brief|market_focus|live_videos|macro_recap" ;;
 esac
 
 # ── LLM 호출 게이트 ───────────────────────────────────
