@@ -5,7 +5,7 @@ import { getWireNews } from "$lib/server/newswire";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
-import { isFragment, contradictsLive, isColumnBrand } from "$lib/server/headline";
+import { isFragment, contradictsLive, isColumnBrand, isAnalysisForm, isMajorOutlet } from "$lib/server/headline";
 import { getFutures } from "$lib/server/finviz";
 import { getBtc } from "$lib/server/coingecko";
 import { recordStory, previousStories } from "$lib/server/storylog";
@@ -153,8 +153,15 @@ export const GET: RequestHandler = async () => {
   // 20시간 전 level 5 기사가 영구히 박제됐다.
   // 반대로 순수 시간순으로 바꾸면 상단 두 줄이 칼럼·잡기사로 채워진다(실측).
   // → 시간 감쇠 점수: 6시간마다 레벨 1씩 깎는다.
-  const decay = (n: { level: number; epoch: number }) =>
-    n.level - (nowSec - n.epoch) / 3600 / 6;
+  // ★ 매체 가점을 더한다. 실측 사고: economy.ac(처음 보는 사이트)의 18분짜리
+  //   질문형 글이 CNBC 의 "SK Hynix shares plunge 13%"(163분)를 신선도로 이기고
+  //   방송 최상단을 차지했다. 점수에 매체가 아예 없었기 때문이다.
+  //   ※ 모르는 매체를 깎지 않고 아는 매체에 가점을 준다 — 처음 보는 매체가
+  //     진짜 특종을 내는 경우가 있다(이번 중국 반도체 1보가 The Information 이었다).
+  //   0.75 는 "4.5시간어치 신선도" 다. 대형 매체의 반나절 된 사건이
+  //   처음 보는 사이트의 방금 올라온 글보다 위여야 한다는 뜻이다.
+  const decay = (n: { level: number; epoch: number; source?: string }) =>
+    n.level + (isMajorOutlet(n.source ?? "") ? 0.75 : 0) - (nowSec - n.epoch) / 3600 / 6;
   const sorted = [...news].sort((a, b) => decay(b) - decay(a));
 
   // ★ 같은 사건을 다룬 기사 정리.
@@ -194,7 +201,13 @@ export const GET: RequestHandler = async () => {
   //   `matched || level >= 3` 이라 등급으로 그냥 통과한다 —
   //   실측: matched 를 지운 뒤에도 "Morning Bid: Markets dare to hope" 가 계속 최상단이었다.
   //   TOP STORY 선정은 목록 필터와 **다른 질문**이므로 여기서 따로 거른다.
-  const top = relevant.find((n) => !isColumnBrand(n.title)) ?? null;
+  // ★ 코너물에 더해 **해석·논평 형식**도 최상단 자격이 없다.
+  //   실측: "Did Trump's Subsidy Review Cause the Semiconductor Price Surge?
+  //          The Real Bottleneck Lies in Apple's Supplier"
+  //   질문은 사건이 아니다. 시청자가 여기서 알고 싶은 건 "무슨 일이 있었나"이지
+  //   "무엇이 원인이었을까?" 라는 물음이 아니다.
+  //   둘 다 목록에는 남긴다 — 내용 자체는 유효할 수 있다.
+  const top = relevant.find((n) => !isColumnBrand(n.title) && !isAnalysisForm(n.title)) ?? null;
 
   // ── TOP STORY ────────────────────────────────────────
   // 1순위: Claude Code 가 만든 판단 (신선할 때만)

@@ -238,9 +238,58 @@ export function isBlockedPublisher(source: string): boolean {
 //     "INVESTOR ALERT: The Hub Group, Inc. (NASDAQ: HUBG) Investors with Substantial Losses…"
 //   콜론 뒤 공백(`NASDAQ: HUBG`) 때문에 티커 패턴도 비껴갔다 → 공백을 허용한다.
 const PR_NOISE =
-  /(\((?:NASDAQ|NYSE|AMEX|OTCMKTS):\s?[A-Z.]{1,6}\)\s+(?:issues|announces|declares|schedules|reports|sets|files|investors)|investor alert|shareholder (?:alert|rights|investigation|deadline)|class action|securities fraud|law offices of|deadline reminder|encourages investors|investors with (?:substantial )?losses|contact the firm|shares? (?:gap|trading) (?:up|down)|stock (?:price )?(?:up|down) \d|given (?:a |an )?(?:average|consensus) rating|price target (?:raised|lowered|set|cut) (?:to|at)|short interest (?:up|down)|(?:position|stake|holdings) (?:boosted|lowered|trimmed|raised) by|buys new (?:shares|stake))/i;
+  /(earnings call (?:transcript|presentation|highlights|slides)|q[1-4] \d{4} (?:results|earnings) - (?:earnings call|results)|\((?:NASDAQ|NYSE|AMEX|OTCMKTS):\s?[A-Z.]{1,6}\)\s+(?:issues|announces|declares|schedules|reports|sets|files|investors)|investor alert|shareholder (?:alert|rights|investigation|deadline)|class action|securities fraud|law offices of|deadline reminder|encourages investors|investors with (?:substantial )?losses|contact the firm|shares? (?:gap|trading) (?:up|down)|stock (?:price )?(?:up|down) \d|given (?:a |an )?(?:average|consensus) rating|price target (?:raised|lowered|set|cut) (?:to|at)|short interest (?:up|down)|(?:position|stake|holdings) (?:boosted|lowered|trimmed|raised) by|buys new (?:shares|stake))/i;
 
 /** 자동생성 시세·보도자료 기사인가 (방송할 사건이 아니다) */
 export function isPressRelease(headline: string): boolean {
   return PR_NOISE.test(String(headline || ""));
+}
+
+// ============================================================
+//  논평·분석 **형식** 판정 — TOP STORY 자격
+//
+//  실측 사고: 방송 최상단에 이게 올라갔다.
+//    "Did Trump's Subsidy Review Cause the Semiconductor Price Surge?
+//     The Real Bottleneck Lies in Apple's Supplier"   (economy.ac, 18분)
+//  같은 화면 아래에는 진짜 사건이 있었다:
+//    "SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"  (CNBC, 163분)
+//  선정 점수가 `등급 − 나이/6시간` 뿐이라, 18분짜리 클릭베이트가 신선도로 이겼다.
+//
+//  ※ 형식으로 가른다. **질문은 사건이 아니다** — 누군가의 해석이다.
+//    시청자가 TOP STORY 에서 알고 싶은 건 "무슨 일이 일어났나"이지
+//    "무엇이 원인이었을까?" 라는 물음이 아니다.
+//  ※ isColumnBrand 와 같은 처리 — 목록에는 남기고 **최상단 자리만** 안 준다.
+//    내용 자체는 유효할 수 있다.
+// ============================================================
+const ANALYSIS_FORM = new RegExp([
+  // 의문사로 시작해 물음표가 따라오는 형식 — "Did X Cause Y?" "Is It Time To …?"
+  "^(?:did|do|does|is|are|was|were|will|would|should|can|could|has|have|how|why|what|which|who|when|where)\\b[^?]{0,140}\\?",
+  // 물음표로 끝나는 헤드라인 — 사건 보도는 이렇게 끝나지 않는다
+  "\\?\\s*$",
+  // 해설물 상투구
+  "^(?:here['\u2019]?s|the real\\b|what to know|everything you need|explained\\b|analysis:|opinion:|commentary:)",
+  "\\b(?:here['\u2019]?s why|here['\u2019]?s what|what it means for|the real (?:reason|bottleneck|story|winner|loser|problem|risk))\\b"
+].join("|"), "i");
+
+/** 사건 보도가 아니라 **해석·논평 형식**인가 (TOP STORY 최상단 자격 없음) */
+export function isAnalysisForm(headline: string): boolean {
+  return ANALYSIS_FORM.test(String(headline || ""));
+}
+
+// ============================================================
+//  매체 등급 — 순위의 보정항
+//
+//  왜 필요한가: 위 사고에서 economy.ac(처음 보는 사이트)가 CNBC 를 이겼다.
+//  점수에 매체가 아예 없었기 때문이다.
+//
+//  ※ **모르는 매체를 깎지 않고, 아는 매체에 가점을 준다.**
+//    처음 보는 매체가 진짜 특종을 낼 수 있다 — 이번 중국 반도체 국면의 1보가
+//    The Information 이었다. 감점 방식이면 그걸 묻어 버린다.
+// ============================================================
+const MAJOR_OUTLET =
+  /\b(reuters|bloomberg|cnbc|wall street journal|wsj|financial times|\bft\b|marketwatch|barron|associated press|\bap\b|axios|politico|nikkei|the economist|forbes|fortune|business insider|yahoo finance|the information|cnn|bbc|guardian|france ?24|npr|semafor|the verge|techcrunch|ars technica|digitimes)\b/i;
+
+/** 방송에 이름을 걸 만한 매체인가 → 순위 가점 */
+export function isMajorOutlet(source: string): boolean {
+  return MAJOR_OUTLET.test(String(source || ""));
 }

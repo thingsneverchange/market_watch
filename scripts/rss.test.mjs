@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseRss, unescapeXml, tagText } from "../src/lib/server/rss.ts";
-import { isBlockedPublisher, isPressRelease } from "../src/lib/server/headline.ts";
+import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet } from "../src/lib/server/headline.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => readFileSync(join(here, "fixtures", n + ".xml"), "utf8");
@@ -109,6 +109,11 @@ ok("집단소송 보도자료 차단 (실측)",
   isPressRelease("INVESTOR ALERT: The Hub Group, Inc. (NASDAQ: HUBG) Investors with Substantial Losses Have Opportunity to Lead Class Action"));
 ok("주주 알림 차단", isPressRelease("SHAREHOLDER ALERT: Pomerantz Law Firm Investigates Claims On Behalf of Investors"));
 ok("소송 마감 알림 차단", isPressRelease("DEADLINE REMINDER: Levi & Korsinsky Reminds Shareholders of Lawsuit"));
+// 실적콜 자료물 — Seeking Alpha·Yahoo 를 타고 들어와 매체 차단을 비껴간다
+ok("실적콜 프레젠테이션 차단 (실측)",
+  isPressRelease("Navitas Semiconductor Corporation 2026 Q2 - Results - Earnings Call Presentation"));
+ok("실적콜 하이라이트 차단 (실측)",
+  isPressRelease("Navitas Semiconductor Corp (NVTS) Q2 2026 Earnings Call Highlights: Revenue Surges"));
 ok("진짜 규제 기사는 통과",
   !isPressRelease("SEC opens investigation into Nvidia chip export practices"));
 ok("진짜 기사는 통과: CXMT",
@@ -125,6 +130,41 @@ ok("진짜 실적 기사는 통과",
   ok("게이트가 실제 피드를 전멸시키지 않는다", kept.length >= items.length * 0.5,
     `${kept.length}/${items.length} 통과`);
   ok("게이트 후에도 CXMT 기사가 남는다", kept.some((i) => /CXMT|466%/i.test(i.title)));
+}
+
+// ── TOP STORY 자격: 해석·논평 형식 ────────────────────
+ok("질문형 클릭베이트 차단 (실측)",
+  isAnalysisForm("Did Trump\u2019s Subsidy Review Cause the Semiconductor Price Surge? The Real Bottleneck Lies in Apple\u2019s Supplier"));
+ok("물음표로 끝나는 헤드라인 차단", isAnalysisForm("Is it time to buy the dip in semis?"));
+ok("해설물 상투구 차단", isAnalysisForm("Here\u2019s why the Fed may pause in September"));
+ok("The Real ~ 차단", isAnalysisForm("The Real Reason Chip Stocks Are Falling"));
+// ★ 진짜 사건은 전부 통과해야 한다 — 여기서 막히면 방송이 빈다
+ok("사건 통과: SK하이닉스 (실측, 이게 오늘의 TOP STORY 였어야 한다)",
+  !isAnalysisForm("SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"));
+ok("사건 통과: 아시아 급락", !isAnalysisForm("Seoul, Tokyo lead Asian plunge as tech stocks suffer fresh rout"));
+ok("사건 통과: ASML", !isAnalysisForm("ASML and U.S. chip stocks sink on report of China\u2019s DUV breakthrough"));
+ok("사건 통과: CXMT", !isAnalysisForm("Chipmaker CXMT\u2019s 466% market debut surge makes it the most valuable China-listed company"));
+ok("사건 통과: 연준", !isAnalysisForm("Fed holds rates steady, signals one cut this year"));
+ok("의문사로 시작해도 물음표 없으면 통과",
+  !isAnalysisForm("What Nvidia said about China demand sent chip stocks lower"));
+
+// ── 매체 등급 ─────────────────────────────────────────
+ok("CNBC 는 주요매체", isMajorOutlet("CNBC"));
+ok("Reuters 는 주요매체", isMajorOutlet("Reuters"));
+ok("France 24 는 주요매체", isMajorOutlet("France 24"));
+ok("The Information 은 주요매체", isMajorOutlet("The Information"));
+ok("economy.ac 는 아님 (실측)", !isMajorOutlet("economy.ac"));
+ok("빈 값은 아님", !isMajorOutlet(""));
+
+// 실측 사고 재현: 매체 가점이 순위를 뒤집는가
+{
+  const decay = (n, now) => n.level + (isMajorOutlet(n.source) ? 0.75 : 0) - (now - n.epoch) / 3600 / 6;
+  const now = 1_800_000_000;
+  const mill = { level: 4, source: "economy.ac", epoch: now - 18 * 60 };
+  const cnbc = { level: 4, source: "CNBC", epoch: now - 163 * 60 };
+  ok("CNBC 163분 기사가 무명 18분 기사를 이긴다",
+    decay(cnbc, now) > decay(mill, now),
+    `CNBC ${decay(cnbc, now).toFixed(2)} vs mill ${decay(mill, now).toFixed(2)}`);
 }
 
 console.log(`\nrss: ${pass} passed, ${fail} failed`);
