@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseRss, unescapeXml, tagText } from "../src/lib/server/rss.ts";
-import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet } from "../src/lib/server/headline.ts";
+import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet, marketEventScore } from "../src/lib/server/headline.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => readFileSync(join(here, "fixtures", n + ".xml"), "utf8");
@@ -165,6 +165,31 @@ ok("빈 값은 아님", !isMajorOutlet(""));
   ok("CNBC 163분 기사가 무명 18분 기사를 이긴다",
     decay(cnbc, now) > decay(mill, now),
     `CNBC ${decay(cnbc, now).toFixed(2)} vs mill ${decay(mill, now).toFixed(2)}`);
+}
+
+// ── 사건성 점수 ───────────────────────────────────────
+eq("방향 동사 + 폭", marketEventScore("SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"), 1);
+eq("다우 포인트", marketEventScore("Dow Jumps Over 400 Points; AstraZeneca Shares Rise After Q2 Earnings"), 1);
+eq("거래정지는 폭 없어도 사건", marketEventScore("Korean Markets Hit by Turmoil as Chip Rout Forces Trading Halts"), 0.6);
+eq("방향 동사만 (업계 전망일 수 있다)", marketEventScore("Automotive chip demand surges in 2Q26 on EV reset"), 0.3);
+eq("사건 아님", marketEventScore("SK Hynix HBM paradox: DDR5 builds leverage for HBM4 price hikes"), 0);
+
+// 실측 사고 2단계 재현: 사건성 가점이 순위를 바로잡는가
+{
+  const sc = (n, now) => n.level + (isMajorOutlet(n.source) ? 0.75 : 0) + marketEventScore(n.title)
+    - (now - n.epoch) / 3600 / 6;
+  const now = 1_800_000_000;
+  const hynix = { level: 4, source: "CNBC", epoch: now - 166 * 60,
+    title: "SK Hynix shares plunge 13% in Seoul as chip sell-off deepens" };
+  const trade = { level: 4, source: "digitimes", epoch: now - 120 * 60,
+    title: "Automotive chip demand surges in 2Q26 on EV reset" };
+  const mill = { level: 4, source: "economy.ac", epoch: now - 21 * 60,
+    title: "Did Trump\u2019s Subsidy Review Cause the Semiconductor Price Surge?" };
+  ok("SK하이닉스 급락이 업계 전망물을 이긴다",
+    sc(hynix, now) > sc(trade, now), `${sc(hynix, now).toFixed(2)} vs ${sc(trade, now).toFixed(2)}`);
+  ok("SK하이닉스 급락이 클릭베이트를 이긴다",
+    sc(hynix, now) > sc(mill, now), `${sc(hynix, now).toFixed(2)} vs ${sc(mill, now).toFixed(2)}`);
+  ok("클릭베이트는 형식 게이트에서도 최상단 자격이 없다", isAnalysisForm(mill.title));
 }
 
 console.log(`\nrss: ${pass} passed, ${fail} failed`);

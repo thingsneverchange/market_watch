@@ -5,7 +5,7 @@ import { getWireNews } from "$lib/server/newswire";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
-import { isFragment, contradictsLive, isColumnBrand, isAnalysisForm, isMajorOutlet } from "$lib/server/headline";
+import { isFragment, contradictsLive, isColumnBrand, isAnalysisForm, isMajorOutlet, marketEventScore } from "$lib/server/headline";
 import { getFutures } from "$lib/server/finviz";
 import { getBtc } from "$lib/server/coingecko";
 import { recordStory, previousStories } from "$lib/server/storylog";
@@ -160,8 +160,16 @@ export const GET: RequestHandler = async () => {
   //     진짜 특종을 내는 경우가 있다(이번 중국 반도체 1보가 The Information 이었다).
   //   0.75 는 "4.5시간어치 신선도" 다. 대형 매체의 반나절 된 사건이
   //   처음 보는 사이트의 방금 올라온 글보다 위여야 한다는 뜻이다.
-  const decay = (n: { level: number; epoch: number; source?: string }) =>
-    n.level + (isMajorOutlet(n.source ?? "") ? 0.75 : 0) - (nowSec - n.epoch) / 3600 / 6;
+  //   ★ 2단계 사고: 매체 가점만 넣었더니 이번엔 업계 전망물이 최상단에 왔다
+  //     ("Automotive chip demand surges in 2Q26 on EV reset", digitimes 120분)
+  //     — 그 시각 SOXX 는 −3.63% 였고 "SK Hynix plunge 13%"(CNBC)가 목록에 있었다.
+  //     빠져 있던 건 **"무슨 일이 일어났는가"** 다. 마켓 방송의 최상단은 해설도
+  //     전망도 아니고 시장이 움직인 사건이어야 한다 → marketEventScore.
+  const decay = (n: { level: number; epoch: number; source?: string; title: string }) =>
+    n.level
+    + (isMajorOutlet(n.source ?? "") ? 0.75 : 0)
+    + marketEventScore(n.title)
+    - (nowSec - n.epoch) / 3600 / 6;
   const sorted = [...news].sort((a, b) => decay(b) - decay(a));
 
   // ★ 같은 사건을 다룬 기사 정리.

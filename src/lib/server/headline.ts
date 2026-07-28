@@ -293,3 +293,52 @@ const MAJOR_OUTLET =
 export function isMajorOutlet(source: string): boolean {
   return MAJOR_OUTLET.test(String(source || ""));
 }
+
+// ============================================================
+//  "이게 시장 사건인가" — 순위의 두 번째 보정항
+//
+//  실측 사고 2단계. 매체 가점을 넣어 클릭베이트를 최상단에서 밀어냈더니
+//  이번엔 이게 올라왔다:
+//    "Automotive chip demand surges in 2Q26 on EV reset"  (digitimes, 120분)
+//  같은 화면 아래:
+//    "SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"  (CNBC, 166분)
+//    "Korean Markets Hit by Turmoil as Chip Rout Forces Trading Halts"  (Bloomberg, 48분)
+//  그 시각 SOXX 는 −3.63%. 화면의 테이프가 말하는 것과 헤드라인이 정확히 겹치는데도
+//  업계 수요 전망이 최상단을 차지했다.
+//
+//  빠져 있던 건 매체가 아니라 **"무슨 일이 일어났는가"** 였다.
+//  마켓 방송의 TOP STORY 는 해설도 전망도 아니고 **시장이 움직인 사건**이어야 한다.
+//  그건 헤드라인 형태로 꽤 정확히 드러난다 — 방향 동사 + 폭.
+// ============================================================
+
+/** 시장이 실제로 움직였다고 말하는 동사 */
+const MOVE_VERB =
+  /\b(?:plunge[sd]?|plummet\w*|tumble[sd]?|slump\w*|sink[s]?|sank|slide[sd]?|crash\w*|collapse[sd]?|rout\w*|sell-?off|selloff|nosedive[sd]?|crater\w*|surge[sd]?|soar\w*|spike[sd]?|jump\w*|rally|rallie[sd]|rebound\w*|skyrocket\w*|halt(?:s|ed)?|suspend(?:s|ed)?|freefall|free fall|slid|fell|drop\w*|climb\w*|gain\w*|lose[s]?|lost)\b/i;
+
+/** 폭이 붙어 있는가 — "13%", "600 points", "$4bn" */
+// ★ % 뒤에 \b 를 붙이면 안 된다. "%" 도 뒤의 공백도 비단어 문자라 경계가 성립하지 않아
+//   "plunge 13% in Seoul" 이 통째로 매치에 실패한다(실측으로 잡힌 버그).
+//   단어로 끝나는 단위에만 \b 를 붙인다.
+const MAGNITUDE = /\d[\d,.]*\s*(?:%|percent\b|points?\b|pts?\b|bps\b)|[$€£]\s?\d[\d,.]*\s*(?:bn|billion|tn|trillion|million)?/i;
+
+/** 시장 스트레스 자체를 가리키는 말 — 폭이 없어도 사건이다 */
+const STRESS =
+  /\b(?:trading halt\w*|circuit breaker\w*|limit down|limit up|turmoil|rout|panic|capitulation|margin call\w*|flash crash|bear market|correction territory)\b/i;
+
+/**
+ * 이 헤드라인이 **시장 사건**을 말하는 정도. 순위에 더할 가점.
+ *
+ *  1.0 — 방향 동사 + 폭 ("plunge 13%", "Dow jumps 600 points")
+ *  0.6 — 시장 스트레스 표현 (거래정지·루트·서킷브레이커)
+ *  0.3 — 방향 동사만 ("chip demand surges") — 사건일 수도, 업계 전망일 수도 있다
+ *  0   — 그 외
+ *
+ * ※ 이건 사건성을 재는 것이지 중요도가 아니다. 중요도는 level 이 이미 담당한다.
+ */
+export function marketEventScore(headline: string): number {
+  const s = String(headline || "");
+  const verb = MOVE_VERB.test(s);
+  if (verb && MAGNITUDE.test(s)) return 1;
+  if (STRESS.test(s)) return 0.6;
+  return verb ? 0.3 : 0;
+}
