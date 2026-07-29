@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseRss, unescapeXml, tagText } from "../src/lib/server/rss.ts";
-import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet, marketEventScore } from "../src/lib/server/headline.ts";
+import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet, marketEventScore, recencyBonus } from "../src/lib/server/headline.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => readFileSync(join(here, "fixtures", n + ".xml"), "utf8");
@@ -205,6 +205,35 @@ eq("사건 아님", marketEventScore("SK Hynix HBM paradox: DDR5 builds leverage
   ok("SK하이닉스 급락이 클릭베이트를 이긴다",
     sc(hynix, now) > sc(mill, now), `${sc(hynix, now).toFixed(2)} vs ${sc(mill, now).toFixed(2)}`);
   ok("클릭베이트는 형식 게이트에서도 최상단 자격이 없다", isAnalysisForm(mill.title));
+}
+
+// ── 정책 결정은 그날 최대 사건이다 (실측 사고) ────────
+eq("FOMC 동결 (실측)", marketEventScore("Divided Fed holds interest rates steady, but three members voted to hike"), 1.2);
+eq("금리 동결 축약형", marketEventScore("Fed holds interest rates steady in split decision"), 1.2);
+eq("인하", marketEventScore("Fed cuts rates by 25 basis points"), 1.2);
+eq("ECB", marketEventScore("ECB leaves rates unchanged as inflation cools"), 1.2);
+ok("정책 결정이 가격 기사보다 높다",
+  marketEventScore("Fed holds interest rates steady in split decision")
+  > marketEventScore("Oil Spikes 7%, VIX Up 10% As Nasdaq 100 Sink Before Fed"));
+eq("정책 아닌 기사는 그대로", marketEventScore("SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"), 1);
+
+// 신선도 가점
+eq("방금(30초)", recencyBonus(0.5), 1);
+eq("10분", recencyBonus(10), 1);
+eq("30분", recencyBonus(30), 0.5);
+eq("50분", recencyBonus(49.6), 0);
+eq("음수 방어", recencyBonus(-5), 0);
+
+// ★ 실측 사고 재현: 30초 전 FOMC 가 50분 전 유가 기사를 이기는가
+{
+  const sc = (n) => n.level + (isMajorOutlet(n.src, n.host) ? 0.75 : 0)
+    + marketEventScore(n.t) + recencyBonus(n.age) - n.age / 60 / 6;
+  const fed  = { level: 5, src: "CNBC", host: "", age: 0.5,
+    t: "Divided Fed holds interest rates steady, but three members voted to hike" };
+  const oil  = { level: 5, src: "Benzinga", host: "benzinga.com", age: 49.6,
+    t: "Oil Spikes 7%, VIX Up 10% As Nasdaq 100 Sink Before Fed" };
+  ok("30초 전 FOMC 가 50분 전 유가 기사를 이긴다",
+    sc(fed) > sc(oil), `FOMC ${sc(fed).toFixed(2)} vs OIL ${sc(oil).toFixed(2)}`);
 }
 
 console.log(`\nrss: ${pass} passed, ${fail} failed`);

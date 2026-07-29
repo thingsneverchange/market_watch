@@ -5,7 +5,7 @@ import { getWireNews } from "$lib/server/newswire";
 import { checkSuperseded } from "$lib/server/supersede";
 import { earnPendingFrom } from "$lib/server/et-time";
 import { dropNearDuplicates, isNearDuplicate } from "$lib/server/dedupe";
-import { isFragment, contradictsLive, isColumnBrand, isAnalysisForm, isMajorOutlet, marketEventScore } from "$lib/server/headline";
+import { isFragment, contradictsLive, isColumnBrand, isAnalysisForm, isMajorOutlet, marketEventScore, recencyBonus } from "$lib/server/headline";
 import { getFutures } from "$lib/server/finviz";
 import { getBtc } from "$lib/server/coingecko";
 import { recordStory, previousStories } from "$lib/server/storylog";
@@ -179,6 +179,10 @@ export const GET: RequestHandler = async () => {
     // 표시명 부분매칭이던 시절엔 "cnbc-live.info" 같은 유사 도메인이 그냥 가점을 가져갔다.
     + (isMajorOutlet(n.source ?? "", n.srcHost) ? 0.75 : 0)
     + marketEventScore(n.title)
+    // ★ 속보 구간 가점. 기존 감쇠(나이/6시간)는 50분이 겨우 0.138점이라
+    //   매체 가점(0.75)보다도 작았다 — "방금"과 "한 시간 전"이 사실상 동점이었다.
+    //   실측: FOMC 발표 30초 뒤인데 50분 전 유가 기사가 상단을 차지했다.
+    + recencyBonus((nowSec - n.epoch) / 60)
     - (nowSec - n.epoch) / 3600 / 6;
   const sorted = [...news].sort((a, b) => decay(b) - decay(a));
 

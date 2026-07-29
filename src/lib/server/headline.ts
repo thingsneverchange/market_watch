@@ -358,6 +358,21 @@ const MOVE_VERB =
 //   단어로 끝나는 단위에만 \b 를 붙인다.
 const MAGNITUDE = /\d[\d,.]*\s*(?:%|percent\b|points?\b|pts?\b|bps\b)|[$€£]\s?\d[\d,.]*\s*(?:bn|billion|tn|trillion|million)?/i;
 
+/**
+ * ★ **정책 결정** — 방향 동사도 퍼센트도 없지만 그날 최대 사건이다.
+ *
+ * 실측 사고 (2026-07-29 FOMC, 14:00 ET):
+ *   "Divided Fed holds interest rates steady, but three members voted to hike"  (CNBC, 30초)
+ *     → 사건성 0점.  "holds" 도 "steady" 도 방향 동사가 아니고 숫자도 없다.
+ *   "Oil Spikes 7%, VIX Up 10% As Nasdaq 100 Sink Before Fed"  (Benzinga, 50분)
+ *     → 사건성 1.0.  결국 **50분 전 유가 기사가 방금 나온 연준 발표를 이겼다**(5.862 vs 5.749).
+ *
+ * 가격이 움직인 것만 사건으로 세면 **가격을 움직이는 결정 자체**를 놓친다.
+ * 발표가 먼저고 가격은 그 뒤에 따라온다 — 방송이 먼저 말해야 하는 건 발표다.
+ */
+const POLICY_ACTION =
+  /\b(?:fomc|fed(?:eral reserve)?|ecb|boj|bank of (?:england|japan|canada)|rba)\b[^.]{0,60}\b(?:hold[s]?|keep[s]?|leave[s]?|cut[s]?|rais(?:e|es)|hike[s]?|lower[s]?|decision|decide[s]?|vote[s]?)\b|\b(?:rate decision|holds? (?:rates?|interest rates?)|cuts? (?:rates?|interest rates?)|raises? (?:rates?|interest rates?)|rates? (?:steady|unchanged|on hold)|basis points?|\bbps\b)\b/i;
+
 /** 시장 스트레스 자체를 가리키는 말 — 폭이 없어도 사건이다 */
 const STRESS =
   /\b(?:trading halt\w*|circuit breaker\w*|limit down|limit up|turmoil|rout|panic|capitulation|margin call\w*|flash crash|bear market|correction territory)\b/i;
@@ -374,8 +389,29 @@ const STRESS =
  */
 export function marketEventScore(headline: string): number {
   const s = String(headline || "");
+  // 정책 결정이 최우선이다 — 가격은 그 결정을 따라 움직인다
+  if (POLICY_ACTION.test(s)) return 1.2;
   const verb = MOVE_VERB.test(s);
   if (verb && MAGNITUDE.test(s)) return 1;
   if (STRESS.test(s)) return 0.6;
   return verb ? 0.3 : 0;
+}
+
+// ============================================================
+//  신선도 가점 — **방송은 속도가 생명이다**
+//
+//  기존 점수의 나이 항은 `나이/6시간` 뿐이라 50분이 겨우 0.138점이었다.
+//  매체 가점(0.75)보다도 훨씬 작다 — 즉 "한 시간 전 기사"와 "방금 나온 기사"를
+//  사실상 같게 취급했다. 라이브 마켓 방송에서 그건 거꾸로다.
+//  실측: FOMC 발표 30초 뒤인데도 50분 전 기사가 상단을 차지했다.
+//
+//  ※ 기존 감쇠는 그대로 둔다(긴 꼬리를 다루는 항이라 잘 돌고 있었다).
+//    여기서는 **속보 구간에만** 가점을 얹는다.
+// ============================================================
+export function recencyBonus(ageMin: number): number {
+  const a = Number(ageMin);
+  if (!Number.isFinite(a) || a < 0) return 0;
+  if (a <= 10) return 1;      // 방금 터졌다
+  if (a <= 30) return 0.5;    // 아직 진행 중인 사건
+  return 0;
 }
