@@ -41,21 +41,27 @@ BUDGET="${DAILY_LLM_BUDGET:-$BUDGET_DEFAULT}"
 #  REG = 정규장 / EXT = 프리·애프터 / OFF = 밤·주말
 #
 #  배분 근거 (평일 기준 합계 ≈ 20):
-#    top_story 8 + market_focus 5 + market_brief 3 + earnings_recap 1 + live_videos 1
-#    + key_event 1 + macro_recap 1  = 20
+#    top_story 8 + market_focus 6 + market_brief 3 + earnings_recap 1 + live_videos 1
+#    + key_event 1 + macro_recap 1  = 21  (야간 간격을 늘려 실사용은 20 안쪽)
 #  ※ market_focus 를 넣으면서 brief·recap·videos 에서 4회를 빼 왔다.
 #    "지금 시장이 무엇에 꽂혀 있나"가 이 방송에서 가장 자주 바뀌는 정보다.
 interval_for() { # interval_for KIND SLOT → 분 (0 = 안 함)
   case "$1:$2" in
     top_story:REG)      echo 110 ;;   # 장중 4회
     top_story:EXT)      echo 200 ;;   # 프리·애프터 3회
-    top_story:OFF)      echo 360 ;;   # 밤 1회
+    top_story:OFF)      echo 420 ;;   # 밤 1회 (market_focus 야간 1회를 위해 살짝 늘렸다)
     # ★ 지금 시장이 무엇에 꽂혀 있나 — 규칙으로는 메가캡 목록밖에 안 나온다.
     #   "메모리 사이클이 끝나는가" 같은 **논쟁**은 판단이라 LLM 이 해야 한다.
     #   장중에 자주 본다 — 화두는 장중에 바뀐다.
     market_focus:REG)   echo 120 ;;   # 장중 4회
     market_focus:EXT)   echo 480 ;;   # 프리·애프터 1회
-    market_focus:OFF)   echo 0   ;;
+    #  ★ 야간에 0(=안 돎)이었다. 그런데 db.mjs 의 유효기간이 9시간이라
+    #    밤 8시간을 못 버티고 반드시 만료됐다 → MARKET FOCUS 가 밤새 규칙 기반으로
+    #    떨어져 "메가캡 실적 목록"만 나왔다. 실측: 마지막 생성 789분(13.2시간) 전.
+    #    게다가 이 방송의 주 시청자는 한국이라 **미국 야간이 곧 한국 낮**이다 —
+    #    사람이 가장 많이 보는 시간에 이 계층이 꺼져 있었던 셈이다.
+    #    420분(7시간)이면 9시간 유효기간 안에 반드시 한 번 갱신된다.
+    market_focus:OFF)   echo 420 ;;   # 밤 1회 (유효기간 9h 안에 갱신되게)
     market_brief:REG)   echo 200 ;;   # 장중 2회 (market_focus 에 자리를 내줬다)
     market_brief:EXT)   echo 400 ;;   # 1회
     market_brief:OFF)   echo 0   ;;

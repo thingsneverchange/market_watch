@@ -121,7 +121,15 @@ const THEME_NOTE: Record<string, string> = {
   GDP: "Growth data decides between soft landing and slowdown.",
   BONDS: "Yields are the hurdle rate megacap valuations are measured against.",
   TRADE: "Tariffs hit importer margins and China-exposed revenue first.",
-  CHIPS: "Semis lead the index — they carry the AI capex cycle.",
+  // ★ 예전 문구: "Semis lead the index — they carry the AI capex cycle."
+  //   이 주석은 "메커니즘이라 틀릴 일이 없다"고 주장했는데 **틀렸다.**
+  //   2026-07-29 실측: SOXX −4.80%, 코스피 −8%. 원인은 AI 설비투자가 아니라
+  //   중국 CXMT(창신메모리) 상장에 따른 **범용 메모리 공급 확대와 마진 압박**이었다
+  //   (Micron·SanDisk·SK하이닉스 급락 기사들이 전부 CXMT 를 지목했다).
+  //   즉 화면이 하락을 **정반대 메커니즘**으로 설명하고 있었다.
+  //   고정 문장은 국면이 바뀌면 이렇게 뒤집힌다 → 국면을 특정하지 않는 문장으로 바꾼다.
+  //   "무엇이 이번 국면의 원인인가"는 MARKET FOCUS(LLM)가 답할 자리다.
+  CHIPS: "Semis carry the largest swing in this index — both pricing and supply move them.",
   CRYPTO: "Crypto trades as the highest-beta read on risk appetite.",
   FX: "A stronger dollar squeezes overseas earnings and commodities.",
   EARNINGS: "Guidance moves the tape more than the quarter just reported.",
