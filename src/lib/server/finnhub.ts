@@ -622,7 +622,11 @@ export async function getAvgVolumes(tickers: string[]): Promise<Map<string, numb
     if (hit && now - hit.at < hit.ttl) out.set(t, hit.v);
     else todo.push(t);
   }
-  await Promise.all(todo.slice(0, 8).map(async (t) => {
+  // ★ 한 번에 3개만. 저우선 쿼터(분당 16)를 시총 스윕(호출당 6)이 먼저 먹으면
+  //   8개를 한꺼번에 달라고 할 때 **전부 예산에서 잘려 영원히 안 찬다.**
+  //   이 저장소가 기업뉴스에서 이미 겪은 굶주림과 같은 형태다(0.07 req/min/ticker 였다).
+  //   24시간 캐시라 3개씩만 채워도 몇 번의 폴이면 다 찬다.
+  await Promise.all(todo.slice(0, 3).map(async (t) => {
     const j = await fhFetch(`/stock/metric?symbol=${encodeURIComponent(t)}&metric=all`, AVGVOL_TTL, true);
     const m = Number(j?.metric?.["10DayAverageTradingVolume"]);
     const v = Number.isFinite(m) && m > 0 ? Math.round(m * 1e6) : null;   // 백만 주 → 주
