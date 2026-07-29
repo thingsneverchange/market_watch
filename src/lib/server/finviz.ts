@@ -103,12 +103,41 @@ function parse(j: any): Map<string, FutQuote> {
   return out;
 }
 
+// ★ 폴백 값의 **최대 나이**. 예전엔 상한이 아예 없어서, Finviz 가 403 을 뱉기 시작하면
+//   마지막 성공 Map 을 **영원히** 반환했다. finnhub.ts 에는 같은 목적의 MAX_STALE_MS(5분)가
+//   있는데 여기만 없었다. 게다가 화면의 live 플래그는 시세 나이가 아니라 **벽시계**에서
+//   나왔기 때문에, 몇 시간 전에 멈춘 값이 완전한 밝기로 "지금 값"처럼 방송됐다.
+//   여기서는 넉넉히 자르기만 하고, "지금 값인가"의 판정은 asOf 로 호출부가 한다
+//   (그래야 값을 지우는 대신 나이를 드러낼 수 있다).
+const MAX_FALLBACK_MS: Record<Timeframe, number> = {
+  m5: 6 * 3600_000,    // 5분봉이 6시간 넘게 안 갱신되면 정보가 아니다
+  h1: 24 * 3600_000,   // h1·d1 은 컨트롤에서 골랐을 때만 채워지고 원래 느리다
+  d1: 72 * 3600_000
+};
+
+/** 이 시세가 "지금 움직이는 값"으로 볼 만큼 신선한가. 호출부가 live 판정에 쓴다. */
+export const FUT_LIVE_MS = 10 * 60_000;
+export function futIsFresh(q: { asOf: number } | undefined | null, now = Date.now()): boolean {
+  return !!q && Number.isFinite(q.asOf) && now - q.asOf < FUT_LIVE_MS;
+}
+
+/** 캐시가 쓸 만한 나이인가 — 넘으면 빈 Map (아무것도 없는 게 낫다) */
+function usable(s: Slot, tf: Timeframe, now: number): Map<string, FutQuote> {
+  if (!s.cache) return new Map();
+  const age = now - s.cache.at;
+  if (age > (MAX_FALLBACK_MS[tf] ?? MAX_FALLBACK_MS.m5)) {
+    console.warn(`[finviz:${tf}] 캐시가 ${Math.round(age / 60000)}분 지남 — 폐기`);
+    return new Map();
+  }
+  return s.cache.data;
+}
+
 /** 전 선물/원자재 시세 (60초 캐시). 실패 시 마지막 값, 그것도 없으면 빈 Map. */
 export async function getFutures(tf: Timeframe = "m5"): Promise<Map<string, FutQuote>> {
   const s = slots[tf] ?? slots.m5;
   const now = Date.now();
   if (s.cache && now - s.cache.at < TTL_MS) return s.cache.data;
-  if (s.failUntil > now) return s.cache?.data ?? new Map();
+  if (s.failUntil > now) return usable(s, tf, now);
   if (s.inflight) return s.inflight;
 
   s.inflight = (async () => {
@@ -124,19 +153,19 @@ export async function getFutures(tf: Timeframe = "m5"): Promise<Map<string, FutQ
       if (!r.ok) {
         s.failUntil = Date.now() + FAIL_MS;
         console.warn(`[finviz:${tf}] ${r.status} — 마지막 값으로 폴백`);
-        return s.cache?.data ?? new Map();
+        return usable(s, tf, Date.now());
       }
       const data = parse(await r.json());
       if (data.size === 0) {
         s.failUntil = Date.now() + FAIL_MS;
-        return s.cache?.data ?? new Map();
+        return usable(s, tf, Date.now());
       }
       s.cache = { at: Date.now(), data };
       return data;
     } catch (e: any) {
       s.failUntil = Date.now() + FAIL_MS;
       console.warn(`[finviz:${tf}] 연결 실패 (${e?.name ?? e}) — 마지막 값으로 폴백`);
-      return s.cache?.data ?? new Map();
+      return usable(s, tf, Date.now());
     } finally {
       clearTimeout(timer);
       s.inflight = null;

@@ -84,8 +84,19 @@ function stdev(xs: number[]): number {
   return Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
 }
 
-/** 봉 간격(분)과 마지막 시각마크로부터의 지연(봉) */
-function grid(q: FutQuote): { mpb: number; lag: number; anchor: string } | null {
+/**
+ * 봉 간격(분)·마지막 시각마크로부터의 지연(봉)·**최근 창의 연속성**.
+ *
+ * ★ 연속성을 따로 보는 이유:
+ *   스파크라인은 그냥 배열이라 **거래가 멈춘 구간이 그대로 이어 붙는다.**
+ *   일요일 18:05 ET 기준 마지막 6봉은
+ *     [금 16:35, 16:40, 16:45, 16:50, 일 18:00, 18:05]
+ *   이고 그 사이엔 49시간이 들어 있다. 마지막 두 마크만 보고 "5분/봉" 이라 믿으면
+ *   **주말 갭을 30분 움직임으로 방송**하게 된다. 매일 17–18시 ET 정비시간도 같다.
+ *   그래서 마크 구간을 전부 계산해 **최빈 간격**을 구하고, 최근 창 안에 그보다
+ *   크게 벌어진 구간이 있으면 판정을 포기한다.
+ */
+function grid(q: FutQuote): { mpb: number; lag: number; anchor: string; contiguous: boolean } | null {
   const pts = Object.entries(q.marks ?? {})
     .map(([i, l]) => ({ i: Number(i), l: String(l) }))
     .filter((p) => Number.isInteger(p.i) && p.l in CLOCK)
@@ -96,7 +107,28 @@ function grid(q: FutQuote): { mpb: number; lag: number; anchor: string } | null 
   if (bars <= 0) return null;
   const mpb = (((CLOCK[b.l] - CLOCK[a.l]) + 1440) % 1440) / bars;
   if (!Number.isFinite(mpb) || mpb <= 0) return null;
-  return { mpb, lag: q.spark.length - 1 - b.i, anchor: b.l };
+
+  // 구간별 간격을 전부 계산해 최솟값을 "정상 간격"으로 본다.
+  // (갭이 낀 구간만 크게 나오므로 최솟값이 곧 실제 봉 간격이다)
+  let normal = mpb;
+  for (let i = 1; i < pts.length; i++) {
+    const nb = pts[i].i - pts[i - 1].i;
+    if (nb <= 0) continue;
+    const m = (((CLOCK[pts[i].l] - CLOCK[pts[i - 1].l]) + 1440) % 1440) / nb;
+    if (Number.isFinite(m) && m > 0 && m < normal) normal = m;
+  }
+  // 최근 창(마지막 K봉)이 걸쳐 있는 마크 구간 중 정상 간격의 1.5배를 넘는 게 있으면 갭이다
+  const n = q.spark.length;
+  const winStart = n - 1 - K;
+  let contiguous = true;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].i < winStart) continue;               // 창 밖 구간은 볼 필요 없다
+    const nb = pts[i].i - pts[i - 1].i;
+    if (nb <= 0) continue;
+    const m = (((CLOCK[pts[i].l] - CLOCK[pts[i - 1].l]) + 1440) % 1440) / nb;
+    if (Number.isFinite(m) && m > normal * 1.5) { contiguous = false; break; }
+  }
+  return { mpb, lag: n - 1 - b.i, anchor: b.l, contiguous };
 }
 
 type Leg = { key: string; name: string; pct: number; z: number; rets: number[] };
@@ -135,13 +167,16 @@ export function getTapeRead(fut: Map<string, FutQuote>): TapeRead {
   if (!nq) return blank("nodata", "NO TAPE DATA");
   const g0 = grid(nq);
   if (!g0) return blank("nodata", "NO TAPE DATA");
+  // 재개장 직후엔 최근 창이 휴장 구간을 물고 있다 → 봉이 충분히 쌓일 때까지 아무 말도 안 한다.
+  // tape.ts 는 원래 warming 티어를 설계해 뒀는데 판정이 연결돼 있지 않았다.
+  if (!g0.contiguous) return blank("warming", "TAPE REOPENED — WARMING UP");
   const windowMin = Math.round(g0.mpb * K);
 
   // 격자 정렬 — NQ 와 같은 간격·지연인 것만 같은 창으로 인정한다
   const aligned = new Map<string, FutQuote>();
   for (const [k, q] of fut) {
     const g = grid(q);
-    if (g && g.mpb === g0.mpb && g.lag === g0.lag && g.anchor === g0.anchor) aligned.set(k, q);
+    if (g && g.contiguous && g.mpb === g0.mpb && g.lag === g0.lag && g.anchor === g0.anchor) aligned.set(k, q);
   }
 
   const legs: Leg[] = [];
@@ -210,9 +245,12 @@ export function getTapeRead(fut: Map<string, FutQuote>): TapeRead {
       }
     }
   }
-  if (!shape) {
+  // ★ 코호트가 3개 미만이면 폭(breadth)을 **주장하지 않는다.**
+  //   격자 정렬은 부동소수 3개의 정확한 일치를 요구하므로 코호트가 NQ 하나만 남을 수 있고,
+  //   그때 예전 코드는 "SPLIT · 1/1 DOWN" 이라고 찍었다 — 1개로 폭을 말하는 건 무의미하다.
+  if (!shape && legs.length >= 3) {
     const same = legs.filter((l) => Math.sign(l.pct) === Math.sign(nqLeg.pct) && Math.abs(l.pct) >= 0.1);
-    shape = same.length === legs.length && legs.length >= 3
+    shape = same.length === legs.length
       ? `BROAD · ${same.length}/${legs.length} ${nqLeg.pct >= 0 ? "UP" : "DOWN"}`
       : `SPLIT · ${same.length}/${legs.length} ${nqLeg.pct >= 0 ? "UP" : "DOWN"}`;
   }

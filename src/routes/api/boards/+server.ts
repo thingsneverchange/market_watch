@@ -1,6 +1,6 @@
 import type { RequestHandler } from "./$types";
 import { getQuotes, INDEX_TICKERS, TAPE_TICKERS, type Quote } from "$lib/server/finnhub";
-import { getFutures } from "$lib/server/finviz";
+import { getFutures, futIsFresh } from "$lib/server/finviz";
 import { getTapeRead } from "$lib/server/tape";
 import { getBtc } from "$lib/server/coingecko";
 import { marketState, futuresSession } from "$lib/market-hours";
@@ -51,6 +51,11 @@ export const GET: RequestHandler = async () => {
   const slot = (k: string, price: number, pct: number, live: boolean): Slot =>
     ({ k, v: fmt(price), pct, live });
   const F = (k: string) => fut.get(k);
+  // ★ 선물의 live 는 **벽시계가 아니라 시세 나이**로 정한다.
+  //   예전엔 futOpen(=Globex 가 열려 있나) 하나로 판정했다. 그래서 Finviz 가 죽어
+  //   값이 몇 시간 전에 멈춰도 화면은 완전한 밝기로 "지금 값"이라고 말했다.
+  //   장이 열려 있는 것과 우리 데이터가 살아 있는 것은 다른 얘기다.
+  const futLive = (k: string) => futOpen && futIsFresh(fut.get(k));
 
   // ── 지수 3슬롯 ──────────────────────────────
   //  정규장 → 현물 지수(Finnhub, 실시간)
@@ -70,7 +75,7 @@ export const GET: RequestHandler = async () => {
     ];
     for (const [fk, label, fallbackTicker] of pairs) {
       const f = F(fk);
-      if (f) { indexSlots.push(slot(label, f.price, f.changePct, futOpen)); continue; }
+      if (f) { indexSlots.push(slot(label, f.price, f.changePct, futLive(fk))); continue; }
       const q = by.get(fallbackTicker); // 선물이 안 오면 현물(전일 종가)로라도
       if (q) indexSlots.push(slot(LABEL[fallbackTicker] ?? fallbackTicker, q.price, q.changePct, regularOpen));
     }
@@ -82,8 +87,8 @@ export const GET: RequestHandler = async () => {
   const qSOXX = by.get("SOXX");
   if (qSOXX) crossSlots.push(slot("SOXX", qSOXX.price, qSOXX.changePct, regularOpen));
 
-  const gc = F("GC"); if (gc) crossSlots.push(slot("GOLD", gc.price, gc.changePct, futOpen));
-  const cl = F("CL"); if (cl) crossSlots.push(slot("OIL", cl.price, cl.changePct, futOpen));
+  const gc = F("GC"); if (gc) crossSlots.push(slot("GOLD", gc.price, gc.changePct, futLive("GC")));
+  const cl = F("CL"); if (cl) crossSlots.push(slot("OIL", cl.price, cl.changePct, futLive("CL")));
 
   // ★ BTC 는 **CoinGecko 현물이 우선**이다.
   //   Finviz 의 "BTC" 는 CME 비트코인 **선물**이라 주말·야간 정비시간에 멈춘다.
@@ -93,14 +98,14 @@ export const GET: RequestHandler = async () => {
   if (btcFallback) crossSlots.push(slot("BTC", btcFallback.price, btcFallback.changePct, true));
   else {
     const fb = F("BTC");   // 코인게코가 죽었을 때만 선물로 폴백
-    if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct, futOpen));
+    if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct, futLive("BTC")));
   }
 
   // ★ 라벨은 "VIX FUT" 이다. Finviz 의 VX 는 **VIX 선물 최근월물**이지 VIX 지수 현물이 아니다.
   //   평온한 장에선 선물이 현물보다 높고(콘탱고), 충격이 오면 현물보다 훨씬 낮다(백워데이션).
   //   즉 **가장 중요한 순간에 오차가 가장 크다** — 현물이 10포인트 튈 때 선물은 4포인트만 움직인다.
   //   이 저장소는 이미 지수선물을 "NASDAQ FUT" 으로 구분하고 있다. 같은 규칙을 적용한다.
-  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX FUT", vx.price, vx.changePct, futOpen));
+  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX FUT", vx.price, vx.changePct, futLive("VX")));
 
   const top = [...indexSlots, ...crossSlots];
 
@@ -148,10 +153,12 @@ export const GET: RequestHandler = async () => {
           spark: sample(f.spark),
           // 전일 정산가 = 차트의 "보합선". 이게 있어야 25시간 곡선과 등락률이 같은 얘기를 한다
           base: f.prevClose,
-          // 선물이라 Globex 시계를 따른다 (매일 17–18시 ET 휴식, 주말 정지)
-          live: futOpen
+          // Globex 시계 **그리고** 시세가 실제로 갱신되고 있는가 — 둘 다여야 live 다
+          live: futLive(key)
         }
-      : { key, label, pct: 0, price: "—", abs: null, spark: [] as number[], base: null, live: false };
+      : // ★ pct 를 0 으로 채우면 화면이 초록 +0.00% 를 **확정값처럼** 그린다.
+        //   심볼이 안 온 것과 "보합"은 완전히 다른 얘기다 → null 로 두고 화면이 —— 를 찍게 한다.
+        { key, label, pct: null as number | null, price: "—", abs: null, spark: [] as number[], base: null, live: false };
   });
 
   return new Response(

@@ -106,7 +106,7 @@
   //  나스닥 선물 움직임을 못 보여준다. Finviz 추이로 직접 그려 그 제약을 없앴다.
   //  덤: iframe 3개가 사라져 24시간 방송의 메모리·CPU 부담도 크게 줄었다.
   let minis: {
-    key: string; label: string; pct: number; price: string; abs: string | null;
+    key: string; label: string; pct: number | null; price: string; abs: string | null;
     spark: number[]; base: number | null;
     /** 지금 이 선물이 거래 중인가 (Globex 는 매일 17–18시 ET 쉬고 주말엔 멈춘다) */
     live?: boolean;
@@ -1040,14 +1040,16 @@
               <span class="ss-tf">{m.live === false ? "CLOSED" : "24H"}</span>
             </div>
             <!-- 시세는 별도 줄에 크게. 포인트 등락을 %와 나란히 둔다. -->
-            <div class="ss-quote" class:u={m.pct >= 0} class:d={m.pct < 0}>
+            <!-- ★ pct 가 null = **심볼이 안 왔다**. 예전엔 0 으로 채워서 초록 +0.00% 를
+                 확정값처럼 그렸다 — "보합"과 "데이터 없음"은 완전히 다른 얘기다. -->
+            <div class="ss-quote" class:u={m.pct != null && m.pct >= 0} class:d={m.pct != null && m.pct < 0}>
               <span class="ss-px">{m.price}</span>
-              {#if m.abs}<span class="ss-abs">{m.pct >= 0 ? "+" : "−"}{m.abs}</span>{/if}
-              <span class="ss-pct">{m.pct >= 0 ? "+" : "−"}{Math.abs(m.pct).toFixed(2)}%</span>
+              {#if m.abs && m.pct != null}<span class="ss-abs">{m.pct >= 0 ? "+" : "−"}{m.abs}</span>{/if}
+              <span class="ss-pct">{m.pct == null ? "—" : `${m.pct >= 0 ? "+" : "−"}${Math.abs(m.pct).toFixed(2)}%`}</span>
             </div>
             <!-- 자체 SVG — 선물도 그릴 수 있고 iframe 이 아니라 가볍다 -->
             <div class="ss-chart">
-              <Sparkline points={m.spark} up={m.pct >= 0} base={m.base} />
+              <Sparkline points={m.spark} up={(m.pct ?? 0) >= 0} base={m.base} />
             </div>
           </div>
         {/each}
