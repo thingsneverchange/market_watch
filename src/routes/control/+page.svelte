@@ -283,9 +283,37 @@
     flash("Alert cleared");
   }
 
+  // ── 제어 비밀키 ──────────────────────────────────
+  //  IP 허용목록만으로는 부족하다. 같은 서버의 다른 프로세스(127.0.0.1 은 영구 허용)나
+  //  휴대폰 셀룰러의 CGNAT 이웃이 그 목록을 통과한다 → 쓰기엔 별도 키를 요구한다.
+  //  운영자는 /control?key=... 로 한 번 열고 북마크하면 된다. 키는 이 탭 안에만 남는다.
+  let ctlKey = "";
+  onMount(() => {
+    const fromUrl = new URLSearchParams(location.search).get("key");
+    if (fromUrl) {
+      ctlKey = fromUrl;
+      try { sessionStorage.setItem("mw_ctl_key", fromUrl); } catch {}
+      // 주소창에서 키를 지운다 — 방송 중 화면 공유·스크린샷으로 새어 나가지 않게
+      history.replaceState(null, "", location.pathname);
+    } else {
+      try { ctlKey = sessionStorage.getItem("mw_ctl_key") ?? ""; } catch {}
+    }
+  });
+
   async function post(body: any) {
     try {
-      await fetch("/api/control", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const r = await fetch("/api/control", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...(ctlKey ? { authorization: `Bearer ${ctlKey}` } : {})
+        },
+        body: JSON.stringify(body)
+      });
+      // 401/503 을 삼키면 운영자는 눌렀는데 아무 일도 안 일어난 걸로 보인다 → 원인을 말한다
+      if (r.status === 401) flash("Unauthorized — open /control?key=… once");
+      else if (r.status === 503) flash("Server missing MARKET_WATCH_CONTROL_SECRET");
+      else if (!r.ok) flash(`Send failed (${r.status})`);
     } catch { flash("Send failed — check server"); }
   }
 
