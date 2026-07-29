@@ -55,7 +55,14 @@ export type SectorBoard = {
   spread: number | null;
 };
 
-const TTL_MS = 60_000;
+// 섹터는 **당일 등락**이라 60초 단위로 볼 값이 아니다. TTL 을 늘리면 요청 빈도가
+// 5분의 1로 떨어져 쿼터 경합에서 살아남는다 (실측: 60초 TTL 일 때 12칸 중 6칸만 찼다).
+const TTL_MS = 5 * 60_000;
+/** 섹터별 마지막 성공값. 쿼터 경합으로 응답이 매번 일부만 오기 때문에 필요하다. */
+const lastGood = new Map<string, { pct: number; at: number }>();
+/** 이보다 오래된 값은 버린다 — 한 세션을 넘기면 그건 다른 날 얘기다 */
+const LAST_GOOD_MS = 6 * 3600_000;
+
 let cache: { at: number; data: SectorBoard } | null = null;
 let inflight: Promise<SectorBoard> | null = null;
 
@@ -71,15 +78,22 @@ export async function getSectorBoard(): Promise<SectorBoard> {
     const by = new Map(quotes.map((q) => [q.ticker, q]));
     const bench = by.get("SPY")?.changePct ?? null;
 
+    // ★ 섹터별 마지막 성공값을 들고 간다.
+    //   Finnhub 쿼터 경합으로 매번 일부만 온다(실측: 12칸 중 6칸). 없는 걸 0 으로
+    //   채우지는 않지만, 그렇다고 폴마다 칸 수가 6↔9↔12 로 널뛰면 방송 화면에서
+    //   그 자체가 사고처럼 보인다. 값을 지어내는 게 아니라 **마지막에 실제로 받은 값**을
+    //   유지하는 것이고, 나이는 live 플래그와 세션 라벨이 이미 드러낸다.
     const rows: SectorRow[] = [];
     for (const s of SECTORS) {
       const q = by.get(s.key);
-      if (!q) continue;                       // 못 받은 섹터는 **빈칸으로 둔다** (0 으로 채우지 않는다)
+      if (q) lastGood.set(s.key, { pct: q.changePct, at: now });
+      const g = lastGood.get(s.key);
+      if (!g || now - g.at > LAST_GOOD_MS) continue;   // 너무 오래된 건 버린다
       rows.push({
         key: s.key,
         label: s.label,
-        pct: q.changePct,
-        rel: bench == null ? null : Math.round((q.changePct - bench) * 100) / 100,
+        pct: g.pct,
+        rel: bench == null ? null : Math.round((g.pct - bench) * 100) / 100,
         live
       });
     }
