@@ -266,6 +266,14 @@ const ANALYSIS_FORM = new RegExp([
   "^(?:did|do|does|is|are|was|were|will|would|should|can|could|has|have|how|why|what|which|who|when|where)\\b[^?]{0,140}\\?",
   // 물음표로 끝나는 헤드라인 — 사건 보도는 이렇게 끝나지 않는다
   "\\?\\s*$",
+  // ★ Why·How 로 시작하면 **물음표가 없어도** 해설물이다.
+  //   앞의 규칙이 물음표를 요구해서 이게 통과했다 (실측):
+  //     "Why Palantir's stock is missing out on a big software rally"
+  //     "How a Silicon Valley engineer became China's $12bn memory king"
+  //   통신사 사건 보도는 Why/How 로 시작하지 않는다 — 그건 해설·인물기사의 어법이다.
+  //   ※ what/which/who 는 넣지 않는다. "What Nvidia said about China demand sent chip
+  //     stocks lower" 처럼 명사절 주어로 시작하는 **정상 사건 보도**가 실제로 있다.
+  "^(?:why|how)\\b",
   // 해설물 상투구
   "^(?:here['\u2019]?s|the real\\b|what to know|everything you need|explained\\b|analysis:|opinion:|commentary:)",
   "\\b(?:here['\u2019]?s why|here['\u2019]?s what|what it means for|the real (?:reason|bottleneck|story|winner|loser|problem|risk))\\b"

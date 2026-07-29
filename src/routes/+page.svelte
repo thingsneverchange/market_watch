@@ -220,7 +220,14 @@
   /**
    * 주제별로 **먼저 봐야 할 자산**.
    *  "WAR" 라는 단어만 띄우면 "그래서 시장은?" 이 안 나온다. 전쟁이면 원유·금·VIX 고,
-   *  반도체 이슈면 SOXX 다. 목록에 없거나 자리가 남으면 변동폭이 큰 순으로 채운다.
+   *  반도체 이슈면 SOXX 다.
+   *
+   *  ★ 자리가 남아도 **다른 것으로 채우지 않는다.** 예전엔 변동폭이 큰 순으로 백필했는데,
+   *    이 줄들은 주제 이름 바로 아래 붙기 때문에 **그 자체가 인과 주장이 된다.**
+   *    실측 위험: 주제가 FED 인데 야간이라 VIX·GOLD 슬롯이 없고 비트코인이 코인 자체
+   *    이슈로 +4% 면, 화면은 "연준 때문에 비트코인이 올랐다"고 말하는 셈이 된다.
+   *    이 시스템 전체가 "측정하지 않은 원인은 말하지 않는다"로 서 있는데 여기만 예외였다.
+   *    짧은 줄은 정직하고, 무관한 줄은 오보다.
    */
   const THEME_ASSETS: Record<string, string[]> = {
     GEO: ["OIL", "GOLD", "VIX"],
@@ -248,14 +255,7 @@
       const hit = rows.find((r: any) => String(r.k).toUpperCase().includes(want) && !pick.includes(r));
       if (hit) pick.push(hit);
     }
-    // 주제에 맞는 자산이 화면에 없을 수도 있다(소스 가용성에 따라 슬롯이 달라진다)
-    // → 그럴 땐 실제로 가장 크게 움직인 것으로 채운다. 빈 줄로 두지 않는다.
-    if (pick.length < 3) {
-      for (const r of [...rows].sort((a: any, b: any) => Math.abs(b.pct) - Math.abs(a.pct))) {
-        if (pick.length >= 3) break;
-        if (!pick.includes(r)) pick.push(r);
-      }
-    }
+    // 주제에 맞는 자산이 화면에 없으면 그 줄은 **비운다** (위 주석 참고).
     return pick.slice(0, 3);
   })();
 
@@ -1123,7 +1123,12 @@
           <!-- ★ 우측도 자리가 유한하다. 실적 반응(MOVERS)이 들어오면 아래 패널이
                통째로 화면 밖으로 밀린다(실측 339px 초과) → 반응이 있을 땐 지표를 줄인다. -->
           {#each macroReadings.slice(0, 4) as m}
-            {@const hotter = m.prev != null && m.value != null && m.value > m.prev}
+            <!-- ★ 3상태다. 예전엔 `m.value > m.prev` 라는 **참/거짓 두 값**이라
+                 "같다"가 "내렸다"로 렌더됐다. 실업률 4.1% → 4.1%(흔하다), FOMC 사이의
+                 기준금리, 소수 첫째 자리에서 반올림돼 같아지는 CPI 가 전부 여기 걸린다.
+                 화면은 변화가 없는데 "▼ vs prev" 를 비둘기 색으로 찍고 있었다. -->
+            {@const dir = (m.prev == null || m.value == null) ? null
+                        : (m.value > m.prev ? 1 : m.value < m.prev ? -1 : 0)}
             <div class="rx-row">
               <div class="rx-l">
                 <div class="rx-tk">{m.label}</div>
@@ -1131,8 +1136,8 @@
               </div>
               <div class="rx-r">
                 <div class="rx-pct"
-                     class:u={m.upIsHawkish ? !hotter : hotter}
-                     class:d={m.upIsHawkish ? hotter : !hotter}>
+                     class:u={dir !== null && dir !== 0 && (m.upIsHawkish ? dir < 0 : dir > 0)}
+                     class:d={dir !== null && dir !== 0 && (m.upIsHawkish ? dir > 0 : dir < 0)}>
                   {m.value ?? "—"}{m.unit.startsWith("%") ? "%" : m.unit}
                 </div>
                 <!-- ★ 방향도 값과 **같은 색**을 쓴다.
@@ -1140,9 +1145,9 @@
                      기준은 등락이 아니라 매파/비둘기다 — CPI 상승은 빨강(악재),
                      실업률 상승도 빨강. upIsHawkish 가 그 방향을 들고 있다. -->
                 <div class="rx-when"
-                     class:u={m.prev != null && (m.upIsHawkish ? !hotter : hotter)}
-                     class:d={m.prev != null && (m.upIsHawkish ? hotter : !hotter)}>
-                  {m.prev == null ? "" : hotter ? "▲ vs prev" : "▼ vs prev"}
+                     class:u={dir !== null && dir !== 0 && (m.upIsHawkish ? dir < 0 : dir > 0)}
+                     class:d={dir !== null && dir !== 0 && (m.upIsHawkish ? dir > 0 : dir < 0)}>
+                  {dir == null ? "" : dir > 0 ? "▲ vs prev" : dir < 0 ? "▼ vs prev" : "= vs prev"}
                 </div>
               </div>
             </div>

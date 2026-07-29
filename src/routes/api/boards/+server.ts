@@ -96,7 +96,11 @@ export const GET: RequestHandler = async () => {
     if (fb) crossSlots.push(slot("BTC", fb.price, fb.changePct, futOpen));
   }
 
-  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX", vx.price, vx.changePct, futOpen));
+  // ★ 라벨은 "VIX FUT" 이다. Finviz 의 VX 는 **VIX 선물 최근월물**이지 VIX 지수 현물이 아니다.
+  //   평온한 장에선 선물이 현물보다 높고(콘탱고), 충격이 오면 현물보다 훨씬 낮다(백워데이션).
+  //   즉 **가장 중요한 순간에 오차가 가장 크다** — 현물이 10포인트 튈 때 선물은 4포인트만 움직인다.
+  //   이 저장소는 이미 지수선물을 "NASDAQ FUT" 으로 구분하고 있다. 같은 규칙을 적용한다.
+  const vx = F("VX"); if (vx) crossSlots.push(slot("VIX FUT", vx.price, vx.changePct, futOpen));
 
   const top = [...indexSlots, ...crossSlots];
 

@@ -64,6 +64,12 @@ export function parseRss(xml: string, feedName: string): RawItem[] {
 
     const when = Date.parse(tagText(block, "pubDate"));
     if (!Number.isFinite(when)) continue;
+    // ★ 미래 시각을 버린다. 상한이 없으면 **조작된 타임스탬프가 순위를 무제한으로 산다.**
+    //   digest 의 점수는 `등급 + 가점 − 나이/6시간` 인데, 나이가 음수면 감점이 가점이 되어
+    //   어떤 진짜 기사도 이길 수 없다. 와이어 5개 중 2개가 구글 뉴스 **검색** 질의라
+    //   아무 사이트나 들어올 수 있으므로 실제로 도달 가능한 경로다.
+    //   2분은 발행 서버와 우리 서버의 시계 오차 여유다.
+    if (when > Date.now() + 120_000) continue;
 
     let title = unescapeXml(tagText(block, "title"));
     if (!title) continue;

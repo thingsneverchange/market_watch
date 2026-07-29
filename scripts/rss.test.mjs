@@ -138,6 +138,12 @@ ok("질문형 클릭베이트 차단 (실측)",
 ok("물음표로 끝나는 헤드라인 차단", isAnalysisForm("Is it time to buy the dip in semis?"));
 ok("해설물 상투구 차단", isAnalysisForm("Here\u2019s why the Fed may pause in September"));
 ok("The Real ~ 차단", isAnalysisForm("The Real Reason Chip Stocks Are Falling"));
+// ★ 물음표 없는 Why/How 해설물 — 앞의 규칙이 물음표를 요구해서 통과했다 (실측)
+ok("물음표 없는 Why 해설물 차단 (실측)",
+  isAnalysisForm("Why Palantir\u2019s stock is missing out on a big software rally"));
+ok("물음표 없는 How 인물기사 차단 (실측)",
+  isAnalysisForm("How a Silicon Valley engineer became China\u2019s $12bn memory king"));
+ok("Why 로 시작하는 해설물 차단", isAnalysisForm("Why the Fed is unlikely to cut in September"));
 // ★ 진짜 사건은 전부 통과해야 한다 — 여기서 막히면 방송이 빈다
 ok("사건 통과: SK하이닉스 (실측, 이게 오늘의 TOP STORY 였어야 한다)",
   !isAnalysisForm("SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"));
