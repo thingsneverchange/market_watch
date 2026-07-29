@@ -1,5 +1,5 @@
 import { scoreNews, type NewsItem } from "./finnhub";
-import { isFragment, isColumnBrand, isBlockedPublisher, isPressRelease, isMajorOutlet } from "./headline";
+import { isFragment, isColumnBrand, isBlockedPublisher, isPressRelease, isMajorOutlet, isAnalysisForm } from "./headline";
 import { isNearDuplicate } from "./dedupe";
 import { parseRss } from "./rss";
 
@@ -111,6 +111,14 @@ export async function getWireNews(limit = 40): Promise<NewsItem[]> {
       // ※ 지금 화면을 채우고 있던 6건 중 하나가 바로 "Morning Bid: …" 였다.
       .filter((n) => !isFragment(n.title) && !isColumnBrand(n.title))
       .filter((n) => !isBlockedPublisher(n.source) && !isPressRelease(n.title))
+      // ★ 해설·질문형은 **목록에서도** 뺀다.
+      //   원래는 TOP STORY 최상단 자격만 막았는데(코너물과 같은 처리), 그러자
+      //   "Are Chip Stocks About to Crash the Market?" 같은 게 헤드라인 목록에 계속 올라왔다.
+      //   사용자가 같은 형식을 두 번 지적했다. 마켓 방송의 헤드라인 목록은 "무슨 일이
+      //   있었나"를 훑는 자리지 남의 해석을 모아 두는 자리가 아니다.
+      //   ※ 이 필터는 와이어(=구글뉴스 검색 등 아무 매체나 들어오는 경로)에만 건다.
+      //     Finnhub 경로는 그대로 둔다 — 거기는 원래 통신사 위주다.
+      .filter((n) => !isAnalysisForm(n.title))
       .sort((a, b) => b.epoch - a.epoch);
 
     // 같은 사건이 여러 매체에 뜬다. 하나만 남기되 **누구를 남기느냐**가 중요하다.

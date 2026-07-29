@@ -36,6 +36,10 @@
   let boards = { top: [] as any[], tape: [] as any[], dataAsOf: null as number | null, missing: [] as string[] };
   // 최근 구간 테이프 읽기 (/api/boards tape30). 전부 서버에서 계산해 평평한 객체로 온다 —
   // 템플릿에서 {@const} 나 함수 호출이 필요 없어 Svelte 4 의 추적 한계에 걸릴 여지가 없다.
+  /** 섹터 로테이션 + 거래량 (/api/pulse). 전부 서버에서 계산해 평평하게 온다 */
+  let sectors: { rows: any[]; benchPct: number | null; live: boolean; spread: number | null } | null = null;
+  let volumes: any[] = [];
+
   let tape30: {
     tier: "moving" | "quiet" | "closed" | "warming" | "nodata";
     reason: string; windowMin: number | null;
@@ -273,6 +277,9 @@
       pct: r.verified && typeof r.pct === "number" ? r.pct : null
     }))
     .slice(0, 3);
+
+  /** 거래량 배수를 티커로 찾기 쉽게 */
+  $: volByTicker = new Map((volumes ?? []).map((v: any) => [v.ticker, v]));
 
   /** TOP STORY 근거 매체 목록 ("CNBC · Reuters"). 마크업에선 타입 주석을 못 쓴다 */
   $: srcNames = (digest.driver.sources ?? [])
@@ -516,6 +523,14 @@
     breakingData = null;
   }
 
+  // ★ /api/pulse 는 따로, 느리게 친다. 섹터는 60초 캐시, 거래량은 15분 캐시라
+  //   15초 폴링에 얹을 이유가 없다. FMP 무료가 종목당 1요청이라 예산이 곧 주기다.
+  async function refreshPulse() {
+    const j = await jget("/api/pulse");
+    if (j && j.sectors) sectors = j.sectors;
+    if (j && Array.isArray(j.volumes)) volumes = j.volumes;
+  }
+
   async function refreshBreaking() {
     const j = await jget("/api/breaking");
     // ※ 예전의 `if (!j?.breaking?.length) return;` 는 응답이 빈 배열이면 breakingBooted 를
@@ -650,7 +665,7 @@
   onMount(() => {
     resize();
     window.addEventListener("resize", resize);
-    refresh(); refreshBreaking(); refreshControl(); refreshMacro(); refreshImpact();
+    refresh(); refreshBreaking(); refreshControl(); refreshMacro(); refreshImpact(); refreshPulse();
 
     // ※ 폴링 주기는 "호출 횟수"가 아니다. refresh 1회 = 유일 티커 17개 조회다.
     //   Finnhub 무료 한도 60 req/min 안에 들어오려면 주기 15s + 서버 TTL 20s 조합이 필요하다.
@@ -663,9 +678,10 @@
     const t6 = setInterval(refreshMacro, 600000);
     // 지수 영향 종목 — 44개 시세를 훑으므로 60초. 서버 캐시가 20초라 대부분 캐시 히트다.
     const t7 = setInterval(refreshImpact, 60000);
+    const t8 = setInterval(refreshPulse, 120000);   // 섹터 60s·거래량 15m 캐시 — 2분이면 충분하다
     return () => {
       window.removeEventListener("resize", resize);
-      [t1, t2, t3, t5, t6, t7].forEach(clearInterval);
+      [t1, t2, t3, t5, t6, t7, t8].forEach(clearInterval);
       if (toastTimer) clearTimeout(toastTimer);
     };
   });
@@ -971,6 +987,7 @@
         </div>
       {/if}
       <!-- 1~4개 차트. 슬롯 수가 곧 배치 (1=전체, 2=좌우, 3=1+2, 4=2x2) -->
+      <!-- (섹터 스트립은 미니차트 아래에 붙는다 — 아래쪽 참고) -->
       <div class="chart-grid" data-n={slots.length}>
         {#each slots as sl (sl.key)}
           <!-- 라이브 램프. {@const} 는 블록의 직계 자식이어야 해서 여기서 계산한다.
@@ -1044,6 +1061,32 @@
         {/each}
       </div>
 
+      <!-- ★ 섹터 로테이션 — "지수 숫자 말고, 돈이 어디서 어디로 갔나".
+           지수는 밋밋해도 그 안에서 크게 도는 날이 있다. 실측(2026-07-29):
+           SEMIS −4.80% vs HEALTH +2.36%, 스프레드 7.16%p — 그날의 이야기가 통째로 여기 있었는데
+           화면엔 말할 자리가 없었다.
+           ※ SPDR 섹터 ETF 다. 섹터 지수의 **근사**이지 지수 자체가 아니라서 티커를 남긴다.
+           ※ 전부 미국 상장 ETF → 정규장에만 움직인다. 장 밖엔 흐리게(live=false). -->
+      {#if sectors && sectors.rows.length}
+        <div class="sect" class:closed={!sectors.live}>
+          <div class="sect-h">
+            <span class="sect-t">SECTORS</span>
+            <span class="sect-s">
+              {sectors.live ? "vs S&P · today" : "vs S&P · last session"}
+              {#if sectors.spread != null}<span class="sect-sp">SPREAD {sectors.spread.toFixed(2)}%p</span>{/if}
+            </span>
+          </div>
+          <div class="sect-row">
+            {#each sectors.rows as r (r.key)}
+              <div class="sect-c" class:u={r.pct >= 0} class:d={r.pct < 0} title={r.key}>
+                <span class="sect-n">{r.label}</span>
+                <span class="sect-p">{r.pct >= 0 ? "+" : "−"}{Math.abs(r.pct).toFixed(1)}%</span>
+              </div>
+            {/each}
+          </div>
+        </div>
+      {/if}
+
       <div class="spark-strip">
         {#each minis as m (m.key)}
           <div class="ss-card">
@@ -1113,7 +1156,7 @@
                2에서 자르면 그날의 절반이 화면에서 사라진다. 위 그룹(거시·데이터)이
                차지한 만큼을 빼고 남는 자리를 준다 — 우측 컬럼은 넘침이 실측된 곳이라
                총량은 지킨다(1014·1072행 주석 참고). -->
-          {#each earningsEvents.slice(0, Math.max(2, 6 - macroEvents.length - macroReleases.length - reportedRows.length)) as ev (ev.ticker + ev.time.getTime())}
+          {#each earningsEvents.slice(0, Math.max(2, 5 - macroEvents.length - macroReleases.length - reportedRows.length)) as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -1240,7 +1283,11 @@
 
         <!-- 이미 지난 거시 이벤트. 지난 일정을 주는 무료 소스가 없어 피드에서 볼 때마다
              직접 쌓는다 → 처음엔 비어 있고 시간이 지나며 찬다. 그 사실을 그대로 말한다. -->
-        {#each pastMacro as ev}
+        <!-- ★ 개수를 제한한다. 우측 컬럼은 실측으로 두 번 넘쳤던 곳이고, 이번에도
+             실적 목록을 늘리자마자 330px 넘쳐 MACRO 가 통째로 잘려 나갔다.
+             위 그룹들이 쓴 만큼을 빼고 남는 자리만 쓴다 — 잘려 나가는 것보다
+             처음부터 적게 넣는 게 낫다(잘리면 화면은 아무 표시도 안 한다). -->
+        {#each pastMacro.slice(0, Math.max(1, 4 - Math.min(3, reportedRows.length) - (theme ? 2 : 0))) as ev}
           <div class="rx-row past">
             <div class="rx-l">
               <div class="rx-tk">
@@ -1661,6 +1708,26 @@
   .im-ver.unv { color: #7a6a3a; }
 
   /* 하단 슬림 스파크라인 스트립 */
+  /* ── 섹터 로테이션 스트립 ─────────────────────────
+     한 줄 고정 44px. 12칸이 폭을 나눠 갖고, 색은 화면의 기존 상승/하락 색을 쓴다.
+     칸마다 배경 농도를 주지 않는다 — 히트맵처럼 칠하면 1080p 에서 글자가 안 읽힌다. */
+  .sect { height: 44px; flex-shrink: 0; display: flex; flex-direction: column; gap: 3px;
+    padding: 4px 10px; background: #101318; border: 1px solid #1d2128; border-radius: 8px;
+    font-variant-numeric: tabular-nums; overflow: hidden; }
+  .sect.closed { opacity: 0.55; }
+  .sect-h { display: flex; align-items: baseline; gap: 8px; }
+  .sect-t { font-size: 10px; font-weight: 800; letter-spacing: 0.08em; color: #8a919b; }
+  .sect-s { font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: #5b6472; }
+  .sect-sp { margin-left: 8px; color: #8a919b; }
+  .sect-row { display: flex; gap: 4px; flex: 1; min-height: 0; }
+  .sect-c { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; border-radius: 4px; background: #14171d; }
+  .sect-n { font-size: 8px; font-weight: 700; letter-spacing: 0.03em; color: #6b7280;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  .sect-p { font-size: 12px; font-weight: 800; line-height: 1.1; }
+  .sect-c.u .sect-p { color: #39d98a; }
+  .sect-c.d .sect-p { color: #ff5c5c; }
+
   /* ── TAPE READ ─────────────────────────────────────────
      높이 44px 고정. 어느 상태든 같은 자리를 차지해서 눈이 매번 같은 곳에 떨어진다.
      ※ 맥동(animation)은 쓰지 않는다 — 이 저장소에서 맥동은 진짜 라이브인 것
