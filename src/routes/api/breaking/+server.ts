@@ -3,6 +3,7 @@ import { getMarketNews, getCompanyNews, WATCHLIST } from "$lib/server/finnhub";
 import { classifyAlert } from "$lib/server/alertverify";
 import { getMovers } from "$lib/server/movers";
 import { getWireNews } from "$lib/server/newswire";
+import { explainSpike } from "$lib/server/explain";
 import { futuresSession } from "$lib/market-hours";
 
 // ============================================================
@@ -123,6 +124,11 @@ export const GET: RequestHandler = async () => {
         //   실제로 "Bitcoin −0.91% IN 30 MIN" 이 나갔는데 그 구간은 31분이었다.
         //   구간을 모르면 아예 말하지 않는다 — 틀린 숫자보다 없는 게 낫다.
         const win = m.windowMin ? ` IN ${m.windowMin} MIN` : "";
+        // ★ "무슨 일이 있었나" — 같은 시간대에 그 자산을 언급한 기사가 와이어에 있으면
+        //   나란히 붙인다. 인과를 주장하지 않고 **사실 두 개를 나란히 놓을 뿐**이다.
+        //   없으면 아무 말도 안 한다 — 억지로 갖다 붙이면 그게 오보다.
+        //   와이어는 이미 위에서 받아 뒀으므로 추가 요청도 LLM 호출도 없다.
+        const note = explainSpike(m.key, m.windowMin ?? 30, wire, now);
         items.unshift({
           id: `mv:${m.key}:${Math.floor(now / ALERT_COOLDOWN_MS)}`,
           title: `${m.label} ${dir}${Math.abs(m.recentPct).toFixed(2)}%${win} · ${m.z}× NORMAL`,
@@ -134,7 +140,9 @@ export const GET: RequestHandler = async () => {
           matched: true,
           epoch: Math.floor(now / 1000),
           ageSec: 0,
-          kind: "breaking"
+          kind: "breaking",
+          // 화면이 원할 때만 쓴다. 없으면 필드가 없다 — 빈 문자열로 자리를 만들지 않는다.
+          ...(note ? { note: `${note.headline} · ${note.source} · ${note.leadMin}m` } : {})
         } as any);
       }
       // 쿨다운 기록 정리

@@ -221,7 +221,9 @@ export const GET: RequestHandler = async () => {
     });
   }
 
-  const earningsEvents = upcomingOnly.slice(0, 3).map((e) => ({
+  // ★ 3 → 6. 실적 시즌엔 하루에 대형주가 여럿 낸다. 3에서 자르면 그날의 절반이 사라진다.
+  //   화면이 자기 폭에 맞춰 다시 자르므로 여기서는 넉넉히 보낸다.
+  const earningsEvents = upcomingOnly.slice(0, 6).map((e) => ({
     ticker: e.ticker,
     title: `${e.ticker} EARNINGS`,
     time: new Date(e.ts).toISOString(),

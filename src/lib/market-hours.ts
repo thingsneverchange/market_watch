@@ -294,3 +294,21 @@ export function nextTradingDay(dateStr: string): string {
 export function reactionSessionDate(dateStr: string, hour: string): string {
   return hour === "amc" ? nextTradingDay(dateStr) : dateStr;
 }
+
+/**
+ * 정규장 경과율 0~1. 장전이면 0, 장중이면 진행률, 장 마감 후면 1, 휴장일이면 null.
+ *
+ * 거래량 비교에 쓴다. 오늘 누적 거래량을 10일 **종일** 평균과 그냥 비교하면
+ * 아침 내내 "거래량 급감"이 되므로, 화면이 "아직 N% 진행"을 같이 말할 수 있어야 한다.
+ * ※ 이 값으로 거래량을 **나누지는 않는다** — 장중 거래량은 개장·마감에 몰리는 U자라
+ *   선형 보정은 아침을 과대평가한다. 우리는 그 곡선을 갖고 있지 않다.
+ */
+export function sessionProgress(now: Date = new Date()): number | null {
+  const p = etParts(now);
+  if (!isTradingDay(p.date)) return null;
+  const close = EARLY_CLOSE.has(p.date) ? EARLY_CLOSE_MIN : REG_CLOSE;
+  const cur = p.hour * 60 + p.minute;
+  if (cur <= REG_OPEN) return 0;
+  if (cur >= close) return 1;
+  return Math.round(((cur - REG_OPEN) / (close - REG_OPEN)) * 1000) / 1000;
+}

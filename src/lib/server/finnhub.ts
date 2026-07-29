@@ -603,6 +603,36 @@ export async function getCompanyNames(tickers: string[]): Promise<Map<string, st
   return out;
 }
 
+// ── 평균 거래량 (거래량 비교의 기준선) ────────────────
+//  이 저장소는 거래량을 세 번 포기했다(위 주석들 참고) — /quote 에 없고 /candle 은 403.
+//  그런데 **/stock/metric 에는 있다.** 실측: NVDA 10DayAverageTradingVolume = 124.09(백만).
+//  하루 단위로 움직이는 값이라 24시간 캐시 + 저우선으로 두면 사실상 공짜다.
+//  ※ 단위가 **백만 주**다. 그대로 쓰면 1억 2천만이 124가 된다 → 여기서 환산해 내보낸다.
+const avgVolCache = new Map<string, { at: number; v: number | null; ttl: number }>();
+const AVGVOL_TTL = 24 * 3600_000;
+const AVGVOL_FAIL_TTL = 10 * 60_000;   // 실패는 짧게 — "모른다"를 하루 굳히지 않는다
+
+/** 티커 → 10일 평균 일간 거래량(주). 못 얻으면 null. */
+export async function getAvgVolumes(tickers: string[]): Promise<Map<string, number | null>> {
+  const out = new Map<string, number | null>();
+  const now = Date.now();
+  const todo: string[] = [];
+  for (const t of tickers) {
+    const hit = avgVolCache.get(t);
+    if (hit && now - hit.at < hit.ttl) out.set(t, hit.v);
+    else todo.push(t);
+  }
+  await Promise.all(todo.slice(0, 8).map(async (t) => {
+    const j = await fhFetch(`/stock/metric?symbol=${encodeURIComponent(t)}&metric=all`, AVGVOL_TTL, true);
+    const m = Number(j?.metric?.["10DayAverageTradingVolume"]);
+    const v = Number.isFinite(m) && m > 0 ? Math.round(m * 1e6) : null;   // 백만 주 → 주
+    avgVolCache.set(t, { at: now, v, ttl: v == null ? AVGVOL_FAIL_TTL : AVGVOL_TTL });
+    out.set(t, v);
+  }));
+  for (const t of tickers) if (!out.has(t)) out.set(t, null);
+  return out;
+}
+
 export function newsTopic(headline: string, ticker?: string): string {
   if (ticker) return ticker.toUpperCase();
   for (const [re, tag] of TOPIC_RULES) if (re.test(headline || "")) return tag;

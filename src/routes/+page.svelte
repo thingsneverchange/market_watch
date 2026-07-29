@@ -259,6 +259,21 @@
     return pick.slice(0, 3);
   })();
 
+  /**
+   * 발표가 끝난 종목의 결과 줄. **검증된 등락률만** 쓴다.
+   *  reactions[].verified 가 false 면 그 숫자는 리캡(LLM) 주장이라 방송 자격이 없다 —
+   *  등락률은 비우고(—) 결과 배지(BEAT/MISS)만 남긴다.
+   *  화면 폭이 한정돼 있으므로 최대 3줄.
+   */
+  $: reportedRows = (reactions ?? [])
+    .filter((r: any) => r && r.ticker)
+    .map((r: any) => ({
+      ticker: r.ticker,
+      result: r.result ?? null,
+      pct: r.verified && typeof r.pct === "number" ? r.pct : null
+    }))
+    .slice(0, 3);
+
   /** TOP STORY 근거 매체 목록 ("CNBC · Reuters"). 마크업에선 타입 주석을 못 쓴다 */
   $: srcNames = (digest.driver.sources ?? [])
     .map((s: any) => s?.name)
@@ -1094,7 +1109,11 @@
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
         {#if earningsEvents.length}
           <div class="ke-grp">EARNINGS</div>
-          {#each earningsEvents.slice(0, 2) as ev (ev.ticker + ev.time.getTime())}
+          <!-- ★ 개수를 고정하지 않는다. 실적 시즌엔 하루에 대형주가 여럿 내는데
+               2에서 자르면 그날의 절반이 화면에서 사라진다. 위 그룹(거시·데이터)이
+               차지한 만큼을 빼고 남는 자리를 준다 — 우측 컬럼은 넘침이 실측된 곳이라
+               총량은 지킨다(1014·1072행 주석 참고). -->
+          {#each earningsEvents.slice(0, Math.max(2, 6 - macroEvents.length - macroReleases.length - reportedRows.length)) as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -1106,7 +1125,27 @@
           {/each}
         {/if}
 
-        {#if !macroEvents.length && !earningsEvents.length && !macroReleases.length}
+        <!-- ★ 발표가 끝난 종목의 **결과**. 예전엔 MARKET FOCUS 에 섞여 있었는데
+             그 자리를 AI 판단으로 바꾸면서 통째로 사라졌다 — 일정만 남고 결과가 없어졌다.
+             일정 바로 아래가 원래 자리다: "누가 내나" 다음이 "어떻게 나왔나".
+             ※ 등락률은 **검증된 것만** 찍는다. 리캡(LLM)이 주장한 값은 쓰지 않는다
+               (calendar/+server.ts 의 INTC +10% ↔ −7.89% 사고 주석 참고). -->
+        {#if reportedRows.length}
+          <div class="ke-grp">REPORTED</div>
+          {#each reportedRows as r (r.ticker)}
+            <div class="ke-item sub">
+              <div class="ke-el">
+                <span class="ke-tk">{r.ticker}</span>
+                {#if r.result}<span class="ke-res {r.result}">{r.result.toUpperCase()}</span>{/if}
+              </div>
+              <div class="ke-timer" class:u={r.pct != null && r.pct >= 0} class:d={r.pct != null && r.pct < 0}>
+                {r.pct == null ? "—" : `${r.pct >= 0 ? "+" : "−"}${Math.abs(r.pct).toFixed(2)}%`}
+              </div>
+            </div>
+          {/each}
+        {/if}
+
+        {#if !macroEvents.length && !earningsEvents.length && !macroReleases.length && !reportedRows.length}
           <div class="ke-item"><div class="ke-tit">—</div></div>
         {/if}
       </div>
@@ -1656,6 +1695,12 @@
   .tape30 .u { color: #39d98a; }
   .tape30 .d { color: #ff5c5c; }
   .tape30.t-closed, .tape30.t-nodata, .tape30.t-warming { opacity: 0.72; }
+
+  .ke-res { font-size: 9px; font-weight: 800; letter-spacing: 0.06em; padding: 1px 5px;
+    border-radius: 3px; margin-left: 6px; }
+  .ke-res.beat { color: #39d98a; background: #0e2a1c; border: 1px solid #1d4a33; }
+  .ke-res.miss { color: #ff5c5c; background: #2a1113; border: 1px solid #4a1f22; }
+  .ke-res.inline { color: #8a919b; background: #14171d; border: 1px solid #23272f; }
 
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }
   .ss-card { background: #0d0f13; border: 1px solid #191c22; border-radius: 10px; padding: 10px 12px 8px;
