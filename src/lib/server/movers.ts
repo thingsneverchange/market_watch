@@ -179,17 +179,29 @@ let target: { key: string; z: number; at: number } | null = null;
  * 지금 물어야 할 표적. 조건에 맞는 사건이 없으면 null 을 반환하고,
  * 호출부는 사용자가 고른 차트를 그대로 둔다 (빈 슬롯을 만들지 않는다).
  */
+// ★ **Auto-Sniper 가 차트로 띄울 수 있는 종목**은 급변 감지 대상보다 좁다.
+//
+//  이 둘은 다른 질문이다:
+//   · 급변 속보 — "이례적으로 움직인 게 있나". 비트코인이 3% 튀면 그건 뉴스가 맞다.
+//   · 차트 점유 — "이 방송의 메인 화면에 무엇을 띄울까". 그건 나스닥이다.
+//
+//  구분하지 않으면 밤새 비트코인이 메인이 된다. 암호화폐는 24시간 돌고 변동성이
+//  주가지수보다 훨씬 커서, 지수선물이 조용한 야간엔 z-score 1위가 거의 항상 크립토다.
+//  운영자의 원칙: **비트코인은 켜고 끄는 옵션이지 저절로 올라오는 게 아니다.**
+//  해외 지수선물도 같은 이유로 뺀다 — 이 방송의 주어는 미국 시장이다.
+const SNIPER_EXCLUDE = new Set(["BTC", "ETH", "NKD", "DY", "EX"]);
+
 export async function getSniperTarget(): Promise<Mover | null> {
   // ★ 장이 닫혀 있으면 "최근 30분 변동"은 최근이 아니다 — 금요일 마감 직전 30분이다.
   //   그걸 지금 터진 사건처럼 화면에 물리면 명백한 거짓말이 된다. 휴장 중엔 표적 없음.
   if (!futuresSession().open) { target = null; return null; }
 
   const movers = await getMovers();
-  const top = movers.find((m) => m.z >= MIN_Z) ?? null;
+  const top = movers.find((m) => m.z >= MIN_Z && !SNIPER_EXCLUDE.has(m.key)) ?? null;
   const now = Date.now();
 
   if (target) {
-    const still = movers.find((m) => m.key === target!.key);
+    const still = movers.find((m) => m.key === target!.key && !SNIPER_EXCLUDE.has(m.key));
     const held = now - target.at < HOLD_MS;
     // 유지 시간 안이거나, 새 후보가 충분히 세지 않으면 표적을 바꾸지 않는다
     if (still && (held || !top || top.key === target.key || top.z < target.z * SWITCH_MARGIN)) {

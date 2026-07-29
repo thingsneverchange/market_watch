@@ -126,7 +126,10 @@ async function withSniper(st: ControlState, slots: ReturnType<typeof resolveSlot
     nvCode: "",
     sniper: true,
     // 왜 잡혔는지 화면에 밝힌다 — 근거 없이 차트가 바뀌면 시청자가 못 따라온다
-    why: `${target.recentPct > 0 ? "+" : ""}${target.recentPct}% in 30m · ${target.z}x normal`
+    // ★ "in 30m" 을 하드코딩하지 않는다. Finviz 봉 간격이 종목마다 달라서
+    //   실제 구간은 30~35분으로 갈린다(속보 문구에서 이미 고친 것과 같은 문제).
+    //   모르면 구간을 말하지 않는다.
+    why: `${target.recentPct > 0 ? "+" : ""}${target.recentPct}%${target.windowMin ? ` in ${target.windowMin}m` : ""} · ${target.z}x normal`
   };
   // 이미 그 종목을 보고 있으면 중복으로 넣지 않는다
   if (slots.some((s) => s.futKey === target!.key)) return slots;
