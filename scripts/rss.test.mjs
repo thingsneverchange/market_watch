@@ -156,6 +156,15 @@ ok("의문사로 시작해도 물음표 없으면 통과",
 
 // ── 매체 등급 ─────────────────────────────────────────
 ok("CNBC 는 주요매체", isMajorOutlet("CNBC"));
+// ★ 도메인이 오면 도메인으로 판정한다 — 표시명은 공격자가 정하기 때문
+ok("도메인 판정: cnbc.com", isMajorOutlet("아무이름", "cnbc.com"));
+ok("도메인 판정: 서브도메인", isMajorOutlet("x", "www.cnbc.com"));
+ok("도메인 판정: finance.yahoo.com", isMajorOutlet("x", "finance.yahoo.com"));
+// 실측으로 통과했던 유사 도메인 — 전부 막혀야 한다
+for (const bad of ["cnbc-live.info","reuters-wire.net","ft-markets.com","ap-news.today","fortune-teller.biz","bbc.market-news.co"])
+  ok("유사 도메인 차단: " + bad, !isMajorOutlet("CNBC Markets Daily", bad));
+ok("표시명만 있고 사칭이면 차단", !isMajorOutlet("CNBC Markets Daily"));
+ok("표시명 완전일치는 인정 (Finnhub 경로)", isMajorOutlet("Reuters"));
 ok("Reuters 는 주요매체", isMajorOutlet("Reuters"));
 ok("France 24 는 주요매체", isMajorOutlet("France 24"));
 ok("The Information 은 주요매체", isMajorOutlet("The Information"));

@@ -165,9 +165,11 @@ export const GET: RequestHandler = async () => {
   //     — 그 시각 SOXX 는 −3.63% 였고 "SK Hynix plunge 13%"(CNBC)가 목록에 있었다.
   //     빠져 있던 건 **"무슨 일이 일어났는가"** 다. 마켓 방송의 최상단은 해설도
   //     전망도 아니고 시장이 움직인 사건이어야 한다 → marketEventScore.
-  const decay = (n: { level: number; epoch: number; source?: string; title: string }) =>
+  const decay = (n: { level: number; epoch: number; source?: string; srcHost?: string; title: string }) =>
     n.level
-    + (isMajorOutlet(n.source ?? "") ? 0.75 : 0)
+    // 도메인이 있으면 도메인으로, 없으면(Finnhub 경로) 표시명 완전일치로 판정한다.
+    // 표시명 부분매칭이던 시절엔 "cnbc-live.info" 같은 유사 도메인이 그냥 가점을 가져갔다.
+    + (isMajorOutlet(n.source ?? "", n.srcHost) ? 0.75 : 0)
     + marketEventScore(n.title)
     - (nowSec - n.epoch) / 3600 / 6;
   const sorted = [...news].sort((a, b) => decay(b) - decay(a));

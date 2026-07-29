@@ -492,6 +492,8 @@ export type NewsItem = {
   sentiment: string;
   matched: boolean;
   ticker?: string;
+  /** 원 매체의 호스트명 (와이어 경로에서만 채워진다). 신뢰 판정은 표시명이 아니라 이걸로 한다. */
+  srcHost?: string;
 };
 
 // 헤드라인의 대표 주체를 짧은 칩으로 뽑는다. 트레이더는 문장이 아니라 "무엇에 관한 것"을 먼저 스캔한다.

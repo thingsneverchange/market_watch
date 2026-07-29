@@ -294,12 +294,41 @@ export function isAnalysisForm(headline: string): boolean {
 //    처음 보는 매체가 진짜 특종을 낼 수 있다 — 이번 중국 반도체 국면의 1보가
 //    The Information 이었다. 감점 방식이면 그걸 묻어 버린다.
 // ============================================================
-const MAJOR_OUTLET =
-  /\b(reuters|bloomberg|cnbc|wall street journal|wsj|financial times|\bft\b|marketwatch|barron|associated press|\bap\b|axios|politico|nikkei|the economist|forbes|fortune|business insider|yahoo finance|the information|cnn|bbc|guardian|france ?24|npr|semafor|the verge|techcrunch|ars technica|digitimes)\b/i;
+// ★ 판정 기준을 **도메인**으로 바꿨다. 예전엔 표시명 부분매칭이었는데,
+//   구글 뉴스의 <source> 표시명은 **공격자가 자기 사이트에 붙인 이름**이다.
+//   `\b(cnbc)\b` 가 "CNBC Markets Daily" 에 걸리고, `-`·`.` 은 비단어 문자라
+//   도메인 안에서도 경계가 성립한다 → 실측으로 전부 통과했다:
+//     ft-markets.com · ap-news.today · reuters-wire.net · cnbc-live.info · fortune-teller.biz
+//   각각 +0.75(=4.5시간어치 신선도)를 영구히 가져간다. 차단목록에 걸린 콘텐츠밀도
+//   이름만 바꾸면 그만이다. 도메인은 등록해야 하므로 값이 든다.
+const MAJOR_DOMAINS = new Set([
+  "reuters.com", "bloomberg.com", "cnbc.com", "wsj.com", "ft.com", "marketwatch.com",
+  "barrons.com", "apnews.com", "axios.com", "politico.com", "nikkei.com", "asia.nikkei.com",
+  "economist.com", "forbes.com", "fortune.com", "businessinsider.com", "finance.yahoo.com",
+  "yahoo.com", "theinformation.com", "cnn.com", "bbc.com", "bbc.co.uk", "theguardian.com",
+  "france24.com", "npr.org", "semafor.com", "theverge.com", "techcrunch.com",
+  "arstechnica.com", "digitimes.com", "ap.org", "dowjones.com", "investors.com"
+]);
 
-/** 방송에 이름을 걸 만한 매체인가 → 순위 가점 */
-export function isMajorOutlet(source: string): boolean {
-  return MAJOR_OUTLET.test(String(source || ""));
+/** 표시명만 있을 때 쓰는 **완전일치** 목록 (Finnhub 경로엔 도메인이 없다) */
+const MAJOR_NAMES = new Set([
+  "reuters", "bloomberg", "cnbc", "wsj", "the wall street journal", "financial times", "ft",
+  "marketwatch", "barron's", "barrons", "ap", "associated press", "axios", "politico",
+  "nikkei", "the economist", "forbes", "fortune", "business insider", "yahoo finance",
+  "the information", "cnn", "bbc", "the guardian", "france 24", "npr", "semafor",
+  "the verge", "techcrunch", "ars technica", "digitimes", "cnbc tech"
+]);
+
+export function isMajorOutlet(source: string, host?: string): boolean {
+  const hn = String(host || "").trim().toLowerCase().replace(/^www\./, "");
+  if (hn) {
+    // 정확히 그 도메인이거나 그 도메인의 서브도메인일 때만 (suffix 매칭이 아니라 경계 확인)
+    for (const d of MAJOR_DOMAINS) if (hn === d || hn.endsWith("." + d)) return true;
+    return false;   // 도메인을 아는데 목록에 없으면 그걸로 끝 — 표시명으로 되묻지 않는다
+  }
+  const n = String(source || "").trim().toLowerCase()
+    .replace(/^the\s+/, "").replace(/\s+/g, " ").replace(/[.,]+$/, "");
+  return MAJOR_NAMES.has(n) || MAJOR_NAMES.has("the " + n);
 }
 
 // ============================================================

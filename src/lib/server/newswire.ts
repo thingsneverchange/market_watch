@@ -1,5 +1,5 @@
 import { scoreNews, type NewsItem } from "./finnhub";
-import { isFragment, isColumnBrand, isBlockedPublisher, isPressRelease } from "./headline";
+import { isFragment, isColumnBrand, isBlockedPublisher, isPressRelease, isMajorOutlet } from "./headline";
 import { isNearDuplicate } from "./dedupe";
 import { parseRss } from "./rss";
 
@@ -68,7 +68,8 @@ function toNews(xml: string, feedName: string): NewsItem[] {
       timeET: "",            // digest 라우트가 자기 포맷으로 다시 찍는다
       level: s.level,
       sentiment: s.sentiment,
-      matched: s.matched
+      matched: s.matched,
+      srcHost: r.sourceHost
     };
   });
 }
@@ -112,11 +113,24 @@ export async function getWireNews(limit = 40): Promise<NewsItem[]> {
       .filter((n) => !isBlockedPublisher(n.source) && !isPressRelease(n.title))
       .sort((a, b) => b.epoch - a.epoch);
 
-    // 같은 사건이 여러 매체에 뜬다. 최신순으로 훑으며 이미 담은 것과 비슷하면 버린다.
+    // 같은 사건이 여러 매체에 뜬다. 하나만 남기되 **누구를 남기느냐**가 중요하다.
+    //
+    // ★ 예전엔 최신순으로 훑으며 먼저 만난 것(=가장 새 것)을 남겼다. 위 주석은
+    //   "원 발행이 이른 쪽을 남긴다"고 써 있었는데 코드가 정반대였다. 결과:
+    //     10:00 Reuters 원본  →  10:07 애그리게이터 재탕이 원본을 삭제
+    //   공격 관점에선 더 나쁘다. 진짜 기사와 토큰 유사도만 넘기면(0.55) **살짝 뒤 시각으로
+    //   심은 가짜가 원본을 지운다.** 원본은 digest 가 보기도 전에 배열에서 사라진다.
+    //
+    // 그래서 클러스터의 대표를 고른다: 주요 매체 > 이른 발행. 시각은 대표의 것을 쓴다.
     const merged: NewsItem[] = [];
     for (const n of fresh) {
-      if (merged.some((m) => isNearDuplicate(m.title, n.title))) continue;
-      merged.push(n);
+      const i = merged.findIndex((m) => isNearDuplicate(m.title, n.title));
+      if (i < 0) { merged.push(n); continue; }
+      const cur = merged[i];
+      const curMajor = isMajorOutlet(cur.source, cur.srcHost);
+      const nMajor = isMajorOutlet(n.source, n.srcHost);
+      // 주요 매체가 이기고, 동급이면 먼저 낸 쪽이 이긴다
+      if ((nMajor && !curMajor) || (nMajor === curMajor && n.epoch < cur.epoch)) merged[i] = n;
     }
 
     // 전 피드가 동시에 죽은 경우에만 마지막 성공분으로 간다.

@@ -10,6 +10,8 @@
 export type RawItem = {
   title: string;
   source: string;
+  /** 원 매체의 호스트명. 구글 뉴스는 <source url="…"> 로 준다. 없으면 "" */
+  sourceHost: string;
   url: string;
   epoch: number; // 초
 };
@@ -76,8 +78,16 @@ export function parseRss(xml: string, feedName: string): RawItem[] {
 
     // 구글 뉴스: <source url="…">CNBC</source> 로 원 매체를 주고 제목 끝에 " - CNBC" 를 붙인다.
     // 매체명을 뽑고 제목에서는 지운다 (자막에 "… - The Times" 가 붙어 나가지 않게).
-    const srcTag = /<source[^>]*>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/source>/i.exec(block);
-    let source = srcTag ? unescapeXml(srcTag[1]) : "";
+    // ★ url 속성까지 캡처한다. 예전엔 `[^>]*` 로 버렸는데, **표시명은 공격자가 정한다.**
+    //   "CNBC Markets Daily" 라고 이름 붙이면 매체 가점을 그냥 가져간다.
+    //   도메인은 등록해야 하므로 훨씬 위조하기 어렵다.
+    const srcTag = /<source([^>]*)>(?:<!\[CDATA\[)?([\s\S]*?)(?:\]\]>)?<\/source>/i.exec(block);
+    let sourceHost = "";
+    if (srcTag) {
+      const u = /\burl\s*=\s*["']([^"']+)["']/i.exec(srcTag[1]);
+      if (u) { try { sourceHost = new URL(u[1]).hostname.replace(/^www\./i, "").toLowerCase(); } catch { /* 무시 */ } }
+    }
+    let source = srcTag ? unescapeXml(srcTag[2]) : "";
     if (source) {
       const esc = source.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       title = title.replace(new RegExp(`\\s+[-–—]\\s+${esc}\\s*$`, "i"), "").trim();
@@ -89,7 +99,7 @@ export function parseRss(xml: string, feedName: string): RawItem[] {
     const url = unescapeXml(tagText(block, "link")) || unescapeXml(tagText(block, "guid"));
     if (!url) continue;
 
-    out.push({ title, source, url, epoch: Math.floor(when / 1000) });
+    out.push({ title, source, sourceHost, url, epoch: Math.floor(when / 1000) });
   }
   return out;
 }
