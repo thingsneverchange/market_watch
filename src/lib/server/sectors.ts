@@ -62,6 +62,8 @@ const TTL_MS = 5 * 60_000;
 const lastGood = new Map<string, { pct: number; at: number }>();
 /** 이보다 오래된 값은 버린다 — 한 세션을 넘기면 그건 다른 날 얘기다 */
 const LAST_GOOD_MS = 6 * 3600_000;
+/** 덜 찼을 때의 재시도 간격 — 쿼터가 풀리면 바로 이어서 채운다 */
+const RETRY_MS = 20_000;
 
 let cache: { at: number; data: SectorBoard } | null = null;
 let inflight: Promise<SectorBoard> | null = null;
@@ -74,7 +76,13 @@ export async function getSectorBoard(): Promise<SectorBoard> {
   inflight = (async () => {
     const live = marketState().open;
     // SPY 를 같이 받아 상대 수익을 낸다. 저우선 — 헤더 시세 예산을 먹지 않게.
-    const quotes = await getQuotes([...SECTORS.map((s) => s.key), "SPY"], 60_000, true);
+    // ★ 아직 못 받은 것부터 요청한다. 저우선 쿼터(분당 16)를 시총 스윕·기업뉴스와
+    //   나눠 쓰므로 13개를 한 번에 달라고 하면 매번 앞의 6개만 온다 —
+    //   그러면 목록 뒤쪽(에너지·유틸리티·소재·리츠)은 **영원히 안 찬다.**
+    //   빈 것부터 채우면 몇 번의 폴로 전부 돈다.
+    const missing = SECTORS.filter((x) => !lastGood.has(x.key)).map((x) => x.key);
+    const ask = [...new Set([...missing, ...SECTORS.map((x) => x.key)])].slice(0, 8);
+    const quotes = await getQuotes([...ask, "SPY"], 60_000, true);
     const by = new Map(quotes.map((q) => [q.ticker, q]));
     const bench = by.get("SPY")?.changePct ?? null;
 
@@ -104,8 +112,15 @@ export async function getSectorBoard(): Promise<SectorBoard> {
       : null;
 
     const data: SectorBoard = { rows, benchPct: bench, live, spread };
-    // 빈 결과는 캐시하지 않는다 — 실패를 사실처럼 굳히는 실수가 이 저장소에 여러 번 있었다
-    if (rows.length) cache = { at: Date.now(), data };
+    // ★ **불완전한 결과를 오래 캐시하지 않는다.**
+    //   실측: 재시작 직후 6칸만 받은 상태로 5분 캐시가 걸려, 그 5분 동안 나머지를
+    //   채울 기회를 스스로 막았다. 몇 번을 호출해도 계속 6칸이었다.
+    //   다 채웠으면 길게, 덜 채웠으면 짧게 — 다음 호출이 이어서 채운다(lastGood 누적).
+    //   빈 결과는 아예 캐시하지 않는다.
+    if (rows.length) {
+      const full = rows.length === SECTORS.length;
+      cache = { at: Date.now() - (full ? 0 : TTL_MS - RETRY_MS), data };
+    }
     return data;
   })();
 
