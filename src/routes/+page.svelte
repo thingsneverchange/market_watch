@@ -1711,7 +1711,9 @@
   /* ── 섹터 로테이션 스트립 ─────────────────────────
      한 줄 고정 44px. 12칸이 폭을 나눠 갖고, 색은 화면의 기존 상승/하락 색을 쓴다.
      칸마다 배경 농도를 주지 않는다 — 히트맵처럼 칠하면 1080p 에서 글자가 안 읽힌다. */
-  .sect { height: 44px; flex-shrink: 0; display: flex; flex-direction: column; gap: 3px;
+  /* ★ 62px. 44px 로 뒀더니 행에 17px 만 남아 **섹터 이름이 4px 로 뭉개져 안 보였다**
+     (실측). 퍼센트만 12개 늘어선 줄은 아무 의미가 없다 — 무엇의 퍼센트인지 모른다. */
+  .sect { height: 62px; flex-shrink: 0; display: flex; flex-direction: column; gap: 4px;
     padding: 4px 10px; background: #101318; border: 1px solid #1d2128; border-radius: 8px;
     font-variant-numeric: tabular-nums; overflow: hidden; }
   .sect.closed { opacity: 0.55; }
@@ -1720,11 +1722,12 @@
   .sect-s { font-size: 9px; font-weight: 700; letter-spacing: 0.05em; color: #5b6472; }
   .sect-sp { margin-left: 8px; color: #8a919b; }
   .sect-row { display: flex; gap: 4px; flex: 1; min-height: 0; }
-  .sect-c { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column;
-    align-items: center; justify-content: center; border-radius: 4px; background: #14171d; }
-  .sect-n { font-size: 8px; font-weight: 700; letter-spacing: 0.03em; color: #6b7280;
+  .sect-c { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 1px;
+    align-items: center; justify-content: center; border-radius: 4px; background: #14171d;
+    padding: 2px 2px; }
+  .sect-n { font-size: 9px; line-height: 1.25; font-weight: 700; letter-spacing: 0.02em; color: #7a828d;
     white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  .sect-p { font-size: 12px; font-weight: 800; line-height: 1.1; }
+  .sect-p { font-size: 14px; font-weight: 800; line-height: 1.15; }
   .sect-c.u .sect-p { color: #39d98a; }
   .sect-c.d .sect-p { color: #ff5c5c; }
 
