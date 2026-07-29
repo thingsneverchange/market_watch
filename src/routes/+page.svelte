@@ -589,16 +589,33 @@
   async function refreshControl() {
     const j = await jget("/api/control");
     if (!j) return;
-    if (j.version !== ctlVersion) {
-      ctlVersion = j.version;
-      if (Array.isArray(j.slots) && j.slots.length) {
-        // 슬롯 구성이 바뀌면 TradingView 실패 기록을 초기화한다
+
+    // ★ 슬롯은 **version 게이트 밖**에서 갱신한다.
+    //   version 은 운영자가 /control 에서 뭔가 눌렀을 때만 올라간다. 그런데 슬롯 구성은
+    //   운영자와 무관하게 **시각만으로도 바뀐다** — resolveSlots 가 정규장이면
+    //   TradingView(ETF), 장 밖이면 선물 자체 렌더로 갈라 주기 때문이다.
+    //   그래서 09:30 에 서버는 mode=fut → tv 로 바꿨는데 화면은 계속 선물 차트를
+    //   그리고 있었다(실측). 페이지를 새로 열면 맞게 나와서 더 헷갈렸다 —
+    //   24시간 방송은 페이지를 새로 열지 않으므로 **개장을 넘길 때마다** 이 상태가 된다.
+    //
+    //   매 폴마다 그냥 대입하면 TradingView iframe 이 흔들릴 수 있으니
+    //   렌더에 영향을 주는 필드만 뽑아 지문을 만들고, 바뀌었을 때만 대입한다.
+    if (Array.isArray(j.slots) && j.slots.length) {
+      const sig = (rows: any[]) => rows
+        .map((x) => [x.key, x.mode, x.instrument, x.tvSymbol, x.futKey, x.nvCode, x.clock, x.label, x.sniper, x.why].join("\u0001"))
+        .join("\u0002");
+      if (sig(j.slots) !== sig(slots)) {
+        // 슬롯 **구성**이 바뀌면 TradingView 실패 기록을 초기화한다
         // (한 번 실패했다고 그 슬롯이 영원히 자체 렌더로 고정되면 안 된다)
         if (j.slots.map((x: any) => x.key).join() !== slots.map((x) => x.key).join()) {
           tvFailed = new Set();
         }
         slots = j.slots;
       }
+    }
+
+    if (j.version !== ctlVersion) {
+      ctlVersion = j.version;
       if (j.chartInterval && j.chartInterval !== chartInterval) chartInterval = j.chartInterval;
       if (j.chartStyle === "line" || j.chartStyle === "candle") chartStyle = j.chartStyle;
       // 영상 송출/내리기 (컨트롤러에서 사람이 결정)
