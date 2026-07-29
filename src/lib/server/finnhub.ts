@@ -626,8 +626,15 @@ export async function getAvgVolumes(tickers: string[]): Promise<Map<string, numb
   //   8개를 한꺼번에 달라고 할 때 **전부 예산에서 잘려 영원히 안 찬다.**
   //   이 저장소가 기업뉴스에서 이미 겪은 굶주림과 같은 형태다(0.07 req/min/ticker 였다).
   //   24시간 캐시라 3개씩만 채워도 몇 번의 폴이면 다 찬다.
+  //
+  // ★ 저우선을 **쓰지 않는다.** 처음엔 저우선으로 뒀는데 값이 영영 안 찼다.
+  //   실측: 오늘 거래량은 5종목 다 들어오는데 10일 평균만 전부 null 이고,
+  //   로그엔 metric 요청 자체가 없었다 — 예산 게이트에서 조용히 잘리고 있었다.
+  //   범인은 같은 라우트가 먼저 부르는 **섹터 ETF 13건**이다. 저우선 쿼터가 분당
+  //   16인데 그것만으로 거의 다 찬다. 저우선은 "자주 부르는 부가 기능"을 위한
+  //   장치인데, 이건 티커당 **하루 한 번**이라 그 범주가 아니다.
   await Promise.all(todo.slice(0, 3).map(async (t) => {
-    const j = await fhFetch(`/stock/metric?symbol=${encodeURIComponent(t)}&metric=all`, AVGVOL_TTL, true);
+    const j = await fhFetch(`/stock/metric?symbol=${encodeURIComponent(t)}&metric=all`, AVGVOL_TTL, false);
     const m = Number(j?.metric?.["10DayAverageTradingVolume"]);
     const v = Number.isFinite(m) && m > 0 ? Math.round(m * 1e6) : null;   // 백만 주 → 주
     avgVolCache.set(t, { at: now, v, ttl: v == null ? AVGVOL_FAIL_TTL : AVGVOL_TTL });
