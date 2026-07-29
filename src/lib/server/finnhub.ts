@@ -9,7 +9,7 @@
 //       그래서 응답의 t(마지막 체결 시각)를 asOf 로 실어 보내 화면이 나이를 표시하게 한다.
 // ============================================================
 import { FINNHUB_API_KEY } from "$env/static/private";
-import { isFragment, safeToDrop, isColumnBrand } from "./headline";
+import { isFragment, safeToDrop, isColumnBrand, POLICY_ACTION } from "./headline";
 
 const BASE = "https://finnhub.io/api/v1";
 
@@ -427,7 +427,18 @@ export function scoreNews(headline: string): NewsScore {
   // ("CPI Aerostructures names new board member" 가 L4 로 올라가던 문제)
   const macroReal = hasMacro && (MARKET.test(t) || /\d/.test(t));
 
-  if (L5_HARD.test(t) || macroReal || L5_POLICY.test(t)) {
+  // ★ **중앙은행 결정은 무조건 L5 다.**
+  //   실측 사고 (2026-07-29 FOMC, 14:00 ET):
+  //     "Divided Fed holds interest rates steady, but three members voted to hike"
+  //   → level 2, matched false. 그날 최대 사건이 잡기사 등급을 받았고, 그래서
+  //     `level>=4` 를 요구하는 속보 라우트에서 아예 빠졌고 헤드라인 목록에서도 밀렸다.
+  //   왜 다 빗나갔나:
+  //     · L5_HARD 는 `cut|raise|hike + rates` 를 요구한다 → 제목은 "holds … steady" 다.
+  //       "voted to hike" 는 rate 가 앞에 없어서 안 걸린다.
+  //     · macroReal 은 시장 명사나 **숫자**를 요구한다 → "three members" 는 글자다.
+  //   즉 "동결"과 "숫자를 글자로 쓴 제목"이 동시에 겹치면 통째로 빠져나간다.
+  //   금리를 **안 올린 것도 결정**이다 — 결정 자체를 잡아야 한다.
+  if (L5_HARD.test(t) || macroReal || L5_POLICY.test(t) || POLICY_ACTION.test(t)) {
     level = 5; matched = true;
   } else if (L4_GEO.test(t)) {
     // 상시 지정학 명사는 기본 L4. 시장 명사와 함께 나올 때만 L5 로 승격.

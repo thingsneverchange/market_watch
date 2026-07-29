@@ -9,7 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { parseRss, unescapeXml, tagText } from "../src/lib/server/rss.ts";
-import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet, marketEventScore, recencyBonus } from "../src/lib/server/headline.ts";
+import { isBlockedPublisher, isPressRelease, isAnalysisForm, isMajorOutlet, marketEventScore, recencyBonus, POLICY_ACTION } from "../src/lib/server/headline.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const fixture = (n) => readFileSync(join(here, "fixtures", n + ".xml"), "utf8");
@@ -235,6 +235,19 @@ eq("음수 방어", recencyBonus(-5), 0);
   ok("30초 전 FOMC 가 50분 전 유가 기사를 이긴다",
     sc(fed) > sc(oil), `FOMC ${sc(fed).toFixed(2)} vs OIL ${sc(oil).toFixed(2)}`);
 }
+
+// ── 등급: 중앙은행 결정은 무조건 L5 (실측 사고) ────────
+// scoreNews 는 $env 때문에 직접 못 부른다. 등급을 올리는 그 조건만 확인한다.
+ok("FOMC 동결이 L5 로 승격된다 (실측)",
+  POLICY_ACTION.test("Divided Fed holds interest rates steady, but three members voted to hike"));
+ok("축약형도", POLICY_ACTION.test("Fed holds interest rates steady in split decision"));
+ok("인하", POLICY_ACTION.test("Fed cuts rates by 25 basis points"));
+ok("ECB 동결", POLICY_ACTION.test("ECB leaves rates unchanged as inflation cools"));
+ok("bps 표기", POLICY_ACTION.test("BOJ raises policy rate 25bps"));
+// 관계없는 기사가 L5 로 끌려 올라가면 안 된다
+ok("종목 급락은 아님", !POLICY_ACTION.test("SK Hynix shares plunge 13% in Seoul as chip sell-off deepens"));
+ok("일반 기사는 아님", !POLICY_ACTION.test("Apple shares just hit a record"));
+ok("실적 기사는 아님", !POLICY_ACTION.test("Alphabet beats on earnings but capex guidance spooks investors"));
 
 console.log(`\nrss: ${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

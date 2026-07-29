@@ -370,7 +370,7 @@ const MAGNITUDE = /\d[\d,.]*\s*(?:%|percent\b|points?\b|pts?\b|bps\b)|[$€£]\s
  * 가격이 움직인 것만 사건으로 세면 **가격을 움직이는 결정 자체**를 놓친다.
  * 발표가 먼저고 가격은 그 뒤에 따라온다 — 방송이 먼저 말해야 하는 건 발표다.
  */
-const POLICY_ACTION =
+export const POLICY_ACTION =
   /\b(?:fomc|fed(?:eral reserve)?|ecb|boj|bank of (?:england|japan|canada)|rba)\b[^.]{0,60}\b(?:hold[s]?|keep[s]?|leave[s]?|cut[s]?|rais(?:e|es)|hike[s]?|lower[s]?|decision|decide[s]?|vote[s]?)\b|\b(?:rate decision|holds? (?:rates?|interest rates?)|cuts? (?:rates?|interest rates?)|raises? (?:rates?|interest rates?)|rates? (?:steady|unchanged|on hold)|basis points?|\bbps\b)\b/i;
 
 /** 시장 스트레스 자체를 가리키는 말 — 폭이 없어도 사건이다 */
