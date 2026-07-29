@@ -104,8 +104,14 @@ export async function getVolumes(tickers: string[]): Promise<VolumeRow[]> {
   return want.map((t) => {
     const volume = cache.get(t)?.volume ?? null;
     const avg10 = avg.get(t) ?? null;
-    // 배수는 **세션이 끝났을 때만**. 장중엔 누적 vs 종일평균이라 비교가 성립하지 않는다.
-    const done = !st.open && prog != null && prog >= 1;
+    // 배수는 **거래가 완전히 끝난 값일 때만** 낸다.
+    //
+    // ★ 처음엔 `!open && progress >= 1` 로 썼는데 틀렸다. 새벽 2시엔 sessionProgress 가
+    //   **다가올 장** 기준이라 0 을 돌려준다 — 직전 세션은 이미 끝났는데도 배수가 안 나왔다.
+    //   반대로 프리장·애프터장에는 FMP 의 volume 이 **오늘 부분 누적**이라 종일 평균과
+    //   비교하면 안 된다.
+    //   판정은 세션 이름으로 한다: CLOSED·WEEKEND·HOLIDAY 일 때만 그 값이 완결된 하루다.
+    const done = st.session === "CLOSED" || st.session === "WEEKEND" || st.session === "HOLIDAY";
     const ratio = done && volume != null && avg10 ? Math.round((volume / avg10) * 100) / 100 : null;
     return { ticker: t, volume, avg10, ratio, progress: st.open ? prog : null };
   });
