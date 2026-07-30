@@ -79,6 +79,8 @@
   //  실적 목록(EARNINGS)은 Finnhub 캘린더 시간창 안의 종목만 담아서, 며칠 전에 발표한
   //  TSLA(-14.5%)·GOOGL(-4.2%) 같은 종목은 반응 데이터가 있어도 화면 어디에도 안 나왔다.
   let reactions: any[] = [];
+  /** 규칙 기반 실적 결과 (Finnhub 실제 EPS). LLM 리캡보다 우선한다 */
+  let reportedNow: any[] = [];
   // 이미 지난 거시 이벤트 (최근 5개, 1주일 이내). 무료 경제 캘린더가 없어 직접 쌓는다.
   let pastMacro: any[] = [];
   // 거시 지표 실제치 — **FRED(연준 원본)**. LLM 이 개입하지 않는 경로다.
@@ -269,14 +271,33 @@
    *  등락률은 비우고(—) 결과 배지(BEAT/MISS)만 남긴다.
    *  화면 폭이 한정돼 있으므로 최대 3줄.
    */
-  $: reportedRows = (reactions ?? [])
-    .filter((r: any) => r && r.ticker)
-    .map((r: any) => ({
-      ticker: r.ticker,
-      result: r.result ?? null,
-      pct: r.verified && typeof r.pct === "number" ? r.pct : null
-    }))
-    .slice(0, 3);
+  //  ★ **발표된 숫자(reportedNow)를 LLM 리캡보다 앞에 둔다.**
+  //    BEAT/MISS 를 LLM 이 말하게 하면 검증 경로가 없다(감사 지적 #58).
+  //    Finnhub 캘린더의 epsActual 로 판정하면 그건 판단이 아니라 사실이다.
+  //    리캡은 데이터에 없는 종목을 메우는 보조로만 쓴다.
+  $: reportedRows = (() => {
+    const seen = new Set<string>();
+    const out: any[] = [];
+    for (const r of reportedNow ?? []) {
+      if (!r?.ticker || seen.has(r.ticker)) continue;
+      seen.add(r.ticker);
+      out.push({
+        ticker: r.ticker, result: r.result ?? null,
+        pct: typeof r.pct === "number" ? r.pct : null,
+        surprisePct: typeof r.surprisePct === "number" ? r.surprisePct : null
+      });
+    }
+    for (const r of reactions ?? []) {
+      if (!r?.ticker || seen.has(r.ticker)) continue;
+      seen.add(r.ticker);
+      out.push({
+        ticker: r.ticker, result: r.result ?? null,
+        pct: r.verified && typeof r.pct === "number" ? r.pct : null,
+        surprisePct: null
+      });
+    }
+    return out.slice(0, 3);
+  })();
 
   /** 거래량 배수를 티커로 찾기 쉽게 */
   $: volByTicker = new Map((volumes ?? []).map((v: any) => [v.ticker, v]));
@@ -498,6 +519,7 @@
       }
       if (Array.isArray(c.upcoming)) upcoming = c.upcoming;
       if (Array.isArray(c.reactions)) reactions = c.reactions;
+      if (Array.isArray(c.reportedNow)) reportedNow = c.reportedNow;
       if (Array.isArray(c.pastMacro)) pastMacro = c.pastMacro;
       calendarStale = false;
     } else {
@@ -1197,6 +1219,11 @@
               <div class="ke-el">
                 <span class="ke-tk">{r.ticker}</span>
                 {#if r.result}<span class="ke-res {r.result}">{r.result.toUpperCase()}</span>{/if}
+                <!-- ★ 폭이 곧 정보다. META 가 예상을 16% 하회한 것과 QCOM 이 2.7%
+                     하회한 것은 같은 MISS 라도 전혀 다른 사건이다. -->
+                {#if r.surprisePct != null}
+                  <span class="ke-surp">{r.surprisePct > 0 ? "+" : ""}{r.surprisePct.toFixed(1)}% vs est</span>
+                {/if}
               </div>
               <div class="ke-timer" class:u={r.pct != null && r.pct >= 0} class:d={r.pct != null && r.pct < 0}>
                 {r.pct == null ? "—" : `${r.pct >= 0 ? "+" : "−"}${Math.abs(r.pct).toFixed(2)}%`}
@@ -1787,6 +1814,7 @@
     border-radius: 3px; margin-left: 6px; }
   .ke-res.beat { color: #39d98a; background: #0e2a1c; border: 1px solid #1d4a33; }
   .ke-res.miss { color: #ff5c5c; background: #2a1113; border: 1px solid #4a1f22; }
+  .ke-surp { font-size: 9px; font-weight: 700; color: #7a828d; margin-left: 6px; }
   .ke-res.inline { color: #8a919b; background: #14171d; border: 1px solid #23272f; }
 
   .spark-strip { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; height: 180px; flex-shrink: 0; }

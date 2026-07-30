@@ -292,6 +292,56 @@ export const GET: RequestHandler = async () => {
     if (!prev || d > prev) reactDay.set(e.ticker, d);
   }
 
+  // ============================================================
+  //  ★ 규칙 기반 실적 결과 — LLM 없이 **발표된 숫자로** 판정한다
+  //
+  //  왜 필요했나 (실측 2026-07-30 02:15 ET):
+  //    UPCOMING  BMY MA AAPL AMZN MPWR ABBV      ← 일정은 있는데
+  //    REPORTED  (없음)                           ← 결과가 하나도 없다
+  //  그 몇 시간 전에 MSFT·META·ARM·QCOM 이 전부 발표했고 META 는 예상을 16% 하회했다.
+  //
+  //  원인: REPORTED 가 earnings_recap(LLM) 하나에만 매달려 있었는데
+  //  그 크론이 **실적이 나오는 시간에 안 돈다** — REG 0, OFF 0, EXT 만 8시간에 1회.
+  //  실측 마지막 생성 1,336분(22.3시간) 전.
+  //
+  //  그런데 Finnhub 캘린더가 **실제 EPS 를 준다.** 실측: 2026-07-29 발표 304건 중
+  //  233건에 epsActual 이 채워져 있었다(MSFT 4.74 vs 예상 4.3274 등).
+  //  즉 LLM 없이 계산할 수 있었고, 그게 훨씬 정확하다 —
+  //  감사에서 "BEAT/MISS 배지가 LLM 출력이고 검증 경로가 없다"고 지적된 바로 그 항목이다.
+  //
+  //  ※ 여기서 만드는 값은 **발표된 숫자 그 자체**다. 판단이 아니다.
+  // ============================================================
+  const reportedNow = earn
+    .filter((e) => {
+      if (e.epsActual == null || e.epsEst == null) return false;   // 아직 집계 전이면 말하지 않는다
+      if (!UNIVERSE.has(e.ticker)) return false;                    // 하루 233건을 다 띄울 수는 없다
+      const ts = earnPendingFrom(e.date, e.hour);
+      // 반응 창 안에 있는 것만 — 사흘 전 실적을 "방금 나왔다"처럼 두지 않는다
+      return ts <= now && now - ts < REACTION_WINDOW_MS;
+    })
+    .map((e) => {
+      const est = e.epsEst as number, act = e.epsActual as number;
+      // 서프라이즈 폭 — BEAT/MISS 라는 말보다 이게 정보다.
+      // META 가 16% 하회한 것과 QCOM 이 2.7% 하회한 것은 전혀 다른 사건이다.
+      const surprisePct = est !== 0 ? Math.round(((act - est) / Math.abs(est)) * 1000) / 10 : null;
+      const live = liveReactions.get(e.ticker);
+      const vq = verifyQuotes.get(e.ticker);
+      const rd = reactDay.get(e.ticker) ?? reactionSessionDate(e.date, e.hour);
+      const real = vq && rd && vq.day === rd ? vq.pct : undefined;
+      if (real != null) rememberVerified(e.ticker, rd, real);
+      const pct = live ? live.changePct : (real ?? recallVerified(e.ticker, rd) ?? null);
+      return {
+        ticker: e.ticker,
+        result: act > est ? "beat" : act < est ? "miss" : "inline",
+        epsEst: est, epsActual: act, surprisePct,
+        hour: e.hour,
+        // 등락률은 **검증된 것만**. 없으면 null → 화면이 — 를 찍는다
+        pct, verified: pct != null,
+        origin: "data" as const
+      };
+    })
+    .sort((a, b) => Math.abs(b.surprisePct ?? 0) - Math.abs(a.surprisePct ?? 0));
+
   const reactions = [...recapMap.entries()]
     .map(([ticker, r]) => {
       const liveNow = liveReactions.get(ticker);
@@ -369,7 +419,7 @@ export const GET: RequestHandler = async () => {
       }));
 
   return new Response(JSON.stringify({
-    next, nextEvents, macroEvents, earningsEvents, upcoming, reactions, pastMacro,
+    next, nextEvents, macroEvents, earningsEvents, upcoming, reactions, reportedNow, pastMacro,
     // 실적 캘린더 창이 일부 실패하면 목록이 불완전하다 — 화면이 그 사실을 표시할 수 있게
     earningsPartial
   }), {
