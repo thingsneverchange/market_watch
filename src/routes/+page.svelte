@@ -299,6 +299,34 @@
     return out.slice(0, 3);
   })();
 
+  // ============================================================
+  //  UPCOMING 패널의 **총 행 수 예산**
+  //
+  //  ★ 그룹마다 따로 상한을 두는 방식은 합쳐지지 않는다.
+  //    실측(2026-07-30): DATA·EVENT·EARNINGS·REPORTED 넷을 각자 "남는 만큼" 쓰게 했더니
+  //    우측 컬럼이 303px 넘쳤고, flex-shrink 가 **세 패널을 전부 잘랐다**
+  //    (UPCOMING −191px, US ECONOMY −105px, MARKET DRIVER −103px).
+  //    잘린 건 화면에 아무 표시도 안 남아서, 보고도 모른다.
+  //
+  //  실측값: 행 26px, 그룹 머리 9px, UPCOMING 에 쓸 수 있는 높이 ≈ 488px.
+  //  → 총 6행으로 잡는다. 우선순위는 방송 기준이다:
+  //     "방금 뭐가 나왔나"(REPORTED) > "곧 뭐가 있나"(EVENT) > 실적 일정 > 지표 일정
+  // ============================================================
+  const KE_ROW_BUDGET = 6;
+  $: keSlots = (() => {
+    let left = KE_ROW_BUDGET;
+    const take = (want: number, cap: number) => {
+      const n = Math.max(0, Math.min(want, cap, left));
+      left -= n;
+      return n;
+    };
+    const rep = take(reportedRows.length, 3);      // 방금 나온 결과가 최우선
+    const ev = take(macroEvents.length, 2);        // FOMC 같은 예정 이벤트
+    const earn = take(earningsEvents.length, 3);   // 실적 일정
+    const data = take(macroReleases.length, 2);    // 지표 일정
+    return { rep, ev, earn, data };
+  })();
+
   /** 거래량 배수를 티커로 찾기 쉽게 */
   $: volByTicker = new Map((volumes ?? []).map((v: any) => [v.ticker, v]));
 
@@ -1159,11 +1187,11 @@
         <div class="ke-hdr"><span class="ke-lbl">◇ UPCOMING</span></div>
 
         <!-- 지표 발표 일정 — 출처가 FRED(연준)라 날짜가 확정치다 -->
-        {#if macroReleases.length}
+        {#if keSlots.data}
           <div class="ke-grp">DATA</div>
           <!-- ★ 실적 반응(MOVERS)이 들어오면 우측 3패널이 940px를 넘긴다(실측).
                UPCOMING 이 가장 크므로 여기서 자리를 낸다 — 가장 가까운 일정이 가장 중요하다. -->
-          {#each macroReleases.slice(0, 3) as rel}
+          {#each macroReleases.slice(0, keSlots.data) as rel}
             <div class="ke-item">
               <div class="ke-el">
                 <span class="ke-stars">{stars(rel.imp)}</span>
@@ -1175,9 +1203,9 @@
         {/if}
 
         <!-- 거시/정책 일정 — FOMC 등. 시장 전체를 움직인다. -->
-        {#if macroEvents.length}
+        {#if keSlots.ev}
           <div class="ke-grp">EVENT</div>
-          {#each macroEvents as ev (ev.title)}
+          {#each macroEvents.slice(0, keSlots.ev) as ev (ev.title)}
             <div class="ke-item">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -1189,13 +1217,13 @@
         {/if}
 
         <!-- 개별 종목 실적 — 종목/섹터를 움직인다. 세션(장전/장후)까지 표기. -->
-        {#if earningsEvents.length}
+        {#if keSlots.earn}
           <div class="ke-grp">EARNINGS</div>
           <!-- ★ 개수를 고정하지 않는다. 실적 시즌엔 하루에 대형주가 여럿 내는데
                2에서 자르면 그날의 절반이 화면에서 사라진다. 위 그룹(거시·데이터)이
                차지한 만큼을 빼고 남는 자리를 준다 — 우측 컬럼은 넘침이 실측된 곳이라
                총량은 지킨다(1014·1072행 주석 참고). -->
-          {#each earningsEvents.slice(0, Math.max(2, 5 - macroEvents.length - macroReleases.length - reportedRows.length)) as ev (ev.ticker + ev.time.getTime())}
+          {#each earningsEvents.slice(0, keSlots.earn) as ev (ev.ticker + ev.time.getTime())}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-stars">{stars(ev.imp)}</span>
@@ -1212,9 +1240,9 @@
              일정 바로 아래가 원래 자리다: "누가 내나" 다음이 "어떻게 나왔나".
              ※ 등락률은 **검증된 것만** 찍는다. 리캡(LLM)이 주장한 값은 쓰지 않는다
                (calendar/+server.ts 의 INTC +10% ↔ −7.89% 사고 주석 참고). -->
-        {#if reportedRows.length}
+        {#if keSlots.rep}
           <div class="ke-grp">REPORTED</div>
-          {#each reportedRows as r (r.ticker)}
+          {#each reportedRows.slice(0, keSlots.rep) as r (r.ticker)}
             <div class="ke-item sub">
               <div class="ke-el">
                 <span class="ke-tk">{r.ticker}</span>
