@@ -4,6 +4,7 @@ import { getFeed, fresh, type EarningsRecap } from "$lib/server/marketfeed";
 import { earnEpoch, earnPendingFrom } from "$lib/server/et-time";
 import { etDateStr, reactionSessionDate } from "$lib/market-hours";
 import { getLiveReactions } from "$lib/server/livequote";
+import { goHot } from "$lib/server/newswire";
 import { recordMacro, recentMacro } from "$lib/server/macrolog";
 import { rememberVerified, recallVerified } from "$lib/server/verifylog";
 
@@ -223,6 +224,19 @@ export const GET: RequestHandler = async () => {
 
   // ★ 3 → 6. 실적 시즌엔 하루에 대형주가 여럿 낸다. 3에서 자르면 그날의 절반이 사라진다.
   //   화면이 자기 폭에 맞춰 다시 자르므로 여기서는 넉넉히 보낸다.
+  // ★ **예정된 대형 발표가 임박하면 와이어 폴링을 조인다.**
+  //   실측(2026-07-29 FOMC): 연준 자체 피드가 14:00:00 에 냈는데 CNBC 헤드라인은 14:08:35 였다.
+  //   1차 출처를 구독하는 것만으로 8.6분을 벌지만, 그것도 75초 주기로 받으면 최대 75초를 또 잃는다.
+  //   시청자가 가장 몰리는 순간이라 1초가 아깝다 → 창 안에서는 5초 주기로 간다.
+  //   창 밖에서는 자동으로 원복되므로 매체에 부담이 없다.
+  //   ※ 이 라우트는 15초마다 호출되므로 별도 타이머가 필요 없다.
+  for (const ev of macroEvents) {
+    const ts = Date.parse(ev.time);
+    if (!Number.isFinite(ts)) continue;
+    const mins = (ts - now) / 60_000;
+    if (mins <= 2 && mins > -25) { goHot(25); break; }   // T−2분 ~ T+25분
+  }
+
   const earningsEvents = upcomingOnly.slice(0, 6).map((e) => ({
     ticker: e.ticker,
     title: `${e.ticker} EARNINGS`,

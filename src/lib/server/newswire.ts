@@ -38,7 +38,19 @@ type Feed = { name: string; url: string };
 // 넓이(마켓 전반) + 깊이(반도체·메모리)를 같이 본다.
 // 반도체를 따로 두는 이유: 이 방송에서 지수를 실제로 흔드는 건 반도체와 빅테크인데,
 // 종합 피드에선 반도체 기사가 다른 기사에 묻혀 상위에 안 올라온다.
+// ★ **1차 출처를 맨 앞에 둔다.** 실측(2026-07-29 FOMC):
+//     연준 자체 피드 발행   14:00:00 ET  ← 발표 그 순간
+//     CNBC 헤드라인        14:08:35 ET
+//     차이                 8.6분
+//   통신사를 기다릴 이유가 없다. 발표문은 연준이 직접 낸다.
+//   ※ 예전에 이 피드를 "항목 없음"으로 판정한 적이 있는데 그건 **진단 스크립트의**
+//     정규식이 CDATA 를 못 읽어서였다(연준은 pubDate 를 CDATA 로 감싼다).
+//     우리 parseRss 는 CDATA 를 처리한다 — 구독을 안 했을 뿐이다.
 const FEEDS: Feed[] = [
+  { name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_monetary.xml" },
+  { name: "Federal Reserve", url: "https://www.federalreserve.gov/feeds/press_all.xml" },
+  { name: "BEA", url: "https://apps.bea.gov/rss/rss.xml" },
+  { name: "SEC", url: "https://www.sec.gov/news/pressreleases.rss" },
   { name: "CNBC", url: "https://www.cnbc.com/id/100003114/device/rss/rss.html" },
   { name: "CNBC Tech", url: "https://www.cnbc.com/id/19854910/device/rss/rss.html" },
   { name: "MarketWatch", url: "https://feeds.content.dowjones.io/public/rss/mw_topstories" },
@@ -46,7 +58,23 @@ const FEEDS: Feed[] = [
   { name: "Google News", url: "https://news.google.com/rss/search?q=semiconductor+OR+chip+OR+DRAM+OR+HBM+when:1d&hl=en-US&gl=US&ceid=US:en" }
 ];
 
-const TTL_MS = 75_000;          // 폴링 주기. 5개 피드 × 75초 ≈ 분당 4요청 (예의상 상한)
+// ── 폴링 주기 ────────────────────────────────────────
+//  평소 75초. 그런데 **예정된 대형 발표 앞뒤로는 75초도 길다** —
+//  FOMC·CPI·고용지표는 1초가 아까운 순간이고, 그때가 시청자가 가장 몰리는 때다.
+//  호출부가 "지금 이벤트 창"이라고 알려 주면 그 구간만 5초로 조인다.
+//  창 밖에서는 원래대로 돌아가므로 매체에 부담을 주지 않는다.
+const TTL_MS = 75_000;
+const HOT_TTL_MS = 5_000;
+/** 이벤트 창 종료 시각(ms). 이 시각까지는 5초 주기로 돈다 */
+let hotUntil = 0;
+/**
+ * 지금부터 `minutes` 분 동안 빠른 폴링으로 전환한다.
+ * 캘린더가 FOMC·CPI 시각을 알고 있으므로 호출부가 T−1분에 켜 주면 된다.
+ */
+export function goHot(minutes = 20): void {
+  hotUntil = Math.max(hotUntil, Date.now() + minutes * 60_000);
+}
+export const isHot = (): boolean => Date.now() < hotUntil;
 const FETCH_TIMEOUT_MS = 12_000;
 const MAX_AGE_MS = 12 * 3600_000; // 와이어의 존재 이유는 최신성이다. 12시간 넘은 건 안 싣는다.
 const UA = "Mozilla/5.0 (compatible; market-watch/1.0; +broadcast overlay)";
@@ -98,7 +126,7 @@ async function fetchFeed(f: Feed): Promise<NewsItem[]> {
  */
 export async function getWireNews(limit = 40): Promise<NewsItem[]> {
   const now = Date.now();
-  if (cache && now - cache.at < TTL_MS) return cache.items.slice(0, limit);
+  if (cache && now - cache.at < (isHot() ? HOT_TTL_MS : TTL_MS)) return cache.items.slice(0, limit);
   if (inflight) return (await inflight).slice(0, limit);
 
   inflight = (async () => {
